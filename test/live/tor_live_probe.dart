@@ -23,7 +23,6 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
@@ -115,9 +114,8 @@ void main() {
     await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     measure('pairing at home, to live: ${watch.elapsedMilliseconds} ms');
     expect(torService.status.state, TorState.stopped, reason: 'Tor does not run on the direct path (FR-006)');
-    await liveUntil('the key registered', const Duration(seconds: 30), () async {
-      return (await getIt<AccessKeyRepository>().isRegistered()).data ?? false;
-    });
+    // Tor only by the person's leave (phase 045).
+    expect((await addresses.setUseTor(true)).hasData, isTrue);
     await liveUntil('the server offers its onion address', const Duration(minutes: 5), () async {
       return (await addresses.read()).data?.onion != null;
     });
@@ -242,7 +240,6 @@ void main() {
     final support = await getApplicationSupportDirectory();
     expect((await auth.logout(forced: true)).hasData, isTrue);
     const storage = FlutterSecureStorage();
-    expect(await storage.read(key: ConnectionStorage.accessKey), isNull);
     expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
     expect(Directory('${support.path}${Platform.pathSeparator}nox_tor_state').existsSync(), isFalse);
 

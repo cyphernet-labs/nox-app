@@ -14,7 +14,6 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_tor/channel.dart';
@@ -58,9 +57,8 @@ void main() {
 
     final socket = getIt<NoxSocketClient>();
     final selector = getIt<ConnectionPathSelector>();
-    await liveUntil('the access key registered', const Duration(seconds: 30), () async {
-      return (await getIt<AccessKeyRepository>().isRegistered()).data ?? false;
-    });
+    // Tor only by the person's leave (phase 045).
+    expect((await getIt<ServerAddressesRepository>().setUseTor(true)).hasData, isTrue);
     await liveUntil('the onion address known', const Duration(minutes: 5), () async {
       return (await getIt<ServerAddressesRepository>().read()).data?.onion != null;
     });

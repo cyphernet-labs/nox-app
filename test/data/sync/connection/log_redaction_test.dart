@@ -17,10 +17,8 @@ import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -101,21 +99,12 @@ void main() {
       FakeDirectProber(home: <String>{}),
       tor,
       getIt<ServerAddressesRepository>(),
-      getIt<AccessKeyRepository>(),
       _Network(),
       _Lifecycle(),
       socket,
     );
-    final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
     final link = PairingLink.parse(_link);
-    secrets = [
-      own.publicBase64,
-      base64Encode(own.privateKey),
-      base64Encode(deviceSeed),
-      base64Encode(serverKey),
-      link.token,
-      _link.substring(PairingLink.prefix.length),
-    ];
+    secrets = [base64Encode(deviceSeed), base64Encode(serverKey), link.token, _link.substring(PairingLink.prefix.length)];
   });
 
   tearDown(() async {
@@ -135,8 +124,7 @@ void main() {
 
   test('a run through Tor names no onion address', () async {
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
-    await getIt<AccessKeyRepository>().deviceKey();
-    await getIt<AccessKeyRepository>().markRegistered(true);
+    await getIt<ServerAddressesRepository>().setUseTor(true);
     selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, deviceSeed: deviceSeed);
 
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
@@ -153,11 +141,13 @@ void main() {
     for (var i = 0; i < 200 && socket.currentPhase != SessionPhase.live; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
-    // The service turns the key away, and the selector says so.
-    tor.emit(const TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth));
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    // The person turns Tor off, and the selector says so.
+    await getIt<ServerAddressesRepository>().setUseTor(false);
+    for (var i = 0; i < 200 && tor.status.isReady; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
 
-    expect(factory.urls.single.host, _onionHost, reason: 'the run did go through Tor');
+    expect(factory.urls.first.host, _onionHost, reason: 'the run did go through Tor');
     expect(capture.lines, isNotEmpty);
     expectNothingLeaked();
   });
@@ -169,7 +159,7 @@ void main() {
       await socket.start(url: Uri.parse('wss://10.0.0.5:9000/ws'), credentialsProvider: () async => const GreetingCredentials.unpaired());
       factory.latest.pushGreeting();
     });
-    final handshake = LiveIdentityHandshake(socket, starter, getIt<AccessKeyRepository>());
+    final handshake = LiveIdentityHandshake(socket, starter);
 
     Object? outcome;
     unawaited(handshake.pair(link: PairingLink.parse(_link), platform: 'ios').then((v) => outcome = v, onError: (Object e) => outcome = e));

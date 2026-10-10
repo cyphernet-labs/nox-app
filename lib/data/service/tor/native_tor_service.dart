@@ -17,9 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// The native side never blocks and never calls back; this service polls its
 /// status snapshot - often while Tor comes up, rarely once it is there - and
-/// publishes the changes. The snapshot's error is also where the channel's
-/// onion connects report a refused access key (phase 044), as the bridge
-/// reported it before.
+/// publishes the changes.
 @LazySingleton(as: TorService, env: [Environment.dev, Environment.prod])
 class NativeTorService implements TorService {
   NativeTorService(this._prefs)
@@ -149,31 +147,6 @@ class NativeTorService implements TorService {
   }
 
   @override
-  bool setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
-    if (!isSupported) return false;
-    var taken = true;
-    try {
-      _api.setTarget(onionHost: onionHost, port: port, clientKey: clientKey);
-    } on NoxTorException catch (e) {
-      taken = false;
-      logRepository.debug(target: this, message: 'tor: target refused (${e.code})');
-    }
-    _tick();
-    return taken;
-  }
-
-  @override
-  void clearTarget() {
-    if (!isSupported) return;
-    try {
-      _api.clearTarget();
-    } on NoxTorException {
-      // Not started: there is no target to clear.
-    }
-    _tick();
-  }
-
-  @override
   void setDormant(bool dormant) {
     if (!isSupported) return;
     _api.setDormant(dormant);
@@ -181,9 +154,8 @@ class NativeTorService implements TorService {
   }
 
   /// Not gated on [isSupported]: the address is the module's arithmetic, and
-  /// the module is there on every platform (phase 044) - including the one
-  /// where Tor itself is not offered yet. Where the library is absent the
-  /// lookup fails, and the answer is null.
+  /// asking it costs nothing even where Tor is not wanted. Where the library
+  /// is absent the lookup fails, and the answer is null.
   @override
   String? onionFromPublicKey(Uint8List publicKey) {
     try {
@@ -198,7 +170,7 @@ class NativeTorService implements TorService {
     final next = TorStatus(
       state: TorState.values[snapshot.state.index],
       bootstrapPercent: snapshot.bootstrapPercent,
-      error: TorError.values[snapshot.error.index],
+      error: errorOf(snapshot.error),
     );
     _publish(next);
     if (next.isObsolete) unawaited(_recordObsolete());
@@ -217,6 +189,20 @@ class NativeTorService implements TorService {
       _poll = Timer.periodic(every, (_) => _tick());
     }
   }
+
+  /// The app's kind for the module's. By name rather than by index: the ABI
+  /// keeps the two access-key codes in its numbering (phase 045), and the app
+  /// has no such kinds any more.
+  @visibleForTesting
+  static TorError errorOf(NoxTorError error) => switch (error) {
+    NoxTorError.none => TorError.none,
+    NoxTorError.timeout => TorError.timeout,
+    NoxTorError.network => TorError.network,
+    NoxTorError.internal => TorError.internal,
+    NoxTorError.softwareDeprecated => TorError.softwareDeprecated,
+    // Never produced since phase 045 - the client holds no access keys.
+    NoxTorError.missingClientAuth || NoxTorError.wrongClientAuth => TorError.none,
+  };
 
   void _publish(TorStatus next) {
     // Final for the build: a later `stopped` from a library that was never

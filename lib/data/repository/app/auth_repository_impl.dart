@@ -323,14 +323,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // clearing, leaving a logged-out device holding someone's messages.
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
         // Swept once more with the channel down. A greeting that landed
-        // between the wipe and the stop could have registered a freshly minted
-        // access key or stored the server's addresses again (FR-018). The
-        // addresses through their own queue, so a write already under way
-        // lands first and is wiped, rather than landing after.
+        // between the wipe and the stop could have stored the server's
+        // addresses again (FR-018). Through their own queue, so a write
+        // already under way lands first and is wiped, rather than landing
+        // after.
         if (getIt.isRegistered<ServerAddressesRepository>()) await getIt<ServerAddressesRepository>().clear();
         if (getIt.isRegistered<FlutterSecureStorage>()) {
           try {
-            await ConnectionStorage.delete(getIt<FlutterSecureStorage>(), includeDeviceAccessKey: true);
+            await ConnectionStorage.delete(getIt<FlutterSecureStorage>());
           } catch (error, stackTrace) {
             logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
           }

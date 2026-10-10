@@ -7,7 +7,6 @@ import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 
 /// What the server said about who just connected. A domain value on purpose:
@@ -74,11 +73,10 @@ class PairingRefused implements Exception {
 /// connecting; now the server decides, so somebody has to own the wait.
 @LazySingleton(env: [Environment.dev])
 class LiveIdentityHandshake {
-  LiveIdentityHandshake(this._socket, this._starter, this._keys);
+  LiveIdentityHandshake(this._socket, this._starter);
 
   final NoxSocketClient _socket;
   final LiveSessionStarter _starter;
-  final AccessKeyRepository _keys;
 
   /// How long a person waits before being told to try again. Meaningful only
   /// because `stop()` resets the reconnect ladder: without that reset a device
@@ -107,31 +105,22 @@ class LiveIdentityHandshake {
   /// be stamped with that identity, not the person who just paired.
   ///
   /// The socket has to be brought up towards the server the LINK named, which
-  /// the caller has already stored - its key, and its addresses -
-  /// [LiveSessionStarter.restart] reads them from there. Until phase 045 the
-  /// pairing goes over the link's direct addresses only: the onion service
-  /// opens for a key a paired device holds, and this one is not paired yet.
-  /// `pair` is then the one command allowed before a greeting, and it goes
-  /// out only on a channel that has verified the server's key: a machine with
-  /// another key never sees the token (SC-003).
+  /// the caller has already stored - its key, its addresses and what the
+  /// person set on the connection screen - [LiveSessionStarter.restart] reads
+  /// them from there. The path is chosen as for any connection (phase 045):
+  /// directly first, and through Tor when no direct address answers, `Use Tor`
+  /// is on and an onion address is known - a claim as much as an invite.
+  /// `pair` is the one command allowed before a greeting, and it goes out only
+  /// on a channel that has verified the server's key, whichever path it took:
+  /// a machine with another key never sees the token (SC-003 of 044).
   ///
   /// No device key in the command (phase 044): the server takes it from the
   /// connection, where this device has just proved it.
   Future<IdentityHandshake> pair({required PairingLink link, required String platform}) async {
-    // The onion access key goes with the pairing itself (FR-015): the server
-    // registers it in the same transaction, so the device can come in through
-    // Tor once it is away from home. Unreadable is not a reason to fail the
-    // pairing - the key is then registered by command on the first greeting
-    // (FR-016).
-    final accessKey = (await _keys.deviceKey()).data?.publicBase64;
-    return _pair(link: link, platform: platform, accessKey: accessKey);
-  }
-
-  Future<IdentityHandshake> _pair({required PairingLink link, required String platform, required String? accessKey}) async {
     await _starter.restart();
     final CommandReply reply;
     try {
-      reply = await _socket.pair(token: link.token, platform: platform, accessKey: accessKey);
+      reply = await _socket.pair(token: link.token, platform: platform);
     } on Object {
       // No channel, or no answer within the command timeout. Nothing was
       // decided, so this is "try again" rather than an outcome.

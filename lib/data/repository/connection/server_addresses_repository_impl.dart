@@ -10,9 +10,9 @@ import 'package:nox_app/domain/model/connection/server_addresses.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 
-/// The server's addresses in secure storage (phase 040). Secure rather than
-/// prefs: the onion address lets anyone who has it ask the Tor network whether
-/// this person's server is online.
+/// The connection settings in secure storage (phases 040, 045). Secure rather
+/// than prefs: the onion address lets anyone who has it ask the Tor network
+/// whether this person's server is online.
 @LazySingleton(as: ServerAddressesRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerAddressesRepository {
   ServerAddressesRepositoryImpl(this._storage);
@@ -32,14 +32,64 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   }
 
   @override
-  Future<RepositoryResult<bool>> saveFromServer({required List<String> direct, required String? onion}) {
+  Future<RepositoryResult<bool>> saveFromServer({required List<String> direct, String? public, String? onion}) {
     return execute<bool>(() async {
-      await _serialised(() async {
-        final current = await _read();
-        final next = current.copyWith(direct: List<String>.unmodifiable(direct), onion: onion);
-        if (next == current) return;
-        await _write(next);
+      await _update((current) {
+        final statesPublic = public != null && public.isNotEmpty;
+        final statesOnion = onion != null && onion.isNotEmpty;
+        return current.copyWith(
+          direct: List<String>.unmodifiable(direct),
+          public: statesPublic ? public : null,
+          onion: statesOnion ? onion : null,
+          // The server's word on a field replaces the person's; a field it
+          // leaves out keeps what the person typed (FR-015).
+          manualAddress: statesPublic ? null : current.manualAddress,
+          manualOnion: statesOnion ? null : current.manualOnion,
+        );
       });
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> saveFromLink({
+    required List<String> direct,
+    String? onion,
+    String? manualAddress,
+    String? manualOnion,
+    required bool useTor,
+  }) {
+    return execute<bool>(() async {
+      await _update(
+        (_) => ServerAddresses(
+          direct: List<String>.unmodifiable(direct),
+          onion: onion == null || onion.isEmpty ? null : onion,
+          manualAddress: manualAddress == null || manualAddress.isEmpty ? null : manualAddress,
+          manualOnion: manualOnion,
+          useTor: useTor,
+        ),
+      );
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> saveManual({required String? manualAddress, required String? manualOnion}) {
+    return execute<bool>(() async {
+      await _update(
+        (current) => current.copyWith(
+          manualAddress: manualAddress == null || manualAddress.isEmpty ? null : manualAddress,
+          manualOnion: manualOnion,
+        ),
+      );
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> setUseTor(bool useTor) {
+    return execute<bool>(() async {
+      await _update((current) => current.copyWith(useTor: useTor));
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -47,11 +97,7 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   @override
   Future<RepositoryResult<bool>> recordLastGood(String address) {
     return execute<bool>(() async {
-      await _serialised(() async {
-        final current = await _read();
-        if (current.lastGood == address && !current.viaTorLast) return;
-        await _write(current.copyWith(lastGood: address, viaTorLast: false));
-      });
+      await _update((current) => current.copyWith(lastGood: address, viaTorLast: false));
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -59,11 +105,7 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   @override
   Future<RepositoryResult<bool>> recordGreetedViaTor() {
     return execute<bool>(() async {
-      await _serialised(() async {
-        final current = await _read();
-        if (current.viaTorLast) return;
-        await _write(current.copyWith(viaTorLast: true));
-      });
+      await _update((current) => current.copyWith(viaTorLast: true));
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -96,6 +138,17 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
     return controller.stream;
   }
 
+  /// Reads, changes and writes back in one turn of the queue; a change that
+  /// changes nothing writes nothing.
+  Future<void> _update(ServerAddresses Function(ServerAddresses current) change) {
+    return _serialised(() async {
+      final current = await _read();
+      final next = change(current);
+      if (next == current) return;
+      await _write(next);
+    });
+  }
+
   Future<void> _serialised(Future<void> Function() body) {
     final next = _writes.then((_) => body());
     _writes = next.catchError((Object _) {});
@@ -109,10 +162,15 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
       final json = jsonDecode(raw);
       if (json is! Map<String, dynamic>) return ServerAddresses.empty;
       final direct = json['direct'];
+      String? text(String key) => json[key] is String ? json[key] as String : null;
       return ServerAddresses(
         direct: direct is List ? List<String>.unmodifiable(direct.whereType<String>()) : const <String>[],
-        onion: json['onion'] is String ? json['onion'] as String : null,
-        lastGood: json['last_good'] is String ? json['last_good'] as String : null,
+        public: text('public'),
+        onion: text('onion'),
+        manualAddress: text('manual_address'),
+        manualOnion: text('manual_onion'),
+        useTor: json['use_tor'] == true,
+        lastGood: text('last_good'),
         viaTorLast: json['via_tor'] == true,
       );
     } on FormatException {
@@ -127,7 +185,11 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
       key: ConnectionStorage.serverAddresses,
       value: jsonEncode(<String, dynamic>{
         'direct': addresses.direct,
+        'public': ?addresses.public,
         'onion': addresses.onion,
+        'manual_address': ?addresses.manualAddress,
+        'manual_onion': ?addresses.manualOnion,
+        if (addresses.useTor) 'use_tor': true,
         'last_good': addresses.lastGood,
         if (addresses.viaTorLast) 'via_tor': true,
       }),

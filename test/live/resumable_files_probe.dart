@@ -23,7 +23,6 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -111,9 +110,8 @@ void main() {
       expect((await auth.signIn(identifier: claim)).hasData, isTrue, reason: 'sign-in by the claim link');
       expect((await auth.completeOnboarding(label: 'FilesProbe')).hasData, isTrue);
       await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
-      await liveUntil('the key registered', const Duration(seconds: 30), () async {
-        return (await getIt<AccessKeyRepository>().isRegistered()).data ?? false;
-      });
+      // Tor only by the person's leave (phase 045).
+      expect((await getIt<ServerAddressesRepository>().setUseTor(true)).hasData, isTrue);
       await liveUntil('the onion address', const Duration(minutes: 5), () async {
         return (await getIt<ServerAddressesRepository>().read()).data?.onion != null;
       });

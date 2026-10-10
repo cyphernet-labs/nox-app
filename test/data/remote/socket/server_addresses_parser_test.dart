@@ -50,4 +50,13 @@ void main() {
   test('an onion address without a port gets the service port, and letters are folded', () {
     expect(ServerAddressesParser.parse({'onion': '${'A' * 56}.ONION'})!.onion, '${'a' * 56}.onion:443');
   });
+
+  test('the public address is read when it is host:port, and dropped otherwise (phase 045)', () {
+    expect(ServerAddressesParser.parse({'public': 'nox.example.org:8443'})!.public, 'nox.example.org:8443');
+    expect(ServerAddressesParser.parse({'public': '[2001:db8::7]:8443'})!.public, '[2001:db8::7]:8443');
+    for (final bad in ['nox.example.org', 'host:0', 42, '', onion, 'a/b:1']) {
+      expect(ServerAddressesParser.parse({'public': bad})!.public, isNull, reason: '$bad');
+    }
+    expect(ServerAddressesParser.parse({'direct': <String>[]})!.public, isNull, reason: 'absent when the server has none');
+  });
 }

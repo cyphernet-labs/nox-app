@@ -24,6 +24,7 @@ import 'package:nox_app/domain/repository/connection/server_addresses_repository
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
+import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 
 import 'package:nox_app/general/pairing/pairing_link.dart';
@@ -264,7 +265,7 @@ void main() {
     await repository.logout();
 
     expect(tor.wipes, 1);
-    expect(tor.target, isNull);
+    expect(tor.status.state, TorState.stopped);
   });
 
   test('a failed clear() leaves the Tor client alone, like everything else', () async {

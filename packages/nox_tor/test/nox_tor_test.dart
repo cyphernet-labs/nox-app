@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:nox_tor/nox_tor.dart';
@@ -20,20 +21,29 @@ void main() {
     expect(NoxTor.onionFromPublicKey(pub), '25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion');
   });
 
-  test('a stopped client reports stopped, and a target needs a started one', () {
-    expect(NoxTor.status().state, NoxTorState.stopped);
-    expect(
-      () => NoxTor.setTarget(
-        onionHost: '25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion',
-        port: 443,
-        clientKey: Uint8List(32),
-      ),
-      throwsA(isA<NoxTorException>().having((e) => e.code, 'code', -8)),
-    );
+  test('a stopped client reports stopped, with nothing gone wrong', () {
+    final status = NoxTor.status();
+    expect(status.state, NoxTorState.stopped);
+    expect(status.error, NoxTorError.none);
   });
 
   test('wrong lengths are refused before they reach the library', () {
     expect(() => NoxTor.onionFromPublicKey(Uint8List(31)), throwsArgumentError);
-    expect(() => NoxTor.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(16)), throwsArgumentError);
+  });
+
+  test('the onion access-key functions are gone from the library (phase 045)', () {
+    // Looked up by symbol: a binding to a function the library no longer
+    // exports would throw at its first call, so the test asks the library
+    // itself rather than the Dart wrapper.
+    final library = DynamicLibrary.process();
+    // Where the loader keeps the library out of the process namespace there
+    // is nothing to look in, and an absent symbol would prove nothing.
+    if (!library.providesSymbol('nox_tor_version')) {
+      markTestSkipped('the library is not in the process namespace here');
+      return;
+    }
+    for (final symbol in ['nox_tor_set_target', 'nox_tor_clear_target']) {
+      expect(library.providesSymbol(symbol), isFalse, reason: symbol);
+    }
   });
 }

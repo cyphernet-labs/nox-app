@@ -95,9 +95,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
       await _secureStorage.deleteIfPresent(
         key: _kLegacyInviteAccessKey,
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
+      // The device's onion access key and its registration mark (phases
+      // 040-044): the onion service opens for no key since phase 045.
+      await ConnectionStorage.sweepLegacy(_secureStorage);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -204,10 +207,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) {
     return execute<bool>(() async {
       // What any earlier server said about itself goes first (phase 040): its
-      // addresses, and whether it holds this device's access key. A sign-in
-      // the process did not survive leaves them behind, and kept they would
-      // send the next server's connection to the old one's onion address.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
+      // addresses, and what the person set for it. A sign-in the process did
+      // not survive leaves them behind, and kept they would send the next
+      // server's connection to the old one's addresses.
+      await ConnectionStorage.delete(_secureStorage);
       await _secureStorage.write(key: _kServerAddress, value: address);
       await _secureStorage.write(key: _kServerKey, value: serverKey);
       return const RepositoryResult<bool>.success(data: true);
@@ -291,10 +294,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // and the world-epoch key would call that the same world.
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
       await _secureStorage.deleteIfPresent(key: _kServerKey);
-      // And what that server said about where it lives, and whether it holds
-      // this device's access key (phase 040). The key itself stays: like the
-      // device key, it names this install.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
+      // And what that server said about where it lives, with what the person
+      // set for it on the connection screen (phases 040, 045).
+      await ConnectionStorage.delete(_secureStorage);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it
@@ -332,9 +334,8 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
       await _secureStorage.deleteIfPresent(key: _kServerKey);
       await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
-      // Phase 040: the addresses and the access key - each with the options it
-      // was written under, which `deleteAll` alone may not match.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);
+      // The connection settings (phases 040, 045), by name like the rest.
+      await ConnectionStorage.delete(_secureStorage);
       // Kept for anything a later version writes and forgets to name above, and
       // not allowed to fail a wipe that has already happened.
       // Swallowed on purpose, and it is not a silent failure: the read-back

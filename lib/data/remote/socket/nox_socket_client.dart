@@ -168,13 +168,9 @@ class NoxSocketClient {
   ServerLimits? limits;
 
   /// Where the server can be found, as the last greeting stated it (contract
-  /// §3, phase 039). Null before a greeting, and from a server older than 039.
+  /// §3, phases 039 and 045). Null before a greeting, and from a server older
+  /// than 039.
   ServerAddresses? addresses;
-
-  /// Whether the server reads what phase 039 added to the wire,
-  /// `device.setAccessKey` among it. The greeting carrying `addresses` is that
-  /// flag (contract §2.1).
-  bool get supportsAccessKeys => addresses != null;
 
   /// The address of the current connection; null between connections.
   Uri? get currentUrl => _connection == null ? null : _dialled;
@@ -280,10 +276,9 @@ class NoxSocketClient {
   /// not because it is a greeting, but because it shares the one property that
   /// matters here: it must not wait for one.
   ///
-  /// [accessKey] - the public half of this device's onion access key - goes
-  /// with every pairing (phase 040, until 045): the server registers it in the
-  /// same transaction, so a device that paired at home can come in through Tor
-  /// once it is away (contract §2.1, §8A).
+  /// No onion access key goes with it since phase 045: the onion address is
+  /// open to whoever knows it, and a pairing through Tor is as allowed as one
+  /// at home (contract §8A).
   ///
   /// A connection lost under the pairing does not lose the pairing: the token
   /// is presented again on the next connection, within ONE budget for the
@@ -292,8 +287,8 @@ class NoxSocketClient {
   /// identity (contract §8A) - and it is what keeps a dial that ran out its
   /// time through Tor, or a network change mid-pairing, from sending the
   /// person off to try again by hand.
-  Future<CommandReply> pair({required String token, required String platform, String? accessKey}) async {
-    final data = <String, dynamic>{'token': token, 'platform': platform, 'access_key': ?accessKey};
+  Future<CommandReply> pair({required String token, required String platform}) async {
+    final data = <String, dynamic>{'token': token, 'platform': platform};
     final waited = Stopwatch()..start();
     var slow = false;
     // The slow budget from the moment the slow path shows, and kept: between

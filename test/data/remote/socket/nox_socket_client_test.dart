@@ -495,31 +495,31 @@ void main() {
       return socket;
     }
 
-    test('the greeting says where the server is, and that it reads access keys', () async {
+    test('the greeting says where the server is: its networks, its public address, its onion address', () async {
       await greetedWith({
         'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
+        'public': 'nox.example.org:8443',
         'onion': '${'a' * 56}.onion:443',
       });
 
       expect(client.identity?.label, 'Anna');
       expect(client.addresses?.direct, ['192.168.1.20:8080', '[fd12:3456::20]:8080']);
+      expect(client.addresses?.public, 'nox.example.org:8443');
       expect(client.addresses?.onion, '${'a' * 56}.onion:443');
-      expect(client.supportsAccessKeys, isTrue);
     });
 
-    test('a server older than 039 states nothing, and is not asked to register a key', () async {
+    test('a server older than 039 states nothing', () async {
       await greetedWith(null);
 
       expect(client.addresses, isNull);
-      expect(client.supportsAccessKeys, isFalse);
     });
 
-    test('an empty list is still the support flag: the server says it has no direct address', () async {
+    test('an empty list is still a statement: the server says it has no direct address', () async {
       await greetedWith({'direct': <String>[]});
 
       expect(client.addresses?.direct, isEmpty);
+      expect(client.addresses?.public, isNull);
       expect(client.addresses?.onion, isNull);
-      expect(client.supportsAccessKeys, isTrue);
     });
 
     test('what the greeting said about addresses dies with its connection', () async {
@@ -528,7 +528,6 @@ void main() {
       });
       await socket.drop();
       await waitUntil(() => client.addresses == null, reason: 'the teardown forgets it');
-      expect(client.supportsAccessKeys, isFalse);
     });
 
     test('the server.addresses event leaves the session as it was', () async {
@@ -873,17 +872,17 @@ void main() {
       expect(waited.elapsed, lessThan(NoxSocketClient.sendTimeout + const Duration(seconds: 2)));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('pairing carries the token, the platform and the public half of the access key - and no device key', () async {
+    test('pairing carries the token and the platform - no device key and no access key', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
       final socket = factory.latest;
-      unawaited(client.pair(token: 't', platform: 'macos', accessKey: 'QUJD').then((_) {}, onError: (Object _) {}));
+      unawaited(client.pair(token: 't', platform: 'macos').then((_) {}, onError: (Object _) {}));
       await waitUntil(() => socket.commandNamed('pair') != null, reason: 'pair is sent');
 
       final data = socket.commandNamed('pair')!['data'] as Map<String, dynamic>;
-      expect(data['access_key'], 'QUJD');
       expect(data['token'], 't');
       expect(data['platform'], 'macos');
       expect(data.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection (phase 044)');
+      expect(data.containsKey('access_key'), isFalse, reason: 'no onion access keys since phase 045');
     });
   });
 

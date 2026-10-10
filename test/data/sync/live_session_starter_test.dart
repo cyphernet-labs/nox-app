@@ -16,7 +16,6 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
-import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -31,7 +30,6 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -154,7 +152,6 @@ void main() {
         prober,
         tor,
         getIt<ServerAddressesRepository>(),
-        getIt<AccessKeyRepository>(),
         getIt<NetworkChangeService>(),
         getIt<AppLifecycleService>(),
         socket,
@@ -171,20 +168,18 @@ void main() {
         getIt<FileRepository>(),
         channels,
         selector,
-        AccessKeyRegistrar(socket, getIt<AccessKeyRepository>()),
         getIt<ServerAddressesRepository>(),
       );
     });
     tearDown(() async => starter.stop());
 
     /// A server reachable only through its onion address: the direct ones say
-    /// nothing, Tor works, and this device's key is registered there.
+    /// nothing, Tor works, and the person allows it (phase 045).
     Future<void> onlyThroughTor() async {
       prober.home = <String>{};
       tor.supported = true;
       await getIt<ServerAddressesRepository>().saveFromServer(direct: const <String>[], onion: '${'a' * 56}.onion:443');
-      await getIt<AccessKeyRepository>().deviceKey();
-      await getIt<AccessKeyRepository>().markRegistered(true);
+      await getIt<ServerAddressesRepository>().setUseTor(true);
     }
 
     Future<void> settle() async {
@@ -445,9 +440,9 @@ void main() {
       await settle();
 
       expect(factory.urls.single.toString(), 'wss://${'a' * 56}.onion/ws');
-      // The access key went to the Tor client; the channel itself is opened
-      // by the transport, through the module (phase 044).
-      expect(tor.target?.host, '${'a' * 56}.onion');
+      // Tor came up; the channel itself is opened by the transport, through
+      // the module, to the address alone (phases 044, 045).
+      expect(tor.status.isReady, isTrue);
     });
 
     test('attachment bytes follow the path the socket took (FR-009)', () async {
@@ -644,12 +639,10 @@ void main() {
           prober,
           tor,
           getIt<ServerAddressesRepository>(),
-          getIt<AccessKeyRepository>(),
           getIt<NetworkChangeService>(),
           getIt<AppLifecycleService>(),
           socket,
         ),
-        AccessKeyRegistrar(socket, getIt<AccessKeyRepository>()),
         getIt<ServerAddressesRepository>(),
       );
       addTearDown(locked.stop);
