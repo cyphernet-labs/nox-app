@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,9 @@ import (
 	"nox.app/client-backend/internal/protocol"
 )
 
+// testKey is the data key every test database here is encrypted with.
+var testKey = bytes.Repeat([]byte{0x3c}, db.KeySize)
+
 // migrationsFS is the on-disk migrations directory, shared by tests that open
 // a database themselves rather than through newStore.
 func migrationsFS(t *testing.T) fs.FS {
@@ -25,7 +29,7 @@ func migrationsFS(t *testing.T) fs.FS {
 func newStore(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "store.db")
-	d, err := db.Open(path)
+	d, err := db.Open(path, testKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

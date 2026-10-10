@@ -17,7 +17,7 @@ import (
 // "survived a restart", which is the property that actually matters here.
 func openStoreAt(t *testing.T, path string) *Store {
 	t.Helper()
-	d, err := db.Open(path)
+	d, err := db.Open(path, testKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

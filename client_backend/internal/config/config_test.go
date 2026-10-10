@@ -2,6 +2,7 @@ package config
 
 import (
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,12 +18,12 @@ func TestLoad(t *testing.T) {
 		want    Config
 	}{
 		{
-			// Empty is not "unset": it removes the page and its listener with
-			// it, so nothing holds the port and nothing answers on it.
-			name:   "an empty status address disables the service page",
-			args:   []string{"-status-addr", ""},
-			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "", Limits: DefaultLimits()},
+			// The password that opens the server's data is entered on the page
+			// or through it (047): a server with no page could never open.
+			name:    "an empty status address is refused",
+			args:    []string{"-status-addr", ""},
+			getenv:  noEnv,
+			wantErr: true,
 		},
 		{
 			name:   "the service page port can be moved",
@@ -295,7 +296,7 @@ func TestLoadLink(t *testing.T) {
 		{name: "the code as well", args: []string{"-qr"}, getenv: noEnv, want: LinkConfig{StatusAddr: "127.0.0.1:8081", QR: true}},
 		{name: "an address on a network", args: []string{"-status-addr", "192.168.1.10:8081"}, getenv: noEnv, wantErr: "loopback"},
 		{name: "every interface", args: []string{"-status-addr", "0.0.0.0:8081"}, getenv: noEnv, wantErr: "loopback"},
-		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "no way to hand out a link"},
+		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "must name"},
 		{name: "a stray word", args: []string{"now"}, getenv: noEnv, wantErr: `"now"`},
 		{name: "a server flag", args: []string{"-db", "x.db"}, getenv: noEnv, wantErr: "flag provided but not defined"},
 	} {
@@ -311,5 +312,106 @@ func TestLoadLink(t *testing.T) {
 				t.Fatalf("LoadLink = %+v, %v; want %+v", got, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestTheKeyFileLiesBesideTheDatabase(t *testing.T) {
+	cfg, err := Load([]string{"-db", "/srv/nox/nox.db"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.KeyPath(); got != "/srv/nox/nox.db.key" {
+		t.Fatalf("KeyPath() = %q, want the database path with .key", got)
+	}
+}
+
+func TestLoadCommand(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	env := func(k string) string {
+		if k == "NOX_STATUS_ADDR" {
+			return "127.0.0.1:9100"
+		}
+		return ""
+	}
+	tests := []struct {
+		name    string
+		args    []string
+		getenv  func(string) string
+		want    string
+		wantErr string
+	}{
+		{name: "the server's default page address", getenv: noEnv, want: "127.0.0.1:8081"},
+		{name: "the address the server was started with", getenv: env, want: "127.0.0.1:9100"},
+		{name: "the flag wins", args: []string{"-status-addr", "127.0.0.1:9200"}, getenv: env, want: "127.0.0.1:9200"},
+		{name: "an address on a network", args: []string{"-status-addr", "192.168.1.10:8081"}, getenv: noEnv, wantErr: "loopback"},
+		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "must name"},
+		{name: "a password on the command line", args: []string{"correct horse battery"}, getenv: noEnv, wantErr: "never given"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := LoadCommand("unlock", tt.args, tt.getenv)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadCommand(%q) = %v, want an error about %q", tt.args, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got.StatusAddr != tt.want {
+				t.Fatalf("LoadCommand(%q) = %+v, %v; want %s", tt.args, got, err, tt.want)
+			}
+		})
+	}
+}
+
+// The file may come before the flag or after it: the flag package stops at
+// the first word that is not a flag, and a file named first would otherwise
+// leave every flag after it unread - a restore landing in the working
+// directory instead of where -db said.
+func TestTheBackupFileMayComeBeforeOrAfterTheFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"/backups/nox.tar", "-db", "/srv/nox/nox.db"},
+		{"-db", "/srv/nox/nox.db", "/backups/nox.tar"},
+	} {
+		got, err := LoadRestore(args)
+		if err != nil {
+			t.Fatalf("LoadRestore(%q): %v", args, err)
+		}
+		want := RestoreConfig{File: "/backups/nox.tar", DBPath: "/srv/nox/nox.db", FilesPath: "/srv/nox/nox.db-files"}
+		if got != want {
+			t.Fatalf("LoadRestore(%q) = %+v, want %+v", args, got, want)
+		}
+	}
+	got, err := LoadRestore([]string{"b.tar", "-db", "/x/nox.db", "-files", "/data/files"})
+	if err != nil || got.FilesPath != "/data/files" {
+		t.Fatalf("LoadRestore with -files = %+v, %v", got, err)
+	}
+	for name, args := range map[string][]string{
+		"no -db":       {"b.tar"},
+		"no file":      {"-db", "/x/nox.db"},
+		"two files":    {"a.tar", "b.tar", "-db", "/x/nox.db"},
+		"an odd flag":  {"b.tar", "-db", "/x/nox.db", "-tor"},
+		"an empty -db": {"b.tar", "-db", ""},
+	} {
+		if _, err := LoadRestore(args); err == nil {
+			t.Errorf("%s: LoadRestore(%q) succeeded", name, args)
+		}
+	}
+}
+
+func TestLoadBackupMakesTheFileAbsolute(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	t.Chdir(t.TempDir())
+	got, err := LoadBackup([]string{"nox.tar", "-status-addr", "127.0.0.1:9100"}, noEnv)
+	if err != nil {
+		t.Fatalf("LoadBackup: %v", err)
+	}
+	if !filepath.IsAbs(got.File) || filepath.Base(got.File) != "nox.tar" {
+		t.Fatalf("File = %q, want an absolute path", got.File)
+	}
+	if got.StatusAddr != "127.0.0.1:9100" {
+		t.Fatalf("StatusAddr = %q", got.StatusAddr)
+	}
+	if _, err := LoadBackup(nil, noEnv); err == nil {
+		t.Fatal("a backup with no file was accepted")
 	}
 }

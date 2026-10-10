@@ -31,6 +31,7 @@ import (
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
+	"nox.app/client-backend/internal/vault"
 )
 
 const (
@@ -150,11 +151,17 @@ type Server struct {
 	// addrWarnings are the start parameters that were not applied (045). Set
 	// once at startup before anything serves, read by the page after.
 	addrWarnings []addressWarning
-	// formToken is what the service page's forms carry - Set, and the link
-	// buttons - and what POST /addresses and POST /link check: 32 random bytes
-	// per process, hex. A page from another site cannot read it, so it cannot
-	// forge the form even from this machine's own browser.
+	// formToken is what the service page's forms carry - Set, the link
+	// buttons and the password forms - and what every POST of the page
+	// checks: 32 random bytes per process, hex. A page from another site
+	// cannot read it, so it cannot forge the form even from this machine's
+	// own browser. Run hands in the gate's (047), so one token holds from the
+	// lock page to the open one.
 	formToken string
+	// dataKey is the key the database and the attachments are encrypted with
+	// (047), as the password unsealed it. Only a backup needs it here: the
+	// snapshot is written under it, and the archive's MAC key comes from it.
+	dataKey []byte
 
 	// requestSweep is how often the sweeper closes pairing requests whose time
 	// ran out (046). A field so tests can scale it.
@@ -596,19 +603,129 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	})
 }
 
-// Run owns the whole process: opens the database, migrates, starts the hub
-// and the HTTP server, and shuts everything down in order on ctx
-// cancellation. It returns when the process is fully stopped.
+// Run owns the whole process: it waits for the password that opens the data
+// (047), then opens the database, migrates, starts the hub and the HTTP
+// server, and shuts everything down in order on ctx cancellation. It returns
+// when the process is fully stopped.
 func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger) error {
+	return run(ctx, cfg, migrations, logger, vault.DefaultParams())
+}
+
+// run is Run with the Argon2id costs new keys are sealed with: the real ones
+// in production, small ones in tests, which seal and unseal a key many times.
+func run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger, kdf vault.Params) error {
 	// Every line of the process goes through the scrubbing handler, from the
-	// first one on: the address parameters are applied below, before anything
-	// listens (FR-022).
+	// first one on - the lock's own lines included: the address parameters
+	// are applied once the data is open, before the main port listens
+	// (FR-022).
 	logger = scrubbedLogger(logger)
-	dbs, err := db.Open(cfg.DBPath)
+	// What is on disk decides the state before anything listens: nothing - a
+	// first password; a database with its key - locked; one without the other
+	// - no start at all, rather than a new database beside a lost one.
+	state, err := detectLock(cfg.DBPath, cfg.KeyPath())
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
+	}
+	if cfg.StatusAddr == "" {
+		return errors.New("the service page is off (-status-addr is empty), and the password that opens this " +
+			"server's data is entered there or with noxd unlock through it")
+	}
+
+	// The service page gets its OWN listener, on loopback, and the main one
+	// never serves it. That is the whole protection: a check on RemoteAddr
+	// inside a handler is a check somebody eventually routes around with a
+	// header, and the main server is ordinarily bound to every interface -
+	// otherwise no phone could reach it.
+	//
+	// It stays PLAIN HTTP while the main listener is TLS, and that is a
+	// decision rather than an oversight: the socket carries no network traffic
+	// by construction, so there is nothing in transit to protect, and a
+	// certificate there would only teach an operator's browser to expect a
+	// warning - on the one page whose whole job is to take the password that
+	// opens this machine's data and hand out the way in to it.
+	//
+	// And it comes up FIRST, before the data is open, because the password is
+	// entered on it (047). A port somebody else holds is therefore a server
+	// that cannot start, where it used to be a page skipped: nothing else can
+	// unlock it.
+	statusListener, err := net.Listen("tcp", cfg.StatusAddr)
+	if err != nil {
+		return fmt.Errorf("service page on %s - the password is entered there, so the server cannot start without it: %w",
+			cfg.StatusAddr, err)
+	}
+	if err := assertLoopback(statusListener); err != nil {
+		// The config check catches the mistake when it is made; this is the
+		// guarantee. A name can resolve to loopback at parse time and
+		// somewhere else at bind time, and the difference between those two
+		// moments is a machine link on a network.
+		_ = statusListener.Close()
+		return err
+	}
+	g := newGate(cfg, state, kdf, logger)
+	page := startPage(statusListener, g.handler(), logger)
+	// On every way out. The open server stops it itself, earlier, in the
+	// order invariant 9 sets; this is for the ways out before that.
+	defer func() { _ = page.stop() }()
+
+	// Printed, or nobody learns it exists: the password goes in there, and
+	// later the link for a new device comes out of it. The scheme is stated on
+	// purpose: the main listener is TLS, and an operator who assumes the page
+	// followed it gets a browser error instead of a password field.
+	pageURL := "http://" + page.addr
+	if state == stateSetup {
+		logger.Info("no password is set yet - set one on the service page, or with noxd unlock; "+
+			"devices cannot reach this server until then", "url", pageURL, "tls", false)
+	} else {
+		logger.Info("this server is locked - enter its password on the service page, or with noxd unlock; "+
+			"devices cannot reach it until then", "url", pageURL, "tls", false)
+	}
+
+	key, opener, ok := g.awaitKey(ctx)
+	if !ok {
+		logger.Info("stopped while locked")
+		return nil
+	}
+	return serve(ctx, cfg, migrations, logger, key, g, page, opener)
+}
+
+// serve opens the data with key and runs the server until ctx ends: what Run
+// did before 047, from the database on.
+//
+// The request that brought the key is answered exactly once: once the main
+// port listens, or with why the server could not start - after which the
+// process goes down with the same reason in its log, as a database that failed
+// to open always did. A failure is answered BEFORE the page stops: stopping it
+// ends that request's context, and an answer given after that reached nobody,
+// so every such failure read "the server is stopping" instead of its reason.
+func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger, key []byte, g *gate,
+	page *servicePage, opener gateRequest) (err error) {
+	opened := time.Now()
+	answered := false
+	refuse := func(err error) {
+		// A server stopped while it opened has nothing to report but that,
+		// and the request hears it from the page's own stop.
+		if ctx.Err() == nil {
+			opener.answer(codeInternal, "the password was accepted, but the server cannot start and is stopping: "+err.Error())
+		}
+		answered = true
+	}
+	dbs, err := db.Open(cfg.DBPath, key)
+	if err != nil {
+		err = fmt.Errorf("open database: %w", err)
+		refuse(err)
+		return err
 	}
 	defer func() { _ = dbs.Close() }()
+	// Registered after the database's close, so it runs before it: whatever
+	// way serve ends, the page stops before the database it reads closes
+	// (invariant 9).
+	defer func() { _ = page.stop() }()
+	// Registered after the page's stop, so it runs before it - see above.
+	defer func() {
+		if err != nil && !answered {
+			refuse(err)
+		}
+	}()
 
 	version, err := db.Migrate(ctx, dbs.Write, migrations)
 	if err != nil {
@@ -624,7 +741,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
 
-	bl, err := blob.Open(cfg.FilesPath)
+	bl, err := blob.Open(cfg.FilesPath, key)
 	if err != nil {
 		return fmt.Errorf("open files dir: %w", err)
 	}
@@ -668,6 +785,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
 	srv.addrWarnings = addrWarnings
+	srv.dataKey = key
+	// One form token for the life of the process: a form the lock page
+	// rendered is still the page's own once the server has opened.
+	srv.formToken = g.formToken
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
 	// older than a day are the only garbage under indefinite retention.
@@ -707,46 +828,22 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// always there).
 	srv.refreshAddresses(ctx)
 
-	// The service page gets its OWN listener, on loopback, and the main one
-	// never serves it. That is the whole protection: a check on RemoteAddr
-	// inside a handler is a check somebody eventually routes around with a
-	// header, and the main server is ordinarily bound to every interface -
-	// otherwise no phone could reach it. An empty address removes the listener
-	// rather than the handler, so the port is not even held.
-	//
-	// It stays PLAIN HTTP while the main listener is TLS, and that is a
-	// decision rather than an oversight: the socket carries no network traffic
-	// by construction, so there is nothing in transit to protect, and a
-	// certificate there would only teach an operator's browser to expect a
-	// warning - on the one page whose whole job is to hand out the right to
-	// own this machine.
-	var statusServer *http.Server
-	var statusListener net.Listener
-	if cfg.StatusAddr != "" {
-		// Its OWN error variable. Assigning to the function's would leave it
-		// non-nil on the "logged it and carried on" path, and the next `if err
-		// != nil` anybody adds below would turn a busy port back into a server
-		// that refuses to start.
-		listener, listenErr := net.Listen("tcp", cfg.StatusAddr)
-		statusListener = listener
-		if listenErr != nil {
-			logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", listenErr)
-		} else if err := assertLoopback(statusListener); err != nil {
-			// The config check catches the mistake when it is made; this is the
-			// guarantee. A name can resolve to loopback at parse time and
-			// somewhere else at bind time, and the difference between those two
-			// moments is a machine link on a network.
-			_ = statusListener.Close()
-			return err
-		}
-		if statusListener != nil {
-			statusServer = &http.Server{
-				Handler:           srv.StatusHandler(),
-				ReadHeaderTimeout: pageReadHeaderTimeout,
-				ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
-			}
-		}
+	// The main port opens only now (047): until the data is open there is
+	// nothing a device could be served, and a port that answers nothing would
+	// still say a server is there. Bound here rather than in its goroutine, so
+	// a port somebody else holds is said to the person who just unlocked.
+	raw, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("the main port %s cannot be opened: %w", cfg.Addr, err)
 	}
+	// The machine's PUBLIC key, which is what an operator compares with the
+	// one in a link; the private half and every token stay out of this line.
+	logger.Info("listening", "addr", cfg.Addr, "tls", "1.3",
+		"server_key", base64.StdEncoding.EncodeToString(machine.PublicKey))
+	g.opened(srv)
+	opener.answer("", "")
+	answered = true
+	logger.Info("server unlocked", "took_ms", time.Since(opened).Milliseconds())
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
@@ -754,82 +851,57 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// connections that are still being told goodbye, and it reads the
 	// database, so it stops after the drain and before the database closes
 	// (invariant 9) rather than the moment shutdown begins. The request sweeper
-	// (046) does both as well, and stops beside it.
+	// (046) does both as well, and stops beside it - and so does the gate's
+	// keeper (047), which may be writing a backup out of the database.
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	defer stopWatch()
 	sweepCtx, stopSweep := context.WithCancel(context.Background())
 	defer stopSweep()
+	keepCtx, stopKeeper := context.WithCancel(context.Background())
+	defer stopKeeper()
 
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
+	eg, gctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
 		h.Run(hubCtx)
 		return nil
 	})
-	g.Go(func() error {
+	eg.Go(func() error {
 		return srv.runDispatcher(gctx)
 	})
-	g.Go(func() error {
+	eg.Go(func() error {
 		srv.runAddressWatcher(watchCtx)
 		return nil
 	})
-	g.Go(func() error {
+	eg.Go(func() error {
 		srv.runRequestSweeper(sweepCtx)
 		return nil
 	})
-	g.Go(func() error {
-		raw, err := net.Listen("tcp", cfg.Addr)
-		if err != nil {
-			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
-		}
-		// The machine's PUBLIC key, which is what an operator compares with the
-		// one in a link; the private half and every token stay out of this line.
-		logger.Info("listening", "addr", cfg.Addr, "tls", "1.3",
-			"server_key", base64.StdEncoding.EncodeToString(machine.PublicKey))
+	eg.Go(func() error {
+		g.serveOpen(keepCtx)
+		return nil
+	})
+	eg.Go(func() error {
 		channel := srv.newChannelListener(raw, tlsConfig, serverKey, srv.channelTimeout)
 		if err := httpServer.Serve(channel); !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 		}
 		return nil
 	})
-	if statusServer != nil {
-		g.Go(func() error {
-			// Printed, or nobody learns it exists: it is where the link for a
-			// new device is. The scheme is stated on purpose: the main listener
-			// is TLS, and an operator who assumes the page followed it gets a
-			// browser error instead of a pairing code.
-			logger.Info("service page for this machine only, plain HTTP by design",
-				"url", "http://"+statusListener.Addr().String(), "tls", false)
-			if err := statusServer.Serve(statusListener); !errors.Is(err, http.ErrServerClosed) {
-				// Logged, NOT returned. Returning it cancels the group and
-				// takes the whole messenger down: a port somebody else already
-				// holds - 8081 is not rare, and a second noxd with its own -db
-				// would collide by default - would stop people talking to each
-				// other over a page nobody had opened yet.
-				logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", err)
-			}
-			return nil
-		})
-	}
-	g.Go(func() error {
+	eg.Go(func() error {
 		<-gctx.Done()
 		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		err := httpServer.Shutdown(shCtx)
 		cancel()
-		if statusServer != nil {
-			// Down with the main one and BEFORE the database closes: a request
-			// arriving mid-shutdown would otherwise read a store being closed
-			// underneath it (invariant 9).
-			//
-			// Its OWN deadline, not the leftovers of the main one: sharing an
-			// expired context closes the listener and returns immediately,
-			// leaving a page request in flight to race the database close -
-			// the exact thing the ordering is for.
-			statusCtx, cancelStatus := context.WithTimeout(context.Background(), shutdownTimeout)
-			statusErr := statusServer.Shutdown(statusCtx)
-			cancelStatus()
-			if statusErr != nil && err == nil {
-				err = statusErr
-			}
+		// Down with the main one and BEFORE the database closes: a request
+		// arriving mid-shutdown would otherwise read a store being closed
+		// underneath it (invariant 9). The page ends every request's context
+		// first, so a backup being written stops rather than outliving the
+		// database; and it waits on its OWN deadline, not the leftovers of the
+		// main one - sharing an expired context closes the listener and
+		// returns immediately, leaving a page request in flight to race the
+		// database close, the exact thing the ordering is for.
+		if pageErr := page.stop(); pageErr != nil && err == nil {
+			err = pageErr
 		}
 		// Shutdown ignores hijacked connections; wait for their handlers so
 		// the going-away close frames flush and nothing touches the store
@@ -840,8 +912,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			logger.Warn("connections still draining at shutdown deadline", "err", waitErr)
 		}
 		cancelDrain()
-		// Then the watcher, the request sweeper and the hub; Run returns - the
-		// errgroup waits for all three before the database closes.
+		// Then the keeper, the watcher, the request sweeper and the hub; serve
+		// returns - the errgroup waits for all of them before the database
+		// closes.
+		stopKeeper()
 		stopWatch()
 		stopSweep()
 		stopHub()
@@ -850,7 +924,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		}
 		return nil
 	})
-	return g.Wait()
+	return eg.Wait()
 }
 
 // assertIdentitySchema refuses to start on a database written before the
@@ -912,21 +986,15 @@ func staleSchemaError(dbPath string) error {
 // shipped to collectors and read by whoever reads logs, while the link is a way
 // in for ten minutes - from anywhere, since a device can pair through the onion
 // service, whose key the link carries packed. The service page and `noxd link`
-// hand it out on this machine instead, and both are named here. Without the
-// page's listener there is no way to get a link at all - neither of them works
-// - and that is said loudly, because a machine with no device and no link
-// cannot be paired.
+// hand it out on this machine instead, and both are named here. The page always
+// listens: since 047 a server cannot start without it, because its password is
+// entered there.
 func sayHowToPair(ctx context.Context, st *store.Store, cfg config.Config, logger *slog.Logger) error {
 	counts, err := st.CountEverything(ctx)
 	if err != nil {
 		return fmt.Errorf("count devices: %w", err)
 	}
 	if counts.Devices > 0 {
-		return nil
-	}
-	if cfg.StatusAddr == "" {
-		logger.Error("no device can reach this server, and the service page is off (-status-addr is empty) - " +
-			"neither the page nor `noxd link` can hand out a link to pair one; start it with -status-addr")
 		return nil
 	}
 	logger.Info("no device can reach this server yet - the service page shows a link to pair one, and `noxd link` prints it",

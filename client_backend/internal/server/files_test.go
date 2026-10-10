@@ -18,6 +18,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
 )
@@ -122,10 +123,14 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if code := putBytes(t, ts, token, payload); code != http.StatusNotFound {
 		t.Fatalf("reused upload token = %d, want 404", code)
 	}
-	// Bytes are on disk under the server id, byte-identical.
+	// Bytes are on disk under the server id, encrypted (047), and open to the
+	// very bytes that were sent.
 	disk, err := os.ReadFile(filepath.Join(srv.cfg.FilesPath, fileID))
-	if err != nil || !bytes.Equal(disk, payload) {
-		t.Fatalf("disk bytes: %d err=%v", len(disk), err)
+	if err != nil || int64(len(disk)) != blob.CipherLen(int64(len(payload))) || bytes.Contains(disk, payload[:4096]) {
+		t.Fatalf("disk bytes: %d err=%v, want the sealed chunks of the file and none of its plaintext", len(disk), err)
+	}
+	if got := diskBytes(t, srv, fileID); !bytes.Equal(got, payload) {
+		t.Fatalf("the file opens to %d bytes that are not the ones sent", len(got))
 	}
 
 	// Attachment-only send: full attachment in the echo...
@@ -202,8 +207,8 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	anna.expectErr(24, protocol.ErrInvalidRequest) // already bound
 
 	// Un-uploaded file: send rejected. An oversized PUT keeps nothing it
-	// carried; a short one keeps its bytes for a continuation (043). Neither
-	// finishes the file.
+	// carried; a short one keeps its whole chunks for a continuation (043,
+	// 047). Neither finishes the file.
 	fileID3, token3 := uploadBegin(t, anna, 25, "half.bin", 1000, "application/octet-stream")
 	anna.send(fmt.Sprintf(`{"id":26,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n4","attachment":{"file_id":%q}}}`, chatID, fileID3))
 	anna.expectErr(26, protocol.ErrInvalidRequest)
@@ -213,12 +218,12 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if _, _, received := declare(t, anna, 28, "half.bin", 1000, "application/octet-stream", fileID3); received != 0 {
 		t.Fatalf("after an oversized PUT received = %d, want 0: none of its bytes are kept", received)
 	}
-	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 1000, "application/octet-stream")
-	if code := putBytes(t, ts, token4, randomPayload(t, 500)); code != http.StatusBadRequest {
+	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 3*blob.ChunkSize, "application/octet-stream")
+	if code := putBytes(t, ts, token4, randomPayload(t, blob.ChunkSize+500)); code != http.StatusBadRequest {
 		t.Fatalf("short PUT = %d, want 400", code)
 	}
-	if _, _, received := declare(t, anna, 29, "short.bin", 1000, "application/octet-stream", fileID4); received != 500 {
-		t.Fatalf("after a short PUT received = %d, want its 500 bytes kept", received)
+	if _, _, received := declare(t, anna, 29, "short.bin", 3*blob.ChunkSize, "application/octet-stream", fileID4); received != blob.ChunkSize {
+		t.Fatalf("after a short PUT received = %d, want its whole chunk kept", received)
 	}
 	if srv.blob.Exists(fileID3) || srv.blob.Exists(fileID4) {
 		t.Fatal("an unfinished upload became a finished file")
@@ -461,7 +466,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUpload bound: %v", err)
 	}
-	boundUp, err := srv.blob.Create(boundAtt.FileID)
+	boundUp, err := srv.blob.Create(boundAtt.FileID, 5)
 	if err != nil {
 		t.Fatalf("blob.Create bound: %v", err)
 	}
@@ -484,7 +489,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUpload: %v", err)
 	}
-	up, err := srv.blob.Create(oldAtt.FileID)
+	up, err := srv.blob.Create(oldAtt.FileID, 3)
 	if err != nil {
 		t.Fatalf("blob.Create: %v", err)
 	}
@@ -501,15 +506,17 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	// Old UNFINISHED upload (043): a part and its record, never completed.
 	// The same rule as for a finished one: a day unbound and it goes, both
 	// files with it.
-	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 10, "x/y", 100)
+	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 2*blob.ChunkSize, "x/y", 100)
 	if err != nil {
 		t.Fatalf("CreateUpload half: %v", err)
 	}
-	half, err := srv.blob.Create(halfAtt.FileID)
+	half, err := srv.blob.Create(halfAtt.FileID, 2*blob.ChunkSize)
 	if err != nil {
 		t.Fatalf("blob.Create half: %v", err)
 	}
-	if _, err := half.Write([]byte("half")); err != nil {
+	// A whole chunk and a little more: the chunk is sealed into the part and
+	// recorded, the rest goes with the request.
+	if _, err := half.Write(randomPayload(t, blob.ChunkSize+10)); err != nil {
 		t.Fatalf("write half: %v", err)
 	}
 	if err := half.Suspend(); err != nil {
@@ -664,7 +671,8 @@ func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
 // download would otherwise go on reading the person's files for as long as it
 // kept reading. Its upload stops taking bytes and keeps the ones it had, its
 // download breaks off far short of the file, and the person's other devices
-// go on as they were.
+// go on as they were. The bytes it had are its whole chunks (047): the rest of
+// a chunk waits in the request's memory, and goes with the request.
 func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
 	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "revoke.db"), nil, func(s *Server) {
 		// Nothing but the revocation may end them here: silence would take a
@@ -679,12 +687,13 @@ func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
 	phone.hello(1, "")
 	const mime = "application/octet-stream"
 
-	// The phone has an upload half sent...
-	upload := randomPayload(t, 200000)
+	// The phone has an upload partly sent - a chunk sealed and part of the
+	// next one in hand...
+	upload := randomPayload(t, 4*chunk)
 	upID, upToken, _ := declare(t, phone, 2, "up.bin", len(upload), mime, "")
 	put := openRawPutAs(t, ts, lost, upToken, len(upload))
-	put.send(upload[:50000])
-	waitPart(t, srv, upID, 50000)
+	put.send(upload[:chunk+5000])
+	waitPart(t, srv, upID, chunk+5000)
 	// ...and a download it is reading, larger than the socket buffers on both
 	// ends can hold, so the server is still writing when the revocation comes.
 	movie := randomPayload(t, 32<<20)
@@ -699,11 +708,11 @@ func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
 		t.Fatalf("read the first bytes: %v", err)
 	}
 	// The owner is uploading at the same moment.
-	mine := randomPayload(t, 100000)
+	mine := randomPayload(t, 2*chunk)
 	mineID, mineToken, _ := declare(t, owner, 2, "mine.bin", len(mine), mime, "")
 	kept := openRawPutAs(t, ts, owner.dev, mineToken, len(mine))
-	kept.send(mine[:30000])
-	waitPart(t, srv, mineID, 30000)
+	kept.send(mine[:chunk+3000])
+	waitPart(t, srv, mineID, chunk+3000)
 	if n := transfersOf(srv, lost.pub); n != 2 {
 		t.Fatalf("%d of the phone's transfers are under way, want its upload and its download", n)
 	}
@@ -712,11 +721,11 @@ func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
 	owner.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, lost.pub))
 
 	// The upload: the server stops reading at once, says nothing - the
-	// connection just ends - and keeps exactly the bytes from before.
+	// connection just ends - and keeps exactly the chunk it sealed before.
 	waitIdle(t, srv, upID)
 	put.expectCut(5 * time.Second)
-	if info, err := os.Stat(partPath(srv, upID)); err != nil || info.Size() != 50000 {
-		t.Fatalf("the part after the cut: %v, %v; want the 50000 bytes from before it", info, err)
+	if info, err := os.Stat(partPath(srv, upID)); err != nil || info.Size() != blob.CipherLen(chunk) {
+		t.Fatalf("the part after the cut: %v, %v; want the one chunk sealed before it", info, err)
 	}
 	if srv.blob.Exists(upID) {
 		t.Fatal("the revoked device's upload became a file")
@@ -735,7 +744,7 @@ func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
 	eventually(t, "the phone has no transfer left", func() bool { return transfersOf(srv, lost.pub) == 0 })
 
 	// The owner's upload was never touched.
-	kept.send(mine[30000:])
+	kept.send(mine[chunk+3000:])
 	if code := kept.status(5 * time.Second); code != http.StatusNoContent {
 		t.Fatalf("the owner's upload after the revocation = %d, want 204", code)
 	}

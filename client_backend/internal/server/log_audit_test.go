@@ -23,12 +23,14 @@ import (
 // page's Set as a browser sends it - and refused as a forgery - a first device
 // paired by the machine link, an invite and a second device asking with it and
 // allowed, an upgrade through the onion service refused, and a second start
-// with a broken parameter. Run itself, on real sockets, with the logger a test
-// hands it: the scrubbing is Run's, not the test's.
+// with a broken parameter - each start through the lock (047): a first
+// password, then the password again. Run itself, on real sockets, with the
+// logger a test hands it: the scrubbing is Run's, not the test's.
 
-// pageForm is what a browser takes off the service page before a Set: the
-// form token and the machine link the page shows while no device is paired.
-func pageForm(t *testing.T, statusAddr string) (token, link string) {
+// pageTokenAndLink is what a browser takes off the service page before a Set:
+// the form token and the machine link the page shows while no device is
+// paired.
+func pageTokenAndLink(t *testing.T, statusAddr string) (token, link string) {
 	t.Helper()
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + statusAddr + "/")
 	if err != nil {
@@ -120,7 +122,7 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 	page := "http://" + cfg.StatusAddr
 
 	// --- The service page, as a browser on this machine uses it. ---
-	formToken, machineLink := pageForm(t, cfg.StatusAddr)
+	formToken, machineLink := pageTokenAndLink(t, cfg.StatusAddr)
 	if machineLink == "" {
 		t.Fatal("no machine link on the page of a machine no device can reach")
 	}
@@ -145,7 +147,7 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 	}
 	// The page still shows the link it minted - a reload never mints - rebuilt
 	// with the addresses the Set left.
-	_, machineLink = pageForm(t, cfg.StatusAddr)
+	_, machineLink = pageTokenAndLink(t, cfg.StatusAddr)
 	machine := readLink(t, machineLink)
 	if machine.Onion == nil {
 		t.Fatalf("the machine link names no onion service after the Set: %+v", machine)
@@ -192,7 +194,7 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 		t.Fatalf("Run returned %v the second time", err)
 	}
 
-	dbs, err := db.Open(cfg.DBPath)
+	dbs, err := db.Open(cfg.DBPath, runDataKey(t, cfg))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -204,6 +206,7 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 
 	out := logs.String() + again.String()
 	for _, step := range []string{
+		"no password is set yet", "this server is locked", "server unlocked",
 		"address set on the service page", "start parameter not applied", "websocket accept failed", "command handled",
 		"pairing request closed",
 	} {

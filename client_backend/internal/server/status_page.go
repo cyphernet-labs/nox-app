@@ -88,6 +88,8 @@ p.found { margin: 0; opacity: .7; }
 ul.found { margin: .3rem 0 0; padding-left: 1.25rem; }
 form.addr { margin: 1.25rem 0 0; }
 form.addr label { display: block; margin: 0 0 .35rem; opacity: .7; }
+form.pw label { display: block; margin: .6rem 0 .35rem; opacity: .7; }
+p.pwrow { margin: .8rem 0 0; }
 .addrrow { display: flex; gap: .6rem; }
 .addrrow input { flex: 1; min-width: 0; font: inherit; font-size: .95rem; padding: .4rem .7rem;
   border-radius: .4rem; border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }
@@ -154,6 +156,21 @@ it. The device that uses it is the first this server knows.</p>{{end}}
 {{- end}}
 </form>
 {{end}}
+
+<h2>Change password</h2>
+<form class="pw" method="post" action="/password/change">
+<label for="pw-current">Current password</label>
+<div class="addrrow"><input id="pw-current" type="password" name="current" autocomplete="current-password" required></div>
+<label for="pw-new">New password</label>
+<div class="addrrow"><input id="pw-new" type="password" name="password" autocomplete="new-password" required></div>
+<label for="pw-repeat">Repeat new password</label>
+<div class="addrrow"><input id="pw-repeat" type="password" name="repeat" autocomplete="new-password" required></div>
+<input type="hidden" name="token" value="{{.FormToken}}">
+{{- with .PasswordError}}
+<p class="note warn" role="alert">{{.}}</p>
+{{- end}}
+<p class="pwrow"><button type="submit" class="set">Change</button></p>
+</form>
 
 <footer>This page is only reachable from this machine. It is for people, not for programs &mdash;
 services should read /health instead.</footer>
@@ -283,6 +300,8 @@ type statusView struct {
 	Found     []string
 	Forms     []addressForm
 	FormToken string
+	// PasswordError is what the last Change said, when it refused.
+	PasswordError string
 }
 
 // addressForm is one stored address on the page: its field, and what the page
@@ -392,6 +411,8 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Found:      status.Found,
 		Forms:      addressForms(status.Stored, s.addrWarnings, query.Get("saved"), query.Get("invalid")),
 		FormToken:  s.formToken,
+		// The redirect after Change names what was wrong, never what was typed.
+		PasswordError: passwordMessage(query.Get("error")),
 	}
 	// The code is drawn only for a live link, and only when something other
 	// than this machine could dial an address in it. The LINK is shown either
@@ -449,6 +470,13 @@ func pageHeaders(w http.ResponseWriter) {
 //   - the form token matches this process's, compared in constant time - the
 //     one thing a page from elsewhere cannot read off this one.
 func (s *Server) pageFormAllowed(w http.ResponseWriter, r *http.Request) bool {
+	return formAllowed(w, r, s.formToken)
+}
+
+// formAllowed is pageFormAllowed against a given form token - the one the
+// lock page's password forms carry too (047), so a form rendered locked is
+// still believed once the server has opened.
+func formAllowed(w http.ResponseWriter, r *http.Request, formToken string) bool {
 	if !localHost(r.Host) {
 		http.Error(w, "this page is only served to this machine", http.StatusForbidden)
 		return false
@@ -462,7 +490,7 @@ func (s *Server) pageFormAllowed(w http.ResponseWriter, r *http.Request) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxPageFormBytes)
 	// The body only: a token in the URL would be one a link can carry.
 	// A body that cannot be read has no token in it.
-	if err := r.ParseForm(); err != nil || !s.formTokenMatches(r.PostForm.Get("token")) {
+	if err := r.ParseForm(); err != nil || !tokenMatches(r.PostForm.Get("token"), formToken) {
 		http.Error(w, "this form is only accepted from this page", http.StatusForbidden)
 		return false
 	}
@@ -526,10 +554,16 @@ func (s *Server) handleNewLink(w http.ResponseWriter, r *http.Request) {
 // time. An empty one never matches, not even an empty expected one: a Server
 // built without a token must refuse every form rather than accept every one.
 func (s *Server) formTokenMatches(got string) bool {
-	if s.formToken == "" || got == "" {
+	return tokenMatches(got, s.formToken)
+}
+
+// tokenMatches compares a posted token with want in constant time, refusing
+// an empty one on either side.
+func tokenMatches(got, want string) bool {
+	if want == "" || got == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(s.formToken)) == 1
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // localHost reports whether a Host header names this machine.

@@ -23,8 +23,12 @@ import (
 var migrationsFS embed.FS
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "link" {
-		os.Exit(link(os.Args[2:]))
+	// The commands that talk to a server already running on this machine (046,
+	// 047), and the one that needs none (restore). Each exits on its own.
+	if len(os.Args) > 1 {
+		if command, ok := commands[os.Args[1]]; ok {
+			os.Exit(command(os.Args[2:]))
+		}
 	}
 
 	// Scrubbed from the very first line: a configuration error can quote the

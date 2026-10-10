@@ -65,7 +65,7 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key.db")
 
 	open := func() (*Store, func()) {
-		d, err := db.Open(path)
+		d, err := db.Open(path, testKey)
 		if err != nil {
 			t.Fatalf("db.Open: %v", err)
 		}
@@ -196,7 +196,7 @@ func TestTokenSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tokens.db")
 
 	open := func() (*Store, func()) {
-		d, err := db.Open(path)
+		d, err := db.Open(path, testKey)
 		if err != nil {
 			t.Fatalf("db.Open: %v", err)
 		}
@@ -276,6 +276,34 @@ func TestDeviceListCarriesWhatDistinguishesADevice(t *testing.T) {
 	d := devices[0]
 	if d.Platform == "" || d.CreatedAt == 0 || d.LastSeenAt == 0 {
 		t.Fatalf("device = %+v: a row has to let a person recognise their own", d)
+	}
+}
+
+// What a restore shows (047): every device the store lets in, oldest first,
+// found without knowing whose they are - and a revoked one is not among them.
+func TestAllDevicesAreTheOnesTheStoreLetsIn(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pairFirst(t, s, "dev-phone")
+	for i, key := range []string{"dev-laptop", "dev-tablet"} {
+		now := int64(200 + 100*i)
+		if _, err := pairID(ctx, s, issueLink(t, s, now), key, "macos", now); err != nil {
+			t.Fatalf("pair %s: %v", key, err)
+		}
+	}
+	if _, err := s.RevokeDevice(ctx, "dev-tablet", 400); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	devices, err := s.AllDevices(ctx)
+	if err != nil {
+		t.Fatalf("AllDevices: %v", err)
+	}
+	var keys []string
+	for _, d := range devices {
+		keys = append(keys, d.DeviceKey)
+	}
+	if strings.Join(keys, ",") != "dev-phone,dev-laptop" {
+		t.Fatalf("devices = %v, want the phone and the laptop, oldest first", keys)
 	}
 }
 

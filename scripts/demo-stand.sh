@@ -16,6 +16,15 @@
 # TWO stands can run at once, which is what proves the channel check: a second
 # server on a second key, at a second port, is the only way to show that a
 # device refuses the machine it did not pair with.
+#
+# The server starts LOCKED (047): its data is encrypted, and the password that
+# opens it is entered after every start. This script enters it with `noxd
+# unlock` - from NOX_STAND_PASSWORD when that is set, piped on standard input
+# and never written anywhere, or by asking at the terminal. A fresh stand takes
+# the password as its first one; a stand that is reused needs the one it was
+# given. tor does not wait for it: its onion service points at a port nobody
+# holds until the password is in, which is what a device away from home sees
+# of a locked server.
 set -euo pipefail
 
 PORT="${PORT:-8080}"
@@ -38,14 +47,18 @@ usage: scripts/demo-stand.sh [--stand DIR] [--port N] [--status-port N]
   --tor-bin PATH   the tor to run beside the server (default: \$TOR_BIN, else
                    tor on the PATH; 0.4.9 or newer)
   --no-tor         no tor: the stand is reachable directly only
-  --fresh          delete the stand first. A FRESH STAND IS A FRESH KEY AND A
-                   FRESH ONION ADDRESS: every link ever issued by the old one
-                   stops working, and every device paired with it refuses to
-                   connect. Off by default - it used to be unconditional, which
-                   made every scenario that needs to come BACK to a stand look
-                   like a broken build.
+  --fresh          delete the stand first. A FRESH STAND IS A FRESH KEY, A
+                   FRESH ONION ADDRESS AND A FRESH PASSWORD: every link ever
+                   issued by the old one stops working, and every device paired
+                   with it refuses to connect. Off by default - it used to be
+                   unconditional, which made every scenario that needs to come
+                   BACK to a stand look like a broken build.
   --reset-app      also wipe the macOS app's data, so the next launch is a
                    genuine first install (container + keychain)
+
+  NOX_STAND_PASSWORD  the stand's password, entered with noxd unlock: the first
+                   one on a fresh stand, the same one on a reused stand. Unset,
+                   noxd unlock asks at the terminal.
 USAGE
 }
 
@@ -87,9 +100,9 @@ if [ "$FRESH" = 1 ]; then
 fi
 mkdir -p "$STAND"
 if [ -f "$STAND/nox.db" ]; then
-  echo "==> reusing the database in $STAND (same key, old links still work)"
+  echo "==> reusing the database in $STAND (same key, same password, old pairings still work)"
 else
-  echo "==> new database in $STAND (the server will mint a key)"
+  echo "==> new database in $STAND (the server will mint a key; the password you give now is its first)"
 fi
 
 if [ "$RESET_APP" = 1 ]; then
@@ -166,6 +179,65 @@ if [ -n "$onion" ]; then
 fi
 "$STAND-noxd" "${noxd_args[@]}" > "$STAND/server.log" 2>&1 &
 
+# The server comes up locked: only its service page listens, and the main port
+# opens once the password is in. So first the page, then the password, then
+# the main port.
+#
+# OUR page, by our log: a page answering on the port may be another stand's,
+# and the password must not go there. The line is written once the page's
+# listener is bound.
+echo -n "==> waiting for the service page"
+for _ in $(seq 1 100); do
+  if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+    echo
+    echo "the server refused to start:" >&2
+    grep '"level":"ERROR"' "$STAND/server.log" >&2
+    exit 1
+  fi
+  if ! pgrep -f "$STAND-noxd" >/dev/null 2>&1; then
+    echo
+    echo "the server stopped while starting:" >&2
+    tail -20 "$STAND/server.log" >&2
+    exit 1
+  fi
+  if grep -qE '"msg":"(no password is set yet|this server is locked)' "$STAND/server.log" 2>/dev/null; then break; fi
+  echo -n "."
+  sleep 0.2
+done
+echo
+
+echo "==> unlocking the server with noxd unlock"
+# noxd unlock says why it failed - a wrong password, or why a server with the
+# right one could not start, its main port taken by another process above all.
+# A server that could not start also writes it to its log on the way down, a
+# moment after the command returned: show that too, rather than let set -e end
+# the script on the command's line alone.
+unlock_failed() {
+  for _ in $(seq 1 10); do
+    grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null && break
+    pgrep -f "$STAND-noxd" >/dev/null 2>&1 || break
+    sleep 0.2
+  done
+  if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+    echo "the server could not start:" >&2
+    grep '"level":"ERROR"' "$STAND/server.log" >&2
+  fi
+  exit 1
+}
+if [ -n "${NOX_STAND_PASSWORD:-}" ]; then
+  # Twice: a fresh server asks for the password and its repeat, a locked one
+  # reads the first line and leaves the second.
+  if ! printf '%s\n%s\n' "$NOX_STAND_PASSWORD" "$NOX_STAND_PASSWORD" \
+    | "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"; then
+    unlock_failed
+  fi
+elif [ -t 0 ]; then
+  "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT" || unlock_failed
+else
+  echo "no terminal to ask the password at: set NOX_STAND_PASSWORD" >&2
+  exit 1
+fi
+
 # Waiting for OUR server, which is not the same as waiting for the port.
 #
 # Two traps. A server that cannot start - its port taken, its database written
@@ -196,9 +268,8 @@ for _ in $(seq 1 100); do
 done
 echo
 
-# An ERROR can land between the two greps above - a taken service-page port is
-# logged just before "listening", and without the page there is no link to
-# hand out - so the log is read once more before the line is believed.
+# "listening" is written once the port is bound; a moment more, and a failure
+# right after it would be in the log too.
 sleep 0.3
 if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
   echo "the server refused to start:" >&2
@@ -273,6 +344,10 @@ $onion_hint
 
   a new one - the one above stops working (-qr draws it in the terminal too):
       $STAND-noxd link -status-addr 127.0.0.1:$STATUS_PORT
+
+  the server is unlocked until it stops; after every start it waits for its
+  password again, and hands out no link until it has it:
+      $STAND-noxd unlock -status-addr 127.0.0.1:$STATUS_PORT
 
   check it works, without clicking anything:
       (cd client_backend && go run ./cmd/smoke '$link')
