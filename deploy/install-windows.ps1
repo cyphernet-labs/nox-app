@@ -152,7 +152,10 @@ function ConvertFrom-JournalField([string]$S) { return [System.Text.Encoding]::U
 
 # Open-Journal makes the folder of the record on disk the first time the run
 # records a step - SYSTEM's and the administrators' alone, made so even when
-# it was there already, before anything is written into it.
+# it was there already, before anything is written into it. Any account may
+# make a folder in ProgramData, and what it made stays its own whatever the
+# rights say, so a folder somebody else owns, or may still write to, is
+# refused: the record's steps are run, and the copies in it are put back.
 function Open-Journal {
     if ($script:JournalOpen) { return }
     if (-not $script:JournalDir.EndsWith('NOX-install')) { Fail "no folder for the record of changes: $($script:JournalDir)" }
@@ -160,6 +163,7 @@ function Open-Journal {
     if (-not $Prefix) {
         $out = Invoke-Native "$env:SystemRoot\System32\icacls.exe" @($script:JournalDir, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
         if ($out.ExitCode -ne 0) { Fail "could not set who may open $($script:JournalDir)`: $($out.Output.Trim())" }
+        if (-not (Test-PathTrusted $script:JournalDir)) { Fail "$($script:JournalDir) belongs to another account, or others may write to it; look at it, remove it, and run the script again" }
     }
     $script:JournalOpen = $true
 }
@@ -215,21 +219,28 @@ function Set-Committed {
     Close-Journal
 }
 
-# Test-JournalTrusted says whether the record on disk can only have been
-# written by SYSTEM, the administrators or this account: they own its folder
-# and its file, and nobody else may write to them. (A check under -Prefix is
-# the account's own.)
-function Test-JournalTrusted {
-    if ($Prefix) { return $true }
+# Test-PathTrusted says whether only SYSTEM, the administrators or this
+# account can have written the file or folder: one of them owns it, and
+# nobody else may write to it.
+function Test-PathTrusted([string]$Path) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $trusted = @('S-1-5-18', 'S-1-5-32-544', $me)
     $writes = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, Delete, ChangePermissions, TakeOwnership'
+    $acl = Get-Acl -LiteralPath $Path
+    if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and ($trusted -notcontains $rule.IdentityReference.Value)) { return $false }
+    }
+    return $true
+}
+
+# Test-JournalTrusted says whether the record on disk can only have been
+# written by SYSTEM, the administrators or this account: its folder and its
+# file both. (A check under -Prefix is the account's own.)
+function Test-JournalTrusted {
+    if ($Prefix) { return $true }
     foreach ($p in @($script:JournalDir, (Join-Path $script:JournalDir 'journal'))) {
-        $acl = Get-Acl -LiteralPath $p
-        if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
-        foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-            if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and ($trusted -notcontains $rule.IdentityReference.Value)) { return $false }
-        }
+        if (-not (Test-PathTrusted $p)) { return $false }
     }
     return $true
 }
@@ -284,6 +295,10 @@ function Resume-Interrupted {
     }
     if ($script:UndoFailed) {
         Save-FailedJournal
+        # The server that ran before may be running again all the same, and
+        # locked: how it opens is said here too, from its own service.
+        $script:PreviousStatusPort = Get-PreviousStatusPort
+        Write-ServerLockedAgain
         Fail 'not everything the interrupted run changed could be taken back: see the lines above'
     }
     Close-Journal
@@ -919,7 +934,7 @@ function Install-Tor {
 
 function Get-Health {
     try {
-        $req = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$($script:StatusPort)/health")
+        $req = [System.Net.WebRequest]::Create("http://127.0.0.1:$($script:StatusPort)/health")
         $req.Proxy = $null
         $req.Timeout = 3000
         $resp = $req.GetResponse()
@@ -955,6 +970,13 @@ function Get-PreviousArg([string]$Flag) {
     }
     if ($line -match ('(^|\s)' + [regex]::Escape($Flag) + '\s+"?([^"\s]+)"?')) { return $Matches[2] }
     return ''
+}
+
+# Get-PreviousStatusPort is the service page's port of the installed server,
+# or the default when there is none to read.
+function Get-PreviousStatusPort {
+    if ((Get-PreviousArg '-status-addr') -match ':(\d+)$') { return [int]$Matches[1] }
+    return $DefaultStatusPort
 }
 
 function Get-ServerArguments {
@@ -1130,8 +1152,7 @@ function Invoke-Install {
     $script:Update = (-not $script:FreshData) -or [bool](Get-PreviousArg '-addr')
     $script:Port = $Port
     if (-not $script:Port) { $prev = Get-PreviousArg '-addr'; if ($prev -match ':(\d+)$') { $script:Port = [int]$Matches[1] } else { $script:Port = $DefaultPort } }
-    $prev = Get-PreviousArg '-status-addr'
-    if ($prev -match ':(\d+)$') { $script:PreviousStatusPort = [int]$Matches[1] } else { $script:PreviousStatusPort = $DefaultStatusPort }
+    $script:PreviousStatusPort = Get-PreviousStatusPort
     $script:StatusPort = $StatusPort
     if (-not $script:StatusPort) { $script:StatusPort = $script:PreviousStatusPort }
     Write-ServerLockedAgain

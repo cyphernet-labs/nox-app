@@ -367,6 +367,10 @@ resume_interrupted() {
 	undo_run MAIN
 	if [ "$UNDO_FAILED" != 0 ]; then
 		journal_keep_failed
+		# The server that ran before may be running again all the same, and
+		# locked: how it opens is said here too, from its own service.
+		detect_install
+		say_server_locked_again
 		die "not everything the interrupted run changed could be taken back: see the lines above"
 	fi
 	journal_close
