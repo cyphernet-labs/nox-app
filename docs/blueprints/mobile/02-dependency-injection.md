@@ -175,12 +175,15 @@ abstract class AppDatabase {
   /// Closes the database when it is open. The next [db] opens it again.
   Future<void> close();
 
-  /// Closes the database and deletes it - its file, for one on the disk.
+  /// Closes the database and deletes it. On the disk that is every database
+  /// sealed under the local-data key, the other environment's too: it runs
+  /// when the key goes (a logout, data whose key is lost), and the key is
+  /// shared ([AppDataRoot.databaseFiles]).
   Future<void> clearEntireDatabase();
 }
 ```
 
-> `AppDatabase` несёт ровно эти три операции (`db`-геттер, `close()` и `clearEntireDatabase()`, закрывающий и удаляющий файл БД). Дисковые `Dev`/`Prod` получают `DeviceVault` и открывают базу только после `ensureOpen()` — с кодеком `VaultCodec`, в папке данных приложения (фаза 048, [04-data-layer.md](04-data-layer.md) §6в). Логаут-fan-out **не** оркестрируется через `AppDatabase`: `cleanData()` есть у каждого DAO (`ChatDao`, `MessageDao`, `OutboxDao`, `SyncDao`, `ItemDao`), а вызывает их `AuthRepositoryImpl.logout` через репозитории — но перед вытиранием сначала гасятся два фоновых источника записи: `LiveSessionStarter.stop()` (живой канал — резолвится под `getIt.isRegistered<T>()`, потому что зарегистрирован только в `[dev]`, §3), затем `OutboxService.stop()` (слив очереди исходящих — он есть во всех трёх окружениях, но зовётся под тем же guard'ом). Дальше идут хранилища: `SyncRepository.clear()` (курсор первым), затем `ChatRepository.clean()`, `MessageRepository.clean()` и `OutboxRepository.clean()`; в конце база закрывается под своим ключом, ключ забывается (`DeviceVault.forget`), и файл БД удаляется `clearEntireDatabase()` (фаза 048). См. [04-data-layer.md](04-data-layer.md) §6.
+> `AppDatabase` несёт ровно эти три операции (`db`-геттер, `close()` и `clearEntireDatabase()`, закрывающий базу и удаляющий её; на диске — вместе с базой другого окружения и файлами сжатия Sembast, своя — последней: у окружений одна папка данных и один ключ, [04-data-layer.md](04-data-layer.md) §6в). Дисковые `Dev`/`Prod` получают `DeviceVault` и открывают базу только после `ensureOpen()` — с кодеком `VaultCodec`, в папке данных приложения (фаза 048, [04-data-layer.md](04-data-layer.md) §6в). Логаут-fan-out **не** оркестрируется через `AppDatabase`: `cleanData()` есть у каждого DAO (`ChatDao`, `MessageDao`, `OutboxDao`, `SyncDao`, `ItemDao`), а вызывает их `AuthRepositoryImpl.logout` через репозитории — но перед вытиранием сначала гасятся два фоновых источника записи: `LiveSessionStarter.stop()` (живой канал — резолвится под `getIt.isRegistered<T>()`, потому что зарегистрирован только в `[dev]`, §3), затем `OutboxService.stop()` (слив очереди исходящих — он есть во всех трёх окружениях, но зовётся под тем же guard'ом). Дальше идут хранилища: `SyncRepository.clear()` (курсор первым), затем `ChatRepository.clean()`, `MessageRepository.clean()` и `OutboxRepository.clean()`; в конце база закрывается под своим ключом, ключ забывается (`DeviceVault.forget`), и `clearEntireDatabase()` удаляет файлы баз обоих окружений (фаза 048). См. [04-data-layer.md](04-data-layer.md) §6.
 
 ```dart
 // lib/data/local/app_database.dart (same file, dev provider)

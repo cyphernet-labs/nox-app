@@ -710,10 +710,13 @@ class ItemMapper extends BaseMapper<ItemEntity, ItemModel, dynamic, dynamic> {
 **Целевой путь:** `lib/data/local/app_database.dart`
 
 ```dart
+import 'dart:io';
+
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/vault_codec.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:sembast/sembast_io.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -723,7 +726,10 @@ abstract class AppDatabase {
   /// Closes the database when it is open. The next [db] opens it again.
   Future<void> close();
 
-  /// Closes the database and deletes it - its file, for one on the disk.
+  /// Closes the database and deletes it. On the disk that is every database
+  /// sealed under the local-data key, the other environment's too: it runs
+  /// when the key goes (a logout, data whose key is lost), and the key is
+  /// shared ([AppDataRoot.databaseFiles]).
   Future<void> clearEntireDatabase();
 }
 
@@ -768,7 +774,29 @@ abstract class _DiskAppDatabase implements AppDatabase {
   @override
   Future<void> clearEntireDatabase() async {
     await close();
-    await databaseFactoryIo.deleteDatabase(await AppDataRoot.pathOf(_name));
+    final own = await AppDataRoot.pathOf(_name);
+    // Every other database file goes first: the other environment's, sealed
+    // under the same key, and the compaction files Sembast leaves. Left behind,
+    // one would read as data whose key is lost to every launch of either
+    // environment, and the wipe of neither would delete it: no database would
+    // open on this device again, nor would a new key ever be made.
+    for (final path in await AppDataRoot.databasePaths()) {
+      if (path == own) continue;
+      try {
+        final file = File(path);
+        if (file.existsSync()) await file.delete();
+      } on FileSystemException catch (error) {
+        // The type only: the message names the path. Best effort, file by
+        // file - one that will not go must not keep the rest; a launch that
+        // still finds it retires it again.
+        logRepository.error(target: this, error: error.runtimeType);
+      }
+    }
+    // This one last. Until it goes, a read that races the wipe finds a
+    // database with no key and opens nothing; once it has gone, the next read
+    // makes a new key and a new database - and nothing after this deletes them
+    // from under it.
+    await databaseFactoryIo.deleteDatabase(own);
   }
 }
 
