@@ -29,7 +29,8 @@ import (
 const KeySize = 32
 
 // ErrWrongKey is a database file the data key does not open - a key file and
-// a database that do not belong together.
+// a database that do not belong together. Open says so before SQLite touches
+// any of the database's files (keycheck.go).
 var ErrWrongKey = errors.New("the data key does not open this database")
 
 // pragmas are fixed for every connection (CLAUDE.md invariant 13). They run
@@ -54,10 +55,15 @@ type DB struct {
 
 // Open opens both pools over the database file at path, encrypted with key.
 // A file that is not there yet is created empty; a file the key does not open
-// is ErrWrongKey.
+// is ErrWrongKey, with nothing on disk changed.
 func Open(path string, key []byte) (*DB, error) {
 	if len(key) != KeySize {
 		return nil, fmt.Errorf("open database: the data key is %d bytes, want %d", len(key), KeySize)
+	}
+	// Before SQLite: let near the files with another key, it deletes a WAL it
+	// cannot read, committed transactions and all (keycheck.go).
+	if err := checkKey(path, key); err != nil {
+		return nil, err
 	}
 	readURI, err := fileURI(path, url.Values{"vfs": {"adiantum"}})
 	if err != nil {
@@ -104,7 +110,10 @@ func connect(key []byte) func(*sqlite3.Conn) error {
 		for _, p := range pragmas {
 			if err := c.Exec(p); err != nil {
 				// The WAL pragma is the first to read the file's header, and a
-				// header the key does not decrypt is "not a database".
+				// header the key does not decrypt is "not a database". Open has
+				// refused such a key already, before any of this ran; what is
+				// left to land here is a database file too short or too damaged
+				// to say whose it is.
 				if errors.Is(err, sqlite3.NOTADB) {
 					return ErrWrongKey
 				}

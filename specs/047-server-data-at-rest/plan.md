@@ -12,7 +12,7 @@
 
 **Language/Version**: Go 1.27 (`client_backend/`).
 
-**Primary Dependencies**: `github.com/ncruces/go-sqlite3` (+ VFS `adiantum`), `golang.org/x/crypto` (`argon2`, `chacha20poly1305`, `hkdf`), `golang.org/x/term`; уходят `modernc.org/sqlite` и его `libc`.
+**Primary Dependencies**: `github.com/ncruces/go-sqlite3` (+ VFS `adiantum`), `golang.org/x/crypto` (`argon2`, `chacha20poly1305`), `golang.org/x/term`, `lukechampine.com/adiantum` (шифр той же VFS — проверка ключа до SQLite, research R11); уходят `modernc.org/sqlite` и его `libc`.
 
 **Storage**: схема без изменений; новый файл `<db>.key`; формат файлов вложений версии 1 (куски); бэкап — tar.
 
@@ -75,4 +75,4 @@ docs/client-backend/{README,demo-runbook}.md, scripts/demo-stand.sh, CLAUDE.md
 
 | Отступление | Почему нужно | Почему проще не годится |
 |---|---|---|
-| Новые прямые зависимости (`ncruces/go-sqlite3`, `x/crypto`, `x/term`) при правиле «ровно четыре» | Шифрующая VFS SQLite без CGO есть только у `ncruces/go-sqlite3`; Argon2id и AEAD — `x/crypto`; пароль без эха — `x/term` | Своя VFS поверх `modernc` — переписывать VFS SQLite; своя криптография — недопустимо |
+| Новые прямые зависимости (`ncruces/go-sqlite3`, `x/crypto`, `x/term`, `lukechampine.com/adiantum`) при правиле «ровно четыре» | Шифрующая VFS SQLite без CGO есть только у `ncruces/go-sqlite3`; Argon2id и AEAD — `x/crypto`; пароль без эха — `x/term`; `adiantum` — шифр той же VFS, уже входящий в бинарник: чужой ключ распознаётся по первым блокам файлов до того, как SQLite удалит WAL, который не смог прочитать | Своя VFS поверх `modernc` — переписывать VFS SQLite; своя криптография — недопустимо; узнавать чужой ключ от самого SQLite — терять WAL |

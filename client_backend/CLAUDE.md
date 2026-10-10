@@ -57,10 +57,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Toolchain & dependencies
 
-- Go **1.27**. Direct dependencies: exactly six — `github.com/coder/websocket`,
+- Go **1.27**. Direct dependencies: exactly seven — `github.com/coder/websocket`,
   `github.com/ncruces/go-sqlite3`, `golang.org/x/crypto`, `golang.org/x/sync`
-  (errgroup), `golang.org/x/term` and `rsc.io/qr`. Adding any other requires
-  written justification; "convenient" is not one.
+  (errgroup), `golang.org/x/term`, `lukechampine.com/adiantum` and `rsc.io/qr`.
+  Adding any other requires written justification; "convenient" is not one.
 - **Why `ncruces/go-sqlite3` (047):** it is the one SQLite for Go that encrypts
   page by page without CGO - SQLite compiled to WebAssembly and run in-process by
   wazero, with the `adiantum` VFS that encrypts every page of the database and of
@@ -68,7 +68,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   writing one over it means rewriting SQLite's VFS layer; SQLCipher is CGO.
   Its own dependencies come with it: the Wasm build of SQLite
   (`go-sqlite3-wasm`), `lukechampine.com/adiantum` and `x/sys`. Bump it only
-  with the full suite run: the Wasm build carries SQLite's own version.
+  with the full suite run: the Wasm build carries SQLite's own version, and
+  `internal/db`'s key check reads the files the way its VFS writes them.
+- **Why `lukechampine.com/adiantum` (047):** the cipher the `adiantum` VFS
+  encrypts with, already in the binary through it, imported directly for ONE
+  job: telling a data key that is not the database's before SQLite opens
+  anything (`internal/db/keycheck.go`). SQLite finds out only after it has run
+  WAL recovery with that key, and then deletes the WAL it could not read -
+  committed transactions with it. Reaching the cipher through the VFS instead
+  would mean opening the file through SQLite, which is the very thing to
+  avoid.
 - **Why `golang.org/x/crypto` (047):** Argon2id derives the key that seals the
   data key from the owner's password, XChaCha20-Poly1305 seals it and
   ChaCha20-Poly1305 seals each attachment chunk. Writing any of them here would be
@@ -221,8 +230,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `main.go`              — flags, wiring, ordered startup/shutdown (~3 lines of logic)
 - `internal/config/`     — flags + `NOX_*` env, validated at start
 - `internal/db/`         — pools, pragmas, `user_version` migration runner; the
-  `adiantum` VFS keyed with the data key (047), `Snapshot` (VACUUM INTO under the
-  same key, the key cut out of any error) and `QuickCheck`
+  `adiantum` VFS keyed with the data key (047), the key checked against the
+  first block of the database, its WAL and its journal before SQLite opens any
+  of them (`keycheck.go`), `Snapshot` (VACUUM INTO under the same key, the key
+  cut out of any error) and `QuickCheck`
 - `internal/vault/`      — the data key (047): 32 random bytes, sealed in
   `<db>.key` with XChaCha20-Poly1305 under Argon2id of the password; create,
   open, change (a new seal written beside, flushed, renamed over), the password
@@ -438,6 +449,15 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   a MAC only the data key makes, and a restore checks it before anything moves.
   The `-shm` file is not encrypted: it is the WAL's index, page numbers and
   checksums, no data.
+- **A wrong data key is told by the files, never by SQLite (047).** `db.Open`
+  decrypts the first block of the database, of its WAL and of its rollback
+  journal itself and refuses a key under which none of them shows its header,
+  before SQLite opens anything. Leaving it to SQLite's "file is not a database"
+  costs the WAL: SQLite runs its recovery first, reads every frame under that
+  key as noise, and a connection closing alone over a WAL that looks empty
+  deletes it. Any ONE of the three files is enough, never the database's
+  alone: a crash in the middle of a checkpoint can tear the database's first
+  block while the WAL still holds that page.
 - **A chunk cut back is sealed again under the same nonce.** Safe while the
   bytes are the same, which is what a client continuing an upload sends; other
   bytes under the same index could come only from a faulty device of the

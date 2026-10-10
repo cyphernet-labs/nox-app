@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -219,12 +220,17 @@ func TestAnotherKeyOpensNothing(t *testing.T) {
 	if err := d.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	other := bytes.Repeat([]byte{0x5b}, KeySize)
-	if d, err := Open(path, other); !errors.Is(err, ErrWrongKey) {
+	before := filesIn(t, filepath.Dir(path))
+	if d, err := Open(path, otherKey); !errors.Is(err, ErrWrongKey) {
 		if d != nil {
 			_ = d.Close()
 		}
 		t.Fatalf("Open with another key = %v, want ErrWrongKey", err)
+	}
+	// Not even a WAL or an index beside it: the key was refused before SQLite
+	// opened anything.
+	if after := filesIn(t, filepath.Dir(path)); !maps.Equal(before, after) {
+		t.Fatal("another key changed the files on disk")
 	}
 	if _, err := Open(path, testKey[:16]); err == nil {
 		t.Fatal("a 16-byte key was taken")
