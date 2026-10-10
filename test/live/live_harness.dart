@@ -1,15 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 
 /// What the live probes share: a `noxd` of their own, "away from home" on
-/// demand, and a network that changes when told to. Not a test - imported by
-/// the probes under `test/live/`, none of which the suite ever collects.
+/// demand, a network that changes when told to, and the files the app keeps
+/// read the way it reads them. Not a test - imported by the probes under
+/// `test/live/`, none of which the suite ever collects.
 
 /// Waits for [done], failing the probe when [budget] runs out first.
 Future<void> liveUntil(String what, Duration budget, FutureOr<bool> Function() done) async {
@@ -102,27 +107,47 @@ class LiveTor {
 }
 
 /// A `noxd` run detached from the probe, so it can outlive it.
+///
+/// It starts LOCKED (phase 047): its data is sealed under a password, only
+/// the service page listens, and the main port opens once the password is
+/// in. [start] enters it the way an install script does - `noxd unlock`, the
+/// password piped on its standard input - and returns once the server
+/// listens.
 class LiveNoxd {
-  LiveNoxd._(this.pid, this._log, this.pagePort);
+  LiveNoxd._(this.pid, this._log, this.pagePort, this.password);
+
+  /// The password the probes' servers are given. A fresh database takes it
+  /// as its first password; a server started again over the same work
+  /// directory is opened with it again - one it was not given would not open
+  /// the data.
+  static const String probePassword = 'nox-live-probe-password';
 
   final int pid;
   final File _log;
 
-  /// The loopback port of the server's service page - where its machine link
-  /// is while no device is paired: the server never writes one to its log
-  /// (phases 045 and 046).
+  /// The loopback port of the server's service page - where the password
+  /// goes in (phase 047), and where its machine link is while no device is
+  /// paired: the server never writes one to its log (phases 045 and 046).
   final int pagePort;
 
-  /// Starts `noxd` on [addr], with its service page on a free loopback port.
-  /// [onionAddr] is the address of the onion service a separate tor publishes
-  /// for it ([LiveTor]); the server only stores it and hands it out (phase
-  /// 045).
+  /// What this server's data opens with.
+  final String password;
+
+  /// The service page's address, as `noxd link` and `noxd unlock` take it in
+  /// `-status-addr`.
+  String get pageAddress => '127.0.0.1:$pagePort';
+
+  /// Starts `noxd` on [addr], with its service page on a free loopback port,
+  /// and unlocks it with [password]. [onionAddr] is the address of the onion
+  /// service a separate tor publishes for it ([LiveTor]); the server only
+  /// stores it and hands it out (phase 045).
   static Future<LiveNoxd> start({
     required String noxd,
     required String work,
     required String addr,
     required String log,
     String? onionAddr,
+    String password = probePassword,
   }) async {
     final file = File('$work/$log');
     final onion = onionAddr == null ? '' : '-onion-addr $onionAddr';
@@ -132,9 +157,52 @@ class LiveNoxd {
       '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr 127.0.0.1:$page > "${file.path}" 2>&1 & echo \$!',
     ]);
     final pid = int.parse((shell.stdout as String).trim());
-    final server = LiveNoxd._(pid, file, page);
-    await liveUntil('noxd listening on $addr', const Duration(seconds: 30), () => server.lines().any((l) => l['msg'] == 'listening'));
+    final server = LiveNoxd._(pid, file, page, password);
+    // The lock's line is written once the page listens: before it, a
+    // `noxd unlock` would find nobody to give the password to.
+    await liveUntil('noxd waiting for its password', const Duration(seconds: 30), () {
+      server._failOnError();
+      return server.lines().any(_isLockLine);
+    });
+    await server._unlock(noxd);
+    await liveUntil('noxd listening on $addr', const Duration(seconds: 60), () {
+      server._failOnError();
+      return server.lines().any((l) => l['msg'] == 'listening');
+    });
     return server;
+  }
+
+  /// The lines a server waiting for its password writes (phase 047): the
+  /// first password of a fresh one, or the password of a locked one.
+  static bool _isLockLine(Map<String, dynamic> line) {
+    final msg = line['msg'];
+    return msg is String && (msg.startsWith('no password is set yet') || msg.startsWith('this server is locked'));
+  }
+
+  /// A server that cannot start - its port taken, its database another
+  /// build's - logs why and exits: said at once rather than waited out.
+  void _failOnError() {
+    for (final line in lines()) {
+      if (line['level'] == 'ERROR') fail('noxd could not start: ${line['msg']}: ${line['err']}');
+    }
+  }
+
+  /// `noxd unlock` with the password on its standard input, twice: a fresh
+  /// server reads the password and its repeat, a locked one the first line
+  /// alone.
+  Future<void> _unlock(String noxd) async {
+    final unlock = await Process.start(noxd, ['unlock', '-status-addr', pageAddress]);
+    final out = unlock.stdout.transform(utf8.decoder).join();
+    final err = unlock.stderr.transform(utf8.decoder).join();
+    unlock.stdin.write('$password\n$password\n');
+    try {
+      await unlock.stdin.close();
+    } on Object {
+      // A command that ended before reading both lines says why in its exit
+      // code and its output, below.
+    }
+    final code = await unlock.exitCode.timeout(const Duration(minutes: 2));
+    if (code != 0) fail('noxd unlock exited with $code: ${(await err).trim()} ${(await out).trim()}');
   }
 
   static Future<int> _freeLoopbackPort() async {
@@ -171,7 +239,7 @@ class LiveNoxd {
   Future<String?> _linkOnPage() async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
     try {
-      final response = await (await client.getUrl(Uri.parse('http://127.0.0.1:$pagePort/'))).close();
+      final response = await (await client.getUrl(Uri.parse('http://$pageAddress/'))).close();
       final page = await response.transform(utf8.decoder).join();
       return RegExp(r'nox://pair/[A-Za-z0-9_-]+').firstMatch(page)?.group(0);
     } on Object {
@@ -185,4 +253,54 @@ class LiveNoxd {
     Process.killPid(pid);
     await liveUntil('noxd stopped', const Duration(seconds: 30), () => lines().any((l) => l['msg'] == 'server stopped'));
   }
+}
+
+/// Opens a file the app keeps on the disk - a download, the queue's kept
+/// copy - the way the app opens it (phase 048). It has to be sealed under this
+/// device's local-data key: a plain file there is the very defect the phase
+/// closed, and the plain bytes come out of the reader, not off the disk.
+Future<SealedReader> openSealed(String path) async {
+  final file = File(path);
+  expect(await SealedFile.isSealed(file), isTrue, reason: 'what the app keeps on the disk is sealed (phase 048)');
+  await getIt<DeviceVault>().ensureOpen();
+  return (await SealedReader.open(file))!;
+}
+
+/// The plain bytes of the sealed file at [path] against [source], a mebibyte
+/// at a time: neither side of a big file is ever in memory whole.
+Future<void> expectSamePlainBytes(String path, File source) async {
+  final plain = await openSealed(path);
+  final size = source.lengthSync();
+  expect(plain.length, size, reason: 'the plain length');
+  const window = 1024 * 1024;
+  final original = await source.open();
+  final held = Uint8List(window);
+  var filled = 0;
+  var at = 0;
+  Future<void> compare() async {
+    final want = await original.read(filled);
+    if (want.length != filled) fail('the source ends at ${at + want.length}, the file goes on');
+    for (var i = 0; i < filled; i++) {
+      if (want[i] != held[i]) fail('the bytes differ at ${at + i}');
+    }
+    at += filled;
+    filled = 0;
+  }
+
+  try {
+    await for (final chunk in plain.read()) {
+      var taken = 0;
+      while (taken < chunk.length) {
+        final n = min(window - filled, chunk.length - taken);
+        held.setRange(filled, filled + n, chunk, taken);
+        filled += n;
+        taken += n;
+        if (filled == window) await compare();
+      }
+    }
+    if (filled > 0) await compare();
+  } finally {
+    await original.close();
+  }
+  expect(at, size, reason: 'every byte compared');
 }

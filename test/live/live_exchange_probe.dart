@@ -22,8 +22,9 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 /// it needs a server, and the gate must stay runnable without one. Run it by
 /// hand after starting the server:
 ///
-///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
-///   fvm flutter test test/live/live_exchange_probe.dart `--dart-define=link=<pairing link>`
+///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db &
+///   /tmp/noxd unlock          # it starts locked (phase 047); a fresh one takes the password twice
+///   fvm flutter test test/live/live_exchange_probe.dart --dart-define=link="$(/tmp/noxd link | head -1)"
 ///
 /// These three probes pair a device key of their own first, with the link's
 /// token (phase 044): the server knows a device only by the key its channel

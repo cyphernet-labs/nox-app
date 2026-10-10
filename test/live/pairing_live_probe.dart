@@ -44,9 +44,12 @@ import 'live_target.dart';
 /// socket and channel classes the app uses.
 ///
 /// Run manually, not in the gate: it needs a server, and the native module
-/// built from this tree (every connection is a channel of it, phase 044).
-///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081
-///   2. flutter test test/live/pairing_live_probe.dart --dart-define=status=127.0.0.1:8081
+/// built from this tree (every connection is a channel of it, phase 044). The
+/// server starts locked (phase 047), and its page hands out no link until the
+/// password is in - a fresh one takes it twice, at the terminal or piped:
+///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081 &
+///   2. /tmp/noxd unlock -status-addr 127.0.0.1:8081
+///   3. fvm flutter test test/live/pairing_live_probe.dart --dart-define=status=127.0.0.1:8081
 ///
 /// With `status` every test asks the running server for a machine link of its
 /// own, the way `noxd link` does (`POST /control/link`), so the three run in

@@ -25,6 +25,7 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'live_harness.dart';
 import 'live_target.dart';
 
 /// The secure channel end to end (phase 044): the app's Dart code over the
@@ -37,10 +38,14 @@ import 'live_target.dart';
 /// second - and checks the refusal that matters most: a channel that expects
 /// another server key never opens (SC-003, US2).
 ///
-/// Manual, outside the gates - it needs the server and the new module:
-///   (cd client_backend && go build -o /tmp/nox044/noxd . && \
-///     /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081)
-///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the machine link on http://127.0.0.1:8081, or from `noxd link`
+/// Manual, outside the gates - it needs the server and the new module. The
+/// server starts locked (phase 047): only its page listens until the password
+/// is in - a fresh one takes it twice, at the terminal or piped - and only
+/// then does the page show the machine link:
+///   (cd client_backend && go build -o /tmp/nox044/noxd .)
+///   /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081 &
+///   /tmp/nox044/noxd unlock -status-addr 127.0.0.1:8081
+///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the machine link on http://127.0.0.1:8081, or the first line of `noxd link`
 void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
@@ -132,7 +137,9 @@ void main() {
     expect(withFile.success, isTrue, reason: 'message.send with the file: ${withFile.error?.code}');
     final fetched = await files.download(fileId: uploaded.data!, suggestedName: 'payload.bin');
     expect(fetched.hasData, isTrue, reason: 'download: ${fetched.exception}');
-    expect(File(fetched.data!).readAsBytesSync(), payload, reason: 'the same bytes back');
+    // The bytes land sealed (phase 048): the plain ones come out of the file
+    // the way the app reads it, never off the disk.
+    expect(await (await openSealed(fetched.data!)).readAll(), payload, reason: 'the same bytes back');
     channels.unbind();
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

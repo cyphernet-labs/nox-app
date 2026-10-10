@@ -12,10 +12,11 @@ import 'package:nox_tor/channel.dart';
 /// device key it proves itself with (phase 044).
 ///
 /// The first two come out of ONE `--dart-define=link=<pairing link>` - the
-/// version-3 link a fresh `noxd` shows on its service page (its log names the
-/// page and never the link, phase 045) - because the address and the server
-/// key are two halves of one fact and passing them separately is how they
-/// come to disagree. The device key is new for every run, as a fresh install
+/// version-3 link a fresh `noxd` shows on its service page once its password
+/// is in (its log names the page and never the link, phases 045 and 047), or
+/// the first line `noxd link` prints - because the address and the server key
+/// are two halves of one fact and passing them separately is how they come to
+/// disagree. The device key is new for every run, as a fresh install
 /// has; [pair] makes it known to the server with the link's token.
 ///
 /// Every connection is a channel of the native module, so these probes need

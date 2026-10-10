@@ -15,6 +15,7 @@ import 'package:nox_app/data/remote/datasource/real/real_message_remote_data_sou
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 
+import 'live_harness.dart';
 import 'live_target.dart';
 import 'package:nox_app/data/repository/file/file_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -33,10 +34,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// by any mock: are the bytes that come back the bytes that went up. So this
 /// compares them byte for byte.
 ///
-/// Named without the `_test` suffix so the suite never collects it. Run by hand:
+/// Named without the `_test` suffix so the suite never collects it. Run by hand,
+/// with the server up and unlocked - it starts locked (phase 047), and a fresh
+/// one takes its first password twice, at the terminal or piped:
 ///
-///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
-///   fvm flutter test test/live/live_files_probe.dart `--dart-define=link=<pairing link>`
+///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db &
+///   /tmp/noxd unlock
+///   fvm flutter test test/live/live_files_probe.dart --dart-define=link="$(/tmp/noxd link | head -1)"
 ///
 /// These three probes pair a device key of their own first, with the link's
 /// token (phase 044): the server knows a device only by the key its channel
@@ -152,7 +156,8 @@ void main() {
     // And the recipient's half: the bytes come back.
     final fetched = await files.download(fileId: fileId, suggestedName: 'payload.bin');
     expect(fetched.hasData, isTrue, reason: 'download: ${fetched.exception}');
-    final roundTripped = File(fetched.data!).readAsBytesSync();
+    // Sealed where they land (phase 048), so read the way the app reads them.
+    final roundTripped = await (await openSealed(fetched.data!)).readAll();
     expect(roundTripped.length, payload.length);
     expect(roundTripped, payload, reason: 'the same bytes, or the chain is decorative');
 

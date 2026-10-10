@@ -67,7 +67,8 @@ import 'live_target.dart';
 ///     [--dart-define=other_onion=<56>.onion]   # another server's onion service, for «a different server»
 ///
 /// The work directory is emptied at the start; keep anything worth keeping
-/// elsewhere.
+/// elsewhere. Every start of the server - the first and the two over the same
+/// database - is unlocked by the harness with its probe password (phase 047).
 ///
 /// The LAN address matters: a server bound to loopback lists no direct address
 /// at all (contract §3), and scenario 8 is about learning a new one. `noxd` and
@@ -269,7 +270,9 @@ void main() {
     expect(withFile.hasData, isTrue, reason: 'a message naming the file');
     final fetched = await getIt<FileRepository>().download(fileId: fileId, suggestedName: 'through_tor.bin');
     expect(fetched.hasData, isTrue, reason: 'download through Tor: ${fetched.exception}');
-    expect(File(fetched.data!).readAsBytesSync(), payload, reason: 'the same bytes back');
+    // The bytes land sealed (phase 048): the plain ones come out of the file
+    // the way the app reads it, never off the disk.
+    expect(await (await openSealed(fetched.data!)).readAll(), payload, reason: 'the same bytes back');
     measure('a 64 KiB file through Tor, up, sent and down: ${watch.elapsedMilliseconds} ms');
 
     // --- 3. Home: back to direct, Tor stopped within ten seconds (SC-002),
@@ -310,7 +313,8 @@ void main() {
     await firstTor.stop();
     final secondTor = await LiveTor.start(tor: tor, work: work, target: '$host:${port + 1}', log: 'tor2.log');
     expect(secondTor.onion, firstTor.onion, reason: 'the same keys, the same address');
-    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd2.log');
+    // The same database, so the same password opens it (phase 047).
+    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd2.log', password: first.password);
     stdout.writeln('NOXD: pid=${second.pid}; TOR: pid=${secondTor.pid}');
     watch = Stopwatch()..start();
     await liveUntil('live direct on the new address', const Duration(minutes: 8), () {
@@ -391,7 +395,7 @@ void main() {
       ConnectionProblem.onionUnreachable,
     });
     measure('the server stopped behind a running tor: ${serverGone?.name ?? problem()?.name} after ${watch.elapsedMilliseconds} ms');
-    final third = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd3.log');
+    final third = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd3.log', password: first.password);
     stdout.writeln('NOXD: pid=${third.pid}; TOR: pid=${thirdTor.pid}');
     watch = Stopwatch()..start();
     await liveUntil('live through Tor, the server back', const Duration(minutes: 6), () => liveOn(ConnectionPath.tor));
