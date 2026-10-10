@@ -269,8 +269,55 @@ install_binary() {
 
 # --- launchd -----------------------------------------------------------------
 
+# How long launchd may take to let a job go. noxd's own orderly stop ends
+# within 25 seconds - the main server's and the service page's deadlines, five
+# seconds each, then up to fifteen for the devices' connections to close - and
+# launchd kills a job that outlives its exit timeout, whichever comes first.
+NOX_JOB_STOP_WAIT=30
+
 job_loaded() {
 	launchctl print "system/$1" >/dev/null 2>&1
+}
+
+# job_stop LABEL takes a launchd daemon down and returns once launchd has let
+# go of it, or fails after NOX_JOB_STOP_WAIT seconds. bootout returns while
+# the job is still exiting, and a bootstrap of the same label in that window
+# fails (5: Input/output error) - so nothing is started again until the label
+# is gone. The bootout is repeated while waiting: 36 (Operation now in
+# progress) says the first is still under way.
+job_stop() {
+	local label=$1 deadline=$((SECONDS + NOX_JOB_STOP_WAIT))
+	while job_loaded "$label"; do
+		[ "$SECONDS" -lt "$deadline" ] || return 1
+		launchctl bootout "system/$label" >/dev/null 2>&1 || true
+		sleep 0.5
+	done
+}
+
+# job_bootstrap PLIST loads a daemon. A label launchd has just let go of can
+# still be refused for an instant, so a refusal is tried again twice; the
+# last attempt shows launchd's error.
+job_bootstrap() {
+	local tries=1
+	while ! launchctl bootstrap system "$1" 2>/dev/null; do
+		if [ "$tries" -ge 3 ]; then
+			launchctl bootstrap system "$1"
+			return
+		fi
+		tries=$((tries + 1))
+		sleep 1
+	done
+}
+
+# job_restore LABEL PLIST brings back the job that ran before this run, from
+# its plist - put back by then - once launchd has let go of this run's.
+job_restore() {
+	local label=$1 plist=$2
+	if ! job_stop "$label"; then
+		warn "launchd still holds $label after $NOX_JOB_STOP_WAIT seconds; once it is gone: sudo launchctl bootstrap system $(q "$plist")"
+		return 1
+	fi
+	job_bootstrap "$plist"
 }
 
 # job_install LABEL RENDERED_PLIST DEST starts a launchd daemon from a fresh
@@ -279,14 +326,17 @@ job_loaded() {
 job_install() {
 	local label=$1 rendered=$2 dest=$3
 	if job_loaded "$label"; then
-		launchctl bootout "system/$label" 2>/dev/null || die "cannot stop $label"
-		# Runs last when undoing: the old plist is back by then.
-		undo_push "launchctl bootstrap system $(q "$dest")"
+		# Recorded before the stop, so whatever the stop does, a failure from
+		# here on brings the old job back. It runs last when undoing: this
+		# run's job is gone and the old plist back by then.
+		undo_push "job_restore $label $(q "$dest")"
+		note "stopping $label"
+		job_stop "$label" || die "launchd did not stop $label within $NOX_JOB_STOP_WAIT seconds"
 	fi
 	put_file "$rendered" "$dest" 644 root wheel
 	launchctl enable "system/$label" 2>/dev/null || true
-	launchctl bootstrap system "$dest" || die "launchd did not start $label"
-	undo_push "launchctl bootout system/$label 2>/dev/null || true"
+	undo_push "job_stop $label"
+	job_bootstrap "$dest" || die "launchd did not start $label"
 }
 
 # --- tor ---------------------------------------------------------------------
