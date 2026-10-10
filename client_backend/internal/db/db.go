@@ -166,20 +166,28 @@ func QuickCheck(ctx context.Context, conn *sql.DB) error {
 	return nil
 }
 
-// fileURI is the SQLite URI for the file at path. Absolute and escaped: a
-// path with a space, a percent sign or a question mark in it is a file name,
-// not the start of a query, and a relative one would read as a host.
+// fileURI is the SQLite URI for the file at path, made absolute first: a
+// relative path would read as an authority.
 func fileURI(path string, query url.Values) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
-	p := filepath.ToSlash(abs)
-	if !strings.HasPrefix(p, "/") {
-		// A Windows path, C:/... - the URI form is file:///C:/...
-		p = "/" + p
-	}
-	return (&url.URL{Scheme: "file", Path: p, RawQuery: query.Encode()}).String(), nil
+	return slashURI(filepath.ToSlash(abs), query), nil
+}
+
+// slashURI is the URI for an absolute path written with forward slashes:
+// file:/srv/nox.db on Unix, file:C:/srv/nox.db on Windows.
+//
+// With no authority, so with no "//": SQLite hands the VFS whatever follows
+// "file:" or an authority, and given file:///C:/srv/nox.db that is
+// "/C:/srv/nox.db". SQLite's own Windows VFS drops such a leading slash; the
+// Go VFS this driver runs on does not, takes the path for one on the current
+// drive whose first directory is named "C:", and every open fails. Escaped
+// either way: a space, '%', '?' or '#' in a path is part of a name, not the
+// start of an escape, a query or a fragment.
+func slashURI(path string, query url.Values) string {
+	return (&url.URL{Scheme: "file", Path: path, OmitHost: true, RawQuery: query.Encode()}).String()
 }
 
 // redact is err's message with secret taken out of it.

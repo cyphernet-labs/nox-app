@@ -50,8 +50,9 @@ client_backend/
 **Два пула на одну базу, оба — через шифрующую VFS:**
 
 ```go
-// URI: абсолютный путь, экранированный; ключа в нём НЕТ.
-uri := "file:///abs/nox.db?vfs=adiantum"
+// URI: абсолютный путь, экранированный, без authority (на Windows — file:C:/…);
+// ключа в нём НЕТ.
+uri := "file:/abs/nox.db?vfs=adiantum"
 connect := func(c *sqlite3.Conn) error {
     // Ключ первым: до него файл читается как пустой.
     c.Exec("PRAGMA hexkey='…'")
