@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -391,42 +392,84 @@ func TestClosingTheListenerEndsHandshakesUnderWay(t *testing.T) {
 	}
 }
 
-// One source holds only its share of the handshakes under way. Past it, its
-// next connection is closed before a byte of TLS, while another source still
-// gets in. The refusals go to the log as counts - the first at once, the rest
+// One source holds only its share of the handshakes under way, and a newcomer
+// from a source at its share is taken all the same: the source's OLDEST
+// handshake is cut for it. A device is through in well under a second, so the
+// one cut is whoever has been saying nothing longest - and a stranger behind the
+// same router as a household, opening one silent connection after another,
+// cannot keep the household's devices out, nor touch another source's
+// handshakes. The cuts go to the log as counts - the first at once, the rest
 // in the next minute's line, which Close sends early - and never with an
 // address.
-func TestASourceHoldsOnlyItsShareOfHandshakes(t *testing.T) {
+func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 	buf := &syncBuffer{}
 	srv, _ := stackWith(t, slog.New(slog.NewTextHandler(buf, nil)))
 	l, pipes := pipeChannel(t, srv, time.Hour, func(l *channelListener) {
-		// Nothing but the share may close the silent ones here.
+		// Nothing but the share may cut the silent ones here.
 		l.firstByte = time.Hour
 	})
-	const stranger, home = "203.0.113.7", "198.51.100.9"
+	const home, neighbour = "203.0.113.7", "198.51.100.9"
 
+	next := pipes.dial(t, neighbour)
+	var silent []net.Conn
 	for range maxPendingPerSource {
-		pipes.dial(t, stranger)
+		silent = append(silent, pipes.dial(t, home))
 	}
-	eventually(t, "the stranger holds its share", func() bool { return heldBy(l, stranger) == maxPendingPerSource })
-	for i := range 3 {
-		start := time.Now()
-		if got := silentAfter(t, pipes.dial(t, stranger)); len(got) != 0 {
-			t.Fatalf("connection %d over the share was sent %d bytes", i+1, len(got))
-		}
-		if took := time.Since(start); took > time.Second {
-			t.Fatalf("connection %d over the share was held for %v", i+1, took)
-		}
-		if i == 0 {
-			// The first refusal is logged at once. Waiting for it keeps the two
-			// below out of its line, whatever the scheduler does.
-			eventually(t, "the first refusal is logged", func() bool { return len(shedLines(buf.String())) == 1 })
-		}
-	}
-	if n := heldBy(l, stranger); n != maxPendingPerSource {
-		t.Fatalf("the stranger holds %d handshakes after the refusals, want its share of %d", n, maxPendingPerSource)
-	}
+	eventually(t, "the source holds its share", func() bool { return heldBy(l, home) == maxPendingPerSource })
 
+	// The ninth from the source is taken, and the first of its eight goes.
+	ninth := pipes.dial(t, home)
+	if got := silentAfter(t, silent[0]); len(got) != 0 {
+		t.Fatalf("the source's oldest handshake was sent %d bytes", len(got))
+	}
+	stillOpen(t, ninth, 100*time.Millisecond)
+	// Eight still, so the ninth is among them and nothing but the oldest went.
+	if n := heldBy(l, home); n != maxPendingPerSource {
+		t.Fatalf("the source holds %d handshakes after the ninth, want its share of %d", n, maxPendingPerSource)
+	}
+	// The first cut is logged at once. Waiting for it keeps the cuts below out
+	// of its line, whatever the scheduler does.
+	eventually(t, "the first cut is logged", func() bool { return len(shedLines(buf.String())) == 1 })
+
+	// A stranger at home goes on opening silent connections, each cutting the
+	// oldest of the source's, while a device dials from the same address. One
+	// every 25 ms gives the device 200 ms before eight newer ones could make it
+	// the oldest; it needs well under 10 ms, even under the race detector.
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	var flooded atomic.Int64
+	go func() {
+		var ends []net.Conn
+		defer func() {
+			for _, end := range ends {
+				_ = end.Close()
+			}
+			close(stopped)
+		}()
+		tick := time.NewTicker(25 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tick.C:
+			}
+			// pipes.dial reports through t, which only the test's own goroutine
+			// may stop; this is its body without the report.
+			client, server := net.Pipe()
+			select {
+			case pipes.conns <- &fromConn{Conn: server, remote: &net.TCPAddr{IP: net.ParseIP(home), Port: 50000}}:
+				ends = append(ends, client)
+				flooded.Add(1)
+			case <-stop:
+				_ = client.Close()
+				_ = server.Close()
+				return
+			}
+		}
+	}()
+	// A few of them first, so the device arrives into a flood under way.
+	eventually(t, "the stranger's flood is under way", func() bool { return flooded.Load() >= 3 })
 	key, dev := serverKeyOf(t, srv), newDevice(t)
 	conn := pipes.dial(t, home)
 	opened := make(chan error, 1)
@@ -435,8 +478,11 @@ func TestASourceHoldsOnlyItsShareOfHandshakes(t *testing.T) {
 		opened <- err
 	}()
 	got := acceptWithin(t, l, 5*time.Second)
+	close(stop)
+	<-stopped
+	flood := int(flooded.Load())
 	if err := <-opened; err != nil {
-		t.Fatalf("a device from another source was refused: %v", err)
+		t.Fatalf("a device from a source a stranger keeps full was refused: %v", err)
 	}
 	if peer, ok := channelPeerFrom(withChannelPeer(t.Context(), got)); !ok || peer.deviceKey() != dev.pub {
 		t.Fatalf("the channel that passed proved %v (ok=%v), want the device's key", peer.key, ok)
@@ -445,16 +491,110 @@ func TestASourceHoldsOnlyItsShareOfHandshakes(t *testing.T) {
 	// and nobody reads this pipe's other end any more.
 	_ = conn.Close()
 	_ = got.Close()
+	// The other source's one handshake was never in the way of any of it.
+	stillOpen(t, next, 100*time.Millisecond)
+	if n := heldBy(l, neighbour); n != 1 {
+		t.Fatalf("the other source holds %d handshakes, want its one", n)
+	}
 
-	if lines := shedLines(buf.String()); len(lines) != 1 || lines[0] != (shedCounts{overSource: 1}) {
-		t.Fatalf("warnings before Close = %+v, want one carrying the first refusal", lines)
+	if lines := shedLines(buf.String()); len(lines) != 1 || lines[0] != (shedCounts{inSource: 1}) {
+		t.Fatalf("warnings before Close = %+v, want one carrying the first cut", lines)
 	}
 	_ = l.Close()
-	if lines := shedLines(buf.String()); len(lines) != 2 || lines[1] != (shedCounts{overSource: 2}) {
-		t.Fatalf("warnings after Close = %+v, want a second one carrying the other two", lines)
+	// The second line carries a cut for every connection taken while the source
+	// was at its share: the stranger's and the device's, less one if the
+	// stranger's next came after the device was through and had left room.
+	lines := shedLines(buf.String())
+	if len(lines) != 2 || lines[1].evicted != 0 || lines[1].inSource < flood || lines[1].inSource > flood+1 {
+		t.Fatalf("warnings after Close = %+v, want a second one carrying %d or %d cuts within the source", lines, flood, flood+1)
 	}
-	if log := buf.String(); strings.Contains(log, stranger) || strings.Contains(log, home) {
+	if log := buf.String(); strings.Contains(log, home) || strings.Contains(log, neighbour) {
 		t.Fatalf("an address reached the log:\n%s", log)
+	}
+}
+
+// A source's share comes back as its handshakes leave, whichever way they
+// leave: cut at the first-byte deadline, or given up by the peer. The source
+// then holds nothing, a device from it is taken and passes, and once through
+// it holds nothing either - the share counts handshakes UNDER WAY, never the
+// connections a source has made.
+func TestASourceGetsItsShareBackAsItsHandshakesLeave(t *testing.T) {
+	_, srv := newTestServer(t)
+	const home = "203.0.113.7"
+	through := func(t *testing.T, l *channelListener, pipes *pipeListener) {
+		t.Helper()
+		key, dev := serverKeyOf(t, srv), newDevice(t)
+		conn := pipes.dial(t, home)
+		opened := make(chan error, 1)
+		go func() {
+			_, err := channelOver(t.Context(), conn, key, dev.priv)
+			opened <- err
+		}()
+		got := acceptWithin(t, l, 5*time.Second)
+		if err := <-opened; err != nil {
+			t.Fatalf("a device from the source was refused: %v", err)
+		}
+		if n := heldBy(l, home); n != 0 {
+			t.Fatalf("the source holds %d handshakes with its device through, want none", n)
+		}
+		_ = conn.Close()
+		_ = got.Close()
+	}
+
+	t.Run("cut at the first-byte deadline", func(t *testing.T) {
+		l, pipes := pipeChannel(t, srv, time.Hour, func(l *channelListener) { l.firstByte = 200 * time.Millisecond })
+		var silent []net.Conn
+		for range maxPendingPerSource {
+			silent = append(silent, pipes.dial(t, home))
+		}
+		for _, conn := range silent {
+			if got := silentAfter(t, conn); len(got) != 0 {
+				t.Fatalf("a silent peer was sent %d bytes", len(got))
+			}
+		}
+		eventually(t, "the source's share is back", func() bool { return heldBy(l, home) == 0 })
+		through(t, l, pipes)
+	})
+
+	t.Run("given up by the peer", func(t *testing.T) {
+		l, pipes := pipeChannel(t, srv, time.Hour, func(l *channelListener) { l.firstByte = time.Hour })
+		var quitting []net.Conn
+		for range maxPendingPerSource {
+			quitting = append(quitting, pipes.dial(t, home))
+		}
+		eventually(t, "the source holds its share", func() bool { return heldBy(l, home) == maxPendingPerSource })
+		for _, conn := range quitting {
+			_ = conn.Close()
+		}
+		eventually(t, "the source's share is back", func() bool { return heldBy(l, home) == 0 })
+		through(t, l, pipes)
+	})
+}
+
+// A handshake cut to make room in the entry takes its source's count with it.
+// With one place in all, a connection from another source cuts the one held,
+// and the source it came from is out of the count altogether - not left at
+// zero in a map that would otherwise grow with every address that ever
+// knocked.
+func TestAHandshakeCutToMakeRoomTakesItsCountWithIt(t *testing.T) {
+	_, srv := newTestServer(t)
+	l, pipes := pipeChannel(t, srv, time.Hour, func(l *channelListener) {
+		l.maxPending = 1
+		l.firstByte = time.Hour
+	})
+	const first, second = "203.0.113.7", "198.51.100.9"
+
+	early := pipes.dial(t, first)
+	eventually(t, "the first source holds the place", func() bool { return heldBy(l, first) == 1 })
+	pipes.dial(t, second)
+	if got := silentAfter(t, early); len(got) != 0 {
+		t.Fatalf("the handshake cut to make room was sent %d bytes", len(got))
+	}
+	if n := heldBy(l, second); n != 1 {
+		t.Fatalf("the second source holds %d handshakes, want the one place", n)
+	}
+	if counted := countedSources(l); len(counted) != 1 || counted[0] != second {
+		t.Fatalf("the count names %v, want only the source still holding a handshake", counted)
 	}
 }
 
@@ -740,16 +880,27 @@ func heldBy(l *channelListener, host string) int {
 	return l.bySource[source]
 }
 
+// countedSources lists the sources l keeps a count for.
+func countedSources(l *channelListener) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	sources := make([]string, 0, len(l.bySource))
+	for source := range l.bySource {
+		sources = append(sources, source)
+	}
+	return sources
+}
+
 // shedLine is one warning about shed connections in a text log.
-var shedLine = regexp.MustCompile(`level=WARN msg="channel entry shedding connections".* over_source_limit=(\d+) evicted=(\d+)`)
+var shedLine = regexp.MustCompile(`level=WARN msg="channel entry shedding connections".* evicted_in_source=(\d+) evicted=(\d+)`)
 
 // shedLines reads the counts of every shedding warning out of a text log.
 func shedLines(log string) []shedCounts {
 	var lines []shedCounts
 	for _, m := range shedLine.FindAllStringSubmatch(log, -1) {
-		over, _ := strconv.Atoi(m[1])
+		inSource, _ := strconv.Atoi(m[1])
 		evicted, _ := strconv.Atoi(m[2])
-		lines = append(lines, shedCounts{overSource: over, evicted: evicted})
+		lines = append(lines, shedCounts{inSource: inSource, evicted: evicted})
 	}
 	return lines
 }

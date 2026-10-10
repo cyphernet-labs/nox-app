@@ -34,7 +34,10 @@ const (
 	// once, so that no single host fills the entry by itself. A source is an
 	// IPv4 address or an IPv6 /64 (sourceOf). The devices behind one home
 	// router share an address, and each of their handshakes is over in well
-	// under a second: eight at once leaves them room to spare.
+	// under a second: eight at once leaves them room to spare. Reaching it
+	// never closes the door to the source either: its next connection cuts
+	// the oldest of the eight, and a device of the house, through in well
+	// under a second, is almost never the one that has waited longest.
 	maxPendingPerSource = 8
 	// firstByteTimeout is how long a connection from anywhere but loopback may
 	// say nothing at all. TLS opens with the client's hello, sent right behind
@@ -43,8 +46,8 @@ const (
 	// the whole budget: a Tor client's hello crosses its circuit only after
 	// tor has connected here.
 	firstByteTimeout = 5 * time.Second
-	// shedLogInterval spaces the warnings about connections an entry turned
-	// away or cut: a flood must not flood the log as well.
+	// shedLogInterval spaces the warnings about the handshakes an entry cut: a
+	// flood must not flood the log as well.
 	shedLogInterval = time.Minute
 )
 
@@ -60,16 +63,16 @@ func (p channelPeer) deviceKey() string {
 	return base64.StdEncoding.EncodeToString(p.key)
 }
 
-// channelPeerKey marks a request with its connection's channelPeer.
-type channelPeerKey struct{}
+// channelConnKey marks a request with the connection it arrived on.
+type channelConnKey struct{}
 
 // withChannelPeer is the ConnContext of both entries: every request on a
-// connection carries the key that connection proved. The mark is on the
-// SOCKET, never derived from anything a request says - the same reasoning that
-// put the onion mark there.
+// connection carries that connection, and with it the key the connection
+// proved. The mark is on the SOCKET, never derived from anything a request
+// says - the same reasoning that put the onion mark there.
 func withChannelPeer(ctx context.Context, c net.Conn) context.Context {
 	if cc, ok := c.(*channelConn); ok {
-		return context.WithValue(ctx, channelPeerKey{}, cc.peer)
+		return context.WithValue(ctx, channelConnKey{}, cc)
 	}
 	return ctx
 }
@@ -78,15 +81,39 @@ func withChannelPeer(ctx context.Context, c net.Conn) context.Context {
 // means the connection never went through the channel listener - which Run
 // never lets happen, and which every caller treats as a stranger.
 func channelPeerFrom(ctx context.Context) (channelPeer, bool) {
-	p, ok := ctx.Value(channelPeerKey{}).(channelPeer)
-	return p, ok
+	cc, ok := channelConnFrom(ctx)
+	if !ok {
+		return channelPeer{}, false
+	}
+	return cc.peer, true
+}
+
+// channelConnFrom reads the connection the request arrived on, for the one
+// thing a handler does to it besides HTTP: a file transfer registers it, so
+// that revoking its device can cut it (files.go). false means what it means
+// for channelPeerFrom.
+func channelConnFrom(ctx context.Context) (*channelConn, bool) {
+	cc, ok := ctx.Value(channelConnKey{}).(*channelConn)
+	return cc, ok
 }
 
 // channelConn is a connection that passed both layers: the TLS session it
 // runs in, and the device key it proved there.
 type channelConn struct {
 	net.Conn
+	// raw is the connection under TLS: the TCP socket, or tor's stream on the
+	// onion entry. cut closes it.
+	raw  net.Conn
 	peer channelPeer
+}
+
+// cut ends the connection at once, from any goroutine: a handler reading or
+// writing it - in the middle of a body - fails there and then. It closes the
+// connection under TLS rather than TLS itself, because closing TLS first
+// writes a goodbye, and with a peer that stopped reading that write can wait
+// for seconds - for a revoked device, which is owed no goodbye at all.
+func (c *channelConn) cut() {
+	_ = c.raw.Close()
 }
 
 // channelListener is the channel's front door (contract §1, research R5). It
@@ -98,17 +125,27 @@ type channelConn struct {
 //
 // Each connection proves itself on a goroutine of its own, under ONE deadline
 // counted from the moment it was accepted. The loop that accepts never waits,
-// neither for a handshake nor for room for one: a door that stops opening
-// while strangers lean on it is exactly the outage a flood is after. What
-// strangers can hold is bounded instead, cheapest refusal first:
+// neither for a handshake nor for room for one, and never turns a newcomer
+// away: a door that stops opening while strangers lean on it is exactly the
+// outage a flood is after. What strangers can hold is bounded instead, and
+// room is made by cutting whoever has waited longest:
 //
 //   - a source has at most maxPendingPerSource handshakes under way, and its
-//     next connection is closed before a byte of TLS;
+//     next connection cuts the oldest of them. A device is through in well
+//     under a second, so the one cut is nearly always a peer that is saying
+//     nothing - and a flood from one source competes only with itself, never
+//     pushing another source's handshake out of the entry;
 //   - a connection from anywhere but loopback that sends nothing within
 //     firstByteTimeout is cut, long before its budget would cut it;
 //   - past maxPendingChannels in all, the connection that has waited longest
-//     is cut to make room. A device is through in well under a second, so
-//     the one cut is nearly always a peer that is saying nothing.
+//     is cut to make room, for the same reason as within a source.
+//
+// A source's share cuts its own oldest rather than refusing its newcomer
+// because a source is often a household: the devices behind one router, or on
+// one IPv6 /64. A refusal would hand the source to whoever holds its places -
+// a peer there opening a connection a second and sending one byte on each
+// holds all eight - and every device of the house would stay out for as long
+// as it kept at it.
 //
 // Loopback is held to neither of the first two. tor runs on this machine and
 // every connection that comes through it - every device away from home -
@@ -147,12 +184,12 @@ type channelListener struct {
 	firstByte    time.Duration
 	shedEvery    time.Duration
 	// pending holds the handshakes under way, oldest first; bySource counts
-	// them per source, loopback left out.
+	// them per source, loopback left out, and is what says a source is at its
+	// share - pending then says which of its handshakes is the oldest.
 	pending  *list.List
 	bySource map[string]int
-	// shed is what was turned away or cut since the last warning, which went
-	// out at shedLogged; shedFlush, while set, is the timer that sends the
-	// next one.
+	// shed is what was cut since the last warning, which went out at
+	// shedLogged; shedFlush, while set, is the timer that sends the next one.
 	shed       shedCounts
 	shedLogged time.Time
 	shedFlush  *time.Timer
@@ -173,10 +210,12 @@ type pendingChannel struct {
 	elem *list.Element
 }
 
-// shedCounts is what an entry turned away or cut between two warnings.
+// shedCounts is what an entry cut between two warnings: inSource handshakes
+// cut for a newer connection from their own source, which was at its share,
+// and evicted ones cut because every place in the entry was taken.
 type shedCounts struct {
-	overSource int
-	evicted    int
+	inSource int
+	evicted  int
 }
 
 // newChannelListener starts taking connections off raw at once; Accept hands
@@ -250,10 +289,10 @@ func (l *channelListener) markClosed() {
 }
 
 // acceptLoop takes connections off raw for as long as the listener lives. It
-// waits on nothing but Accept: admit decides at once whether a connection
-// gets a handshake and which ones make room for it, and the connections it
-// turns away or cuts are closed right here - a cut one's handshake then ends
-// on its closed socket.
+// waits on nothing but Accept: admit gives every connection a handshake at
+// once and decides which ones make room for it, and the connections it cuts
+// are closed right here - a cut one's handshake then ends on its closed
+// socket.
 //
 // A failed Accept other than a closed listener is retried with a growing
 // pause, the way net/http's own loop does: running out of file descriptors is
@@ -282,35 +321,46 @@ func (l *channelListener) acceptLoop(ctx context.Context) {
 		for _, c := range cut {
 			_ = c.Close()
 		}
-		if p == nil {
-			_ = raw.Close()
-			continue
-		}
 		l.wg.Go(func() { l.handshake(ctx, p) })
 	}
 }
 
-// admit registers a connection the moment it is accepted. nil means its
-// source already has its share under way, and the caller closes it untouched.
-// With every place taken, the connections that have waited longest leave to
-// make room and come back for the caller to close, which ends their
-// handshakes: nothing is closed under mu.
+// admit registers a connection the moment it is accepted. Every connection is
+// taken: room for it is made first within its source, then within the entry.
+// A source at its share gives up the oldest of its own handshakes; with every
+// place in the entry taken, the oldest of all leave. The ones that leave come
+// back for the caller to close, which ends their handshakes: nothing is
+// closed under mu.
+//
+// Within the source first, so that one source's flood never reaches the
+// entry-wide cut, which would push out other sources' handshakes; a source
+// that made room for itself has freed the place it takes.
 func (l *channelListener) admit(conn net.Conn, accepted time.Time) (*pendingChannel, []net.Conn) {
 	source, loopback := sourceOf(conn.RemoteAddr())
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !loopback && l.bySource[source] >= l.maxPerSource {
-		l.shedLocked(shedCounts{overSource: 1})
-		return nil, nil
-	}
 	var cut []net.Conn
+	var shed shedCounts
+	// A loop rather than one cut, like the entry-wide one below: a limit
+	// shrunk while handshakes were held (see mu) still comes out at the limit.
+	for !loopback && l.bySource[source] > 0 && l.bySource[source] >= l.maxPerSource {
+		oldest := l.oldestFromLocked(source)
+		if oldest == nil {
+			// Unreachable while the count matches pending; never loop on it.
+			break
+		}
+		l.forgetLocked(oldest)
+		cut = append(cut, oldest.conn)
+		shed.inSource++
+	}
 	for l.pending.Len() > 0 && l.pending.Len() >= l.maxPending {
 		oldest := l.pending.Front().Value.(*pendingChannel)
 		l.forgetLocked(oldest)
 		cut = append(cut, oldest.conn)
+		shed.evicted++
 	}
-	if len(cut) > 0 {
-		l.shedLocked(shedCounts{evicted: len(cut)})
+	if shed != (shedCounts{}) {
+		l.shedLocked(shed)
 	}
 	p := &pendingChannel{conn: conn, accepted: accepted, source: source, loopback: loopback}
 	if !loopback {
@@ -319,6 +369,19 @@ func (l *channelListener) admit(conn net.Conn, accepted time.Time) (*pendingChan
 	}
 	p.elem = l.pending.PushBack(p)
 	return p, cut
+}
+
+// oldestFromLocked is the handshake from source that has waited longest: the
+// first of that source's in pending, which is kept oldest first. A walk of at
+// most maxPendingChannels, made only for a source already at its share. mu
+// must be held.
+func (l *channelListener) oldestFromLocked(source string) *pendingChannel {
+	for e := l.pending.Front(); e != nil; e = e.Next() {
+		if p := e.Value.(*pendingChannel); !p.loopback && p.source == source {
+			return p
+		}
+	}
+	return nil
 }
 
 // leave takes p out of the handshakes under way once its own is over, and
@@ -409,7 +472,7 @@ func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 		return
 	}
 	select {
-	case l.ready <- &channelConn{Conn: tc, peer: channelPeer{key: peer}}:
+	case l.ready <- &channelConn{Conn: tc, raw: p.conn, peer: channelPeer{key: peer}}:
 	case <-ctx.Done():
 		_ = p.conn.Close()
 	}
@@ -487,12 +550,12 @@ func (l *channelListener) refused(err error) {
 	}
 }
 
-// shedLocked counts connections turned away or cut, and sees to it that a
-// warning carries them: at once if the last one is a minute old, else when
-// its minute is up. So there is one line a minute at most, each with
-// everything counted since the one before. mu must be held.
+// shedLocked counts handshakes cut, and sees to it that a warning carries
+// them: at once if the last one is a minute old, else when its minute is up.
+// So there is one line a minute at most, each with everything counted since
+// the one before. mu must be held.
 func (l *channelListener) shedLocked(c shedCounts) {
-	l.shed.overSource += c.overSource
+	l.shed.inSource += c.inSource
 	l.shed.evicted += c.evicted
 	if l.shedFlush == nil {
 		l.shedFlush = time.AfterFunc(time.Until(l.shedLogged.Add(l.shedEvery)), l.warnShed)
@@ -513,5 +576,5 @@ func (l *channelListener) warnShed() {
 		return
 	}
 	l.logger.Warn("channel entry shedding connections", "entry", l.entry,
-		"over_source_limit", c.overSource, "evicted", c.evicted)
+		"evicted_in_source", c.inSource, "evicted", c.evicted)
 }
