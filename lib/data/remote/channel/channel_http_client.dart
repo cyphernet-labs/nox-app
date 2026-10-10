@@ -111,20 +111,8 @@ class ChannelHttpClient {
     // closed door all the same.
     client.badCertificateCallback = (X509Certificate cert, String host, int port) => false;
     client.connectionFactory = _connect;
-    // Every connection through the onion service is a stream on one Tor
-    // circuit, and the server's tor closes a circuit that opens more than 16
-    // streams at once (`HiddenServiceMaxStreams 16` with
-    // `HiddenServiceMaxStreamsCloseCircuit 1`) - the command socket with it.
-    // The socket needs one connection and the transfers a few; a request past
-    // the cap waits for a free one rather than opening the seventeenth.
-    client.maxConnectionsPerHost = maxConnectionsPerHost;
     return client;
   }
-
-  /// The most connections each client keeps to the server at once: well under
-  /// the 16 streams a Tor circuit to the onion service may hold, together with
-  /// the other client's.
-  static const int maxConnectionsPerHost = 6;
 
   /// Where [uri] is opened: the onion service for an onion host, the address
   /// itself otherwise.

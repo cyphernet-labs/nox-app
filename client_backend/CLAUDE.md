@@ -371,7 +371,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   `HiddenServicePoWDefensesEnabled 1`, and `HiddenServiceMaxStreams 16` with
   `HiddenServiceMaxStreamsCloseCircuit 1`: PoW prices introductions, never the
   streams on a circuit already built, so without the cap one circuit opens
-  as many connections to the main port as it likes. 0.4.9 is the floor;
+  as many connections to the main port as it likes. The app keeps no cap of
+  its own under it: one socket and a handful of transfers share a circuit
+  (the prefetch fetches one picture at a time, the outbox sends one upload at
+  a time, a download runs once per file), and a circuit closed past the cap
+  is a reconnect for the socket and a resume for the transfers (043). A cap on
+  dart:io's per-host pool would add a failure of its own - Dio counts the wait
+  for a free connection into its connect timeout and leaves the request it
+  gave up on queued, holding the next free connection with nothing sent - and
+  a working one would need a limiter above Dio (specs/045 research R21).
+  0.4.9 is the floor;
   Linux distribution packages are often older - use the Tor Project
   repository; the official macOS tor is UNSIGNED and killed at launch
   on Apple Silicon until signed (ad-hoc is enough for dev). The address tor
