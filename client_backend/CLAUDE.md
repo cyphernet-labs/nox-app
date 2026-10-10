@@ -436,7 +436,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   and no key - a first password; both - locked; one without the other - no
   start), the service page's listener for the life of the process, `GET
   /health`, the password forms and `/control/state|unlock|password|backup`,
-  and the ONE goroutine that serves the key file. Every other request of the
+  and the ONE goroutine that serves the key file. `POST /control/link` is
+  routed here too, so `noxd link` is held to the command rule in every state
+  and told `state` (409) until the server is open. Every other request of the
   page goes to the open server's page once there is one; before that, the
   lock page and a 409 for anything posted
 - `internal/server/lock_page.go` — the page while the server is not open: the
@@ -531,8 +533,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   (`beforeWait`) - makes the connection a stranger again; the addresses are
   `address_settings_test.go`, `status_addresses_test.go` and
   `internal/store/addresses_test.go`; the log
-  is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -
-  parameters, `Set`, a machine link, an invite with its Allow, a refused
+  is `logscrub_test.go` - the lock's own lines included - and
+  `log_audit_test.go`, which drives a whole run - each start through the
+  lock, parameters, `Set`, a machine link, an invite with its Allow, a refused
   upgrade through the onion service - and finds no onion address, link, token
   or key in it. The path
   through the real Tor network is checked by hand, with tor run as the
