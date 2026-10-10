@@ -641,8 +641,8 @@ func run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// decision rather than an oversight: the socket carries no network traffic
 	// by construction, so there is nothing in transit to protect, and a
 	// certificate there would only teach an operator's browser to expect a
-	// warning - on the one page whose whole job is to hand out the right to
-	// own this machine.
+	// warning - on the one page whose whole job is to take the password that
+	// opens this machine's data and hand out the way in to it.
 	//
 	// And it comes up FIRST, before the data is open, because the password is
 	// entered on it (047). A port somebody else holds is therefore a server
