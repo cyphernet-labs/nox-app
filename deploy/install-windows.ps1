@@ -443,8 +443,18 @@ function ConvertFrom-Secure([Security.SecureString]$S) {
 # that is redirected - the password and its repeat.
 function Read-Password {
     if ([Console]::IsInputRedirected) {
-        $pw = [Console]::In.ReadLine()
-        $repeat = [Console]::In.ReadLine()
+        # The bytes as they came, read as UTF-8 and refused when they are not:
+        # [Console]::In decodes with the console's code page, and a password
+        # changed on its way in is one nobody can type again. A byte order
+        # mark - UTF-8, or UTF-16 as Windows PowerShell writes files - is
+        # honoured.
+        $stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), (New-Object System.Text.UTF8Encoding($false, $true)), $true)
+        try {
+            $pw = $stdin.ReadLine()
+            $repeat = $stdin.ReadLine()
+        } catch {
+            Fail 'standard input is redirected, so the password is read from it, and it is not UTF-8 text: give the password and its repeat as two lines of UTF-8'
+        }
         if ($null -eq $pw -or $null -eq $repeat) { Fail 'standard input is redirected, so the password is read from it: two lines, the password and its repeat' }
         $refusal = Get-PasswordRefusal $pw
         if ($refusal) { Fail $refusal }
