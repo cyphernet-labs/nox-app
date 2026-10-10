@@ -431,9 +431,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   deadline and the cap and is paired after, that the last connection to
   present a request holds its wait and the one before is closed - so repeats
   of `pair` on spare connections cannot reorder the places - and that a
-  request ending without a pairing - Deny, Cancel, its time, or a close
-  landing before the wait took hold (`beforeWait`) - makes the connection a
-  stranger again; the addresses are
+  request ending without a pairing - Deny, Cancel, its time (the sweep, not
+  the wait's own bound), or a close landing before the wait took hold
+  (`beforeWait`) - makes the connection a stranger again; the addresses are
   `address_settings_test.go`, `status_addresses_test.go` and
   `internal/store/addresses_test.go`; the log
   is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -

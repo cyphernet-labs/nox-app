@@ -529,6 +529,13 @@ func TestAWaitThatEndsWithoutAPairingIsAStrangersAgain(t *testing.T) {
 			if string(data["outcome"]) != `"`+tc.outcome+`"` {
 				t.Fatalf("pair.resolved = %v, want %s", data, tc.outcome)
 			}
+			// Whoever closed the request ended the wait before either side was
+			// told (announcePairClosed). For an expired request that is the
+			// sweep - and only this tells it from the wait's own bound, which
+			// would close the connection the same way a moment later.
+			if w := waitsHeld(srv); w != 0 {
+				t.Fatalf("%d connections still held as waiting once pair.resolved arrived, want none", w)
+			}
 			waitClosed(t, waiting, websocket.StatusPolicyViolation)
 			if took := time.Since(ends); took < deadline/2 {
 				t.Fatalf("closed %v after the request ended, well inside a fresh deadline of %v", took, deadline)
