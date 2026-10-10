@@ -30,8 +30,8 @@ import (
 // Each failure is a 403 with nothing issued. The answer is the link itself, so
 // the response is never stored anywhere on the way.
 //
-// `noxd unlock` and `noxd password` (047) take the same road, held to the same
-// three checks (controlAllowed, gate.go).
+// `noxd unlock`, `noxd password` and `noxd backup` (047) take the same road,
+// held to the same three checks (controlAllowed, gate.go).
 const (
 	controlLinkPath = "/control/link"
 	controlHeader   = "X-Nox-Control"
@@ -135,13 +135,13 @@ func LinkReachesOnlyThisMachine(link string) bool {
 	return len(parsed.Direct) > 0
 }
 
-// The commands' side of the lock (047): `noxd unlock` and `noxd password` ask
-// the server running on this machine, over its service page's listener, the
-// way `noxd link` does. A refusal comes back as a *CommandError carrying the
-// server's code.
+// The commands' side of the lock (047): `noxd unlock`, `noxd password` and
+// `noxd backup` ask the server running on this machine, over its service
+// page's listener, the way `noxd link` does. A refusal comes back as a
+// *CommandError carrying the server's code.
 
 // CommandError is a request the server refused, with its code
-// (contracts/control-and-page.md) and, for a failure, what it said.
+// (contracts/control-and-page.md) and, for a path or a failure, what it said.
 type CommandError struct {
 	Status  int
 	Code    string
@@ -185,6 +185,12 @@ func RequestUnlock(ctx context.Context, statusAddr, password, repeat string) err
 func RequestPasswordChange(ctx context.Context, statusAddr, current, next string) error {
 	return controlCall(ctx, http.MethodPost, statusAddr, controlPasswordPath,
 		map[string]string{"current": current, "password": next}, nil)
+}
+
+// RequestBackup asks the server to write a backup at path - an absolute path
+// on this machine, written by the server.
+func RequestBackup(ctx context.Context, statusAddr, path string) error {
+	return controlCall(ctx, http.MethodPost, statusAddr, controlBackupPath, map[string]string{"path": path}, nil)
 }
 
 // controlCall is one request of a command to the running server. The

@@ -9,9 +9,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
+	"nox.app/client-backend/internal/backup"
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/vault"
 )
@@ -25,11 +27,11 @@ import (
 //
 // The gate is that waiting, and it stays after it: it owns the lock state and
 // the key file for the life of the process. Every request that touches the
-// key file - setting the first password, entering it, changing it - is served
-// by ONE goroutine at a time, in the order they came: the goroutine of Run
-// while the server is locked, the keeper after it opened. So two changes
-// cannot both read the old file and both write a new one, and nothing about
-// the key needs a lock.
+// key file - setting the first password, entering it, changing it, writing a
+// backup that carries it - is served by ONE goroutine at a time, in the order
+// they came: the goroutine of Run while the server is locked, the keeper
+// after it opened. So two changes cannot both read the old file and both
+// write a new one, and nothing about the key needs a lock.
 
 // lockState is where the server stands between its start and its data being
 // open.
@@ -63,12 +65,14 @@ func (s lockState) name() string {
 
 // The answers the page and the commands get, beside success
 // (contracts/control-and-page.md). The first three are about the password; a
-// request the state does not take is "state".
+// request the state does not take is "state"; a backup path that cannot be
+// written is "path".
 const (
 	codeWrong    = "wrong"
 	codeShort    = "short"
 	codeMismatch = "mismatch"
 	codeState    = "state"
+	codePath     = "path"
 	codeInternal = "internal"
 )
 
@@ -84,6 +88,8 @@ const (
 	reqOpen
 	// reqChange is a new password: only while open.
 	reqChange
+	// reqBackup is `noxd backup`: only while open.
+	reqBackup
 )
 
 // gateRequest is one request for the goroutine serving the gate.
@@ -92,7 +98,9 @@ type gateRequest struct {
 	password string
 	repeat   string
 	current  string
-	// ctx is the HTTP request's, handed over with it.
+	path     string
+	// ctx is the HTTP request's: a backup stops when its command goes away or
+	// the server stops.
 	ctx   context.Context //nolint:containedctx // one request's lifetime, handed over with it
 	reply chan gateReply
 }
@@ -101,7 +109,8 @@ type gateRequest struct {
 type gateReply struct {
 	code string
 	// message is what to tell the person when the code alone does not say it
-	// - an open that failed. Never a secret: the server's own words.
+	// - a backup path that cannot be written, an open that failed. Never a
+	// secret: paths, and the server's own words.
 	message string
 }
 
@@ -123,7 +132,8 @@ type gate struct {
 	state atomic.Int32
 	// requests is served by one goroutine at a time; see the comment above.
 	requests chan gateRequest
-	// srv is the open server, once there is one: the page goes to it.
+	// srv is the open server, once there is one: the page and the backup go
+	// to it.
 	srv atomic.Pointer[Server]
 	// openPage is srv's own page handler, built once.
 	openPage atomic.Pointer[http.Handler]
@@ -219,7 +229,7 @@ func (g *gate) serveOpen(ctx context.Context) {
 	}
 }
 
-// opened marks the server open: the page goes to srv from here.
+// opened marks the server open: the page and the backup go to srv from here.
 func (g *gate) opened(srv *Server) {
 	h := srv.StatusHandler()
 	g.openPage.Store(&h)
@@ -258,6 +268,13 @@ func (g *gate) handle(req gateRequest) []byte {
 			return nil
 		}
 		g.change(req)
+	case reqBackup:
+		srv := g.srv.Load()
+		if state != stateOpen || srv == nil {
+			req.answer(codeState, "")
+			return nil
+		}
+		g.backup(req, srv)
 	default:
 		req.answer(codeState, "")
 	}
@@ -340,6 +357,24 @@ func (g *gate) change(req gateRequest) {
 	}
 }
 
+// backup writes a backup at the path the command named. It runs here, on the
+// gate's goroutine, so it never copies a key file half-way through a change -
+// and a change waits for the backup rather than sealing a key the backup is
+// not carrying.
+func (g *gate) backup(req gateRequest, srv *Server) {
+	err := srv.writeBackup(req.ctx, req.path)
+	var bad *backup.PathError
+	switch {
+	case errors.As(err, &bad):
+		req.answer(codePath, bad.Error())
+	case err != nil:
+		g.logger.Error("backup failed", "err", err)
+		req.answer(codeInternal, "the backup was not written: "+err.Error())
+	default:
+		req.answer("", "")
+	}
+}
+
 // ask hands req to the goroutine serving the gate and waits for the answer.
 // ok is false when the request went away first - its client hung up, or the
 // server is stopping.
@@ -366,8 +401,8 @@ func (g *gate) ask(ctx context.Context, req gateRequest) (gateReply, bool) {
 type servicePage struct {
 	srv  *http.Server
 	addr string
-	// cancel ends every request's context: nothing a page request does
-	// outlives the database it reads.
+	// cancel ends every request's context: a backup in flight stops rather
+	// than outliving the database it reads.
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
@@ -419,6 +454,7 @@ func (g *gate) handler() http.Handler {
 	mux.HandleFunc("GET "+controlStatePath, g.handleControlState)
 	mux.HandleFunc("POST "+controlUnlockPath, g.handleControlUnlock)
 	mux.HandleFunc("POST "+controlPasswordPath, g.handleControlPassword)
+	mux.HandleFunc("POST "+controlBackupPath, g.handleControlBackup)
 	mux.HandleFunc("POST /password/setup", g.handlePasswordForm(reqSetup))
 	mux.HandleFunc("POST /password/unlock", g.handlePasswordForm(reqUnlock))
 	mux.HandleFunc("POST /password/change", g.handlePasswordForm(reqChange))
@@ -503,14 +539,15 @@ func (g *gate) handlePasswordForm(kind requestKind) http.HandlerFunc {
 	}
 }
 
-// --- the control surface: noxd unlock, noxd password ---
+// --- the control surface: noxd unlock, noxd password, noxd backup ---
 
 const (
 	controlStatePath    = "/control/state"
 	controlUnlockPath   = "/control/unlock"
 	controlPasswordPath = "/control/password"
-	// maxControlBodyBytes bounds a command's request: two passwords fit many
-	// times over.
+	controlBackupPath   = "/control/backup"
+	// maxControlBodyBytes bounds a command's request: two passwords or a path
+	// fit many times over.
 	maxControlBodyBytes = 16 << 10
 )
 
@@ -558,6 +595,22 @@ func (g *gate) handleControlPassword(w http.ResponseWriter, r *http.Request) {
 	answerControl(w, rep, ok)
 }
 
+func (g *gate) handleControlBackup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if !controlAllowed(w, r) || !readControlBody(w, r, &body) {
+		return
+	}
+	if !filepath.IsAbs(body.Path) {
+		writeControlJSON(w, http.StatusBadRequest, ControlError{Error: codePath,
+			Message: "the backup path must be absolute - a path on this machine, where the server writes it"})
+		return
+	}
+	rep, ok := g.ask(r.Context(), gateRequest{kind: reqBackup, path: filepath.Clean(body.Path)})
+	answerControl(w, rep, ok)
+}
+
 // controlAllowed admits a request from a program on this machine and refuses
 // anything a browser can send, with a 403 and nothing done - the rule `noxd
 // link` set (046): Host names this machine, X-Nox-Control: 1 is present - a
@@ -595,8 +648,8 @@ func answerControl(w http.ResponseWriter, rep gateReply, ok bool) {
 		writeControlJSON(w, http.StatusOK, struct{}{})
 	case codeWrong:
 		writeControlJSON(w, http.StatusForbidden, ControlError{Error: rep.code})
-	case codeShort, codeMismatch:
-		writeControlJSON(w, http.StatusBadRequest, ControlError{Error: rep.code})
+	case codeShort, codeMismatch, codePath:
+		writeControlJSON(w, http.StatusBadRequest, ControlError{Error: rep.code, Message: rep.message})
 	case codeState:
 		writeControlJSON(w, http.StatusConflict, ControlError{Error: rep.code})
 	default:

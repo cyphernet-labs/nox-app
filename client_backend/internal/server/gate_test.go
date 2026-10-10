@@ -370,6 +370,10 @@ func TestALockedServerHandsOutNoLinkAndTakesNoAddress(t *testing.T) {
 		refused.Code != codeState {
 		t.Fatalf("a password change on a server with no password = %v, want state", err)
 	}
+	if err := RequestBackup(t.Context(), cfg.StatusAddr, filepath.Join(t.TempDir(), "b.tar")); !errors.As(err, &refused) ||
+		refused.Code != codeState {
+		t.Fatalf("a backup of a locked server = %v, want state", err)
+	}
 }
 
 func TestThePasswordChangesOnThePageAndFromTheTerminal(t *testing.T) {
@@ -437,8 +441,8 @@ func TestTheLockRefusesWhatABrowserCanSend(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		return rec.Code
 	}
-	body := `{"password":"` + testPassword + `","repeat":"` + testPassword + `","current":"x"}`
-	for _, p := range []string{controlStatePath, controlUnlockPath, controlPasswordPath} {
+	body := `{"password":"` + testPassword + `","repeat":"` + testPassword + `","path":"/tmp/x.tar","current":"x"}`
+	for _, p := range []string{controlStatePath, controlUnlockPath, controlPasswordPath, controlBackupPath} {
 		method := http.MethodPost
 		if p == controlStatePath {
 			method = http.MethodGet

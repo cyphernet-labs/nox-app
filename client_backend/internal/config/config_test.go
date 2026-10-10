@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -319,5 +320,58 @@ func TestLoadCommand(t *testing.T) {
 				t.Fatalf("LoadCommand(%q) = %+v, %v; want %s", tt.args, got, err, tt.want)
 			}
 		})
+	}
+}
+
+// The file may come before the flag or after it: the flag package stops at
+// the first word that is not a flag, and a file named first would otherwise
+// leave every flag after it unread - a restore landing in the working
+// directory instead of where -db said.
+func TestTheBackupFileMayComeBeforeOrAfterTheFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"/backups/nox.tar", "-db", "/srv/nox/nox.db"},
+		{"-db", "/srv/nox/nox.db", "/backups/nox.tar"},
+	} {
+		got, err := LoadRestore(args)
+		if err != nil {
+			t.Fatalf("LoadRestore(%q): %v", args, err)
+		}
+		want := RestoreConfig{File: "/backups/nox.tar", DBPath: "/srv/nox/nox.db", FilesPath: "/srv/nox/nox.db-files"}
+		if got != want {
+			t.Fatalf("LoadRestore(%q) = %+v, want %+v", args, got, want)
+		}
+	}
+	got, err := LoadRestore([]string{"b.tar", "-db", "/x/nox.db", "-files", "/data/files"})
+	if err != nil || got.FilesPath != "/data/files" {
+		t.Fatalf("LoadRestore with -files = %+v, %v", got, err)
+	}
+	for name, args := range map[string][]string{
+		"no -db":       {"b.tar"},
+		"no file":      {"-db", "/x/nox.db"},
+		"two files":    {"a.tar", "b.tar", "-db", "/x/nox.db"},
+		"an odd flag":  {"b.tar", "-db", "/x/nox.db", "-tor"},
+		"an empty -db": {"b.tar", "-db", ""},
+	} {
+		if _, err := LoadRestore(args); err == nil {
+			t.Errorf("%s: LoadRestore(%q) succeeded", name, args)
+		}
+	}
+}
+
+func TestLoadBackupMakesTheFileAbsolute(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	t.Chdir(t.TempDir())
+	got, err := LoadBackup([]string{"nox.tar", "-status-addr", "127.0.0.1:9100"}, noEnv)
+	if err != nil {
+		t.Fatalf("LoadBackup: %v", err)
+	}
+	if !filepath.IsAbs(got.File) || filepath.Base(got.File) != "nox.tar" {
+		t.Fatalf("File = %q, want an absolute path", got.File)
+	}
+	if got.StatusAddr != "127.0.0.1:9100" {
+		t.Fatalf("StatusAddr = %q", got.StatusAddr)
+	}
+	if _, err := LoadBackup(nil, noEnv); err == nil {
+		t.Fatal("a backup with no file was accepted")
 	}
 }

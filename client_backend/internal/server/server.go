@@ -130,6 +130,10 @@ type Server struct {
 	// own browser. Run hands in the gate's (047), so one token holds from the
 	// lock page to the open one.
 	formToken string
+	// dataKey is the key the database and the attachments are encrypted with
+	// (047), as the password unsealed it. Only a backup needs it here: the
+	// snapshot is written under it, and the archive's MAC key comes from it.
+	dataKey []byte
 
 	// requestSweep is how often the sweeper closes pairing requests whose time
 	// ran out (046). A field so tests can scale it.
@@ -630,6 +634,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
 	srv.addrWarnings = addrWarnings
+	srv.dataKey = key
 	// One form token for the life of the process: a form the lock page
 	// rendered is still the page's own once the server has opened.
 	srv.formToken = g.formToken
@@ -692,7 +697,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	// database, so it stops after the drain and before the database closes
 	// (invariant 9) rather than the moment shutdown begins. The request sweeper
 	// (046) does both as well, and stops beside it - and so does the gate's
-	// keeper (047).
+	// keeper (047), which may be writing a backup out of the database.
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	defer stopWatch()
 	sweepCtx, stopSweep := context.WithCancel(context.Background())
@@ -735,11 +740,11 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 		// Down with the main one and BEFORE the database closes: a request
 		// arriving mid-shutdown would otherwise read a store being closed
 		// underneath it (invariant 9). The page ends every request's context
-		// first, so nothing it started outlives the database; and it waits on
-		// its OWN deadline, not the leftovers of the main one - sharing an
-		// expired context closes the listener and returns immediately, leaving
-		// a page request in flight to race the database close, the exact thing
-		// the ordering is for.
+		// first, so a backup being written stops rather than outliving the
+		// database; and it waits on its OWN deadline, not the leftovers of the
+		// main one - sharing an expired context closes the listener and
+		// returns immediately, leaving a page request in flight to race the
+		// database close, the exact thing the ordering is for.
 		if pageErr := page.stop(); pageErr != nil && err == nil {
 			err = pageErr
 		}

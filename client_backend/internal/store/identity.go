@@ -250,3 +250,21 @@ func (s *Store) EnsureJournal(ctx context.Context) error {
 	}
 	return nil
 }
+
+// RotateJournal gives the store a new identity and returns it (047). A
+// restored backup is exactly the case the identity exists for: the devices
+// may have seen more than the backup holds, and a new journal_id is what makes
+// each of them drop its cached world and read the conversation again
+// (contract §3). Everything else stays, the machine's key and the paired
+// devices included, so nobody pairs again.
+func (s *Store) RotateJournal(ctx context.Context) (string, error) {
+	id := "j_" + randomID()
+	res, err := s.write.ExecContext(ctx, "UPDATE journal SET journal_id = ? WHERE id = 1", id)
+	if err != nil {
+		return "", fmt.Errorf("rotate journal: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return "", fmt.Errorf("rotate journal: the store has no journal to rotate")
+	}
+	return id, nil
+}

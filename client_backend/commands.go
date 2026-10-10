@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"time"
 
+	"nox.app/client-backend/internal/backup"
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/prompt"
 	"nox.app/client-backend/internal/server"
@@ -18,6 +20,8 @@ var commands = map[string]func(args []string) int{
 	"link":     link,
 	"unlock":   unlock,
 	"password": password,
+	"backup":   backupCommand,
+	"restore":  restore,
 }
 
 // unlockTimeout bounds `noxd unlock` and `noxd password`: Argon2 and opening
@@ -119,6 +123,54 @@ func password(args []string) int {
 		return reportRefusal("noxd password", err)
 	}
 	fmt.Println("Password changed.")
+	return 0
+}
+
+// backupCommand is `noxd backup <file>` (047): the running server writes a
+// backup of itself at file - one file, all of it encrypted, opened only by
+// the server's password. The server keeps serving meanwhile; Ctrl+C stops
+// the backup and leaves nothing behind.
+func backupCommand(args []string) int {
+	cfg, err := config.LoadBackup(args, os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "noxd backup:", err)
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := server.RequestBackup(ctx, cfg.StatusAddr, cfg.File); err != nil {
+		return reportRefusal("noxd backup", err)
+	}
+	fmt.Println("Backup written to " + cfg.File)
+	return 0
+}
+
+// restore is `noxd restore <file> -db <path> [-files <dir>]` (047): the
+// backup unpacked onto an empty place, on this machine or any other, once the
+// server's password opens it. No server runs for it - the place is empty. The
+// restored server keeps its key, so devices go on without pairing, and gets a
+// new journal id, so each of them reads the conversation again.
+func restore(args []string) int {
+	cfg, err := config.LoadRestore(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "noxd restore:", err)
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	in := prompt.New(os.Stdin, os.Stderr)
+	_, err = backup.Restore(ctx, cfg.File, backup.Target{DBPath: cfg.DBPath, FilesPath: cfg.FilesPath}, func() (string, error) {
+		return in.Password("Password: ")
+	})
+	switch {
+	case errors.Is(err, vault.ErrWrongPassword):
+		fmt.Fprintln(os.Stderr, refusals["wrong"]+" Nothing was restored.")
+		return 1
+	case err != nil:
+		fmt.Fprintln(os.Stderr, "noxd restore:", err)
+		return 1
+	}
+	fmt.Printf("Restored to %s. Start the server there and unlock it with the same password.\n", cfg.DBPath)
 	return 0
 }
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -167,8 +168,9 @@ func TestNoLinkAndNoTokenEverReachesTheLog(t *testing.T) {
 }
 
 // FR-018 (047): neither a password - right, wrong, old or new - nor the data
-// key, in any spelling, reaches the server's log, at any step of the lock: the
-// first password, wrong attempts, a restart and its unlock, a change.
+// key, in any spelling, nor where a backup went reaches the server's log, at
+// any step of the lock: the first password, wrong attempts, a restart and its
+// unlock, a change, a backup.
 func TestNoPasswordAndNoKeyEverReachesTheLog(t *testing.T) {
 	cfg := testRunConfig(t)
 	logs1, stop := runServer(t, cfg)
@@ -179,6 +181,10 @@ func TestNoPasswordAndNoKeyEverReachesTheLog(t *testing.T) {
 	const next = "staple orbit lantern"
 	if err := RequestPasswordChange(t.Context(), cfg.StatusAddr, testPassword, next); err != nil {
 		t.Fatalf("noxd password: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "secret-place-backup.tar")
+	if err := RequestBackup(t.Context(), cfg.StatusAddr, dst); err != nil {
+		t.Fatalf("noxd backup: %v", err)
 	}
 	if err := stop(); err != nil {
 		t.Fatalf("Run returned %v", err)
@@ -207,13 +213,14 @@ func TestNoPasswordAndNoKeyEverReachesTheLog(t *testing.T) {
 		"a refused new password": "never set at all",
 		"the data key in hex":    fmt.Sprintf("%x", key),
 		"the data key in base64": base64.StdEncoding.EncodeToString(key),
+		"the backup's place":     "secret-place-backup",
 	} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("%s reached the log:\n%s", name, out)
 		}
 	}
 	// The log was exercised, so the silence above means something.
-	for _, said := range []string{"password changed", "unlock refused: wrong password", "server unlocked"} {
+	for _, said := range []string{"password changed", "backup written", "unlock refused: wrong password", "server unlocked"} {
 		if !strings.Contains(out, said) {
 			t.Fatalf("the log never says %q:\n%s", said, out)
 		}
