@@ -80,7 +80,7 @@ abstract final class AppDataRoot {
   /// Deletes what builds before phase 048 kept unsealed, where it is safe to
   /// say it is theirs: their database in "Documents" - backed up to iCloud on
   /// iOS - on the platforms where Documents is the app's own folder (iOS,
-  /// Android, macOS in its sandbox); their attachments in the cache folder,
+  /// Android, and macOS when the folder lies in the sandbox's container); their attachments in the cache folder,
   /// which is the app's own everywhere; and on Windows what they kept in the
   /// roaming folder. On Windows and Linux "Documents" is the person's own, and
   /// a file named `app.db` there is not certainly this app's to delete.
@@ -92,7 +92,7 @@ abstract final class AppDataRoot {
       final root = await directory();
       if (Platform.isIOS || Platform.isAndroid || Platform.isMacOS) {
         final documents = await getApplicationDocumentsDirectory();
-        if (documents.path != root.path) {
+        if (documents.path != root.path && _isOwnDocuments(documents.path)) {
           for (final name in databaseFiles) {
             await _delete(File('${documents.path}${Platform.pathSeparator}$name'));
           }
@@ -114,6 +114,15 @@ abstract final class AppDataRoot {
       logRepository.error(target: 'AppDataRoot', error: error.runtimeType);
     }
   }
+
+  /// Whether [documents] is the app's own folder: always on iOS and Android;
+  /// on macOS only inside the sandbox's container - a build that runs outside
+  /// the sandbox is handed the person's own Documents.
+  static bool _isOwnDocuments(String documents) => !Platform.isMacOS || isMacContainerPath(documents);
+
+  /// Whether [path] lies in a macOS sandbox container.
+  @visibleForTesting
+  static bool isMacContainerPath(String path) => path.contains('/Library/Containers/');
 
   static Future<void> _delete(FileSystemEntity entity) async {
     try {

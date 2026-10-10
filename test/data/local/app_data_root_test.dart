@@ -27,14 +27,17 @@ void main() {
     await getIt.reset();
   });
 
-  /// path_provider answering each question with a folder of its own.
-  Future<({Directory support, Directory documents, Directory cache})> separateFolders() async {
+  /// path_provider answering each question with a folder of its own - laid
+  /// out as a macOS sandbox lays them out, inside the app's container, unless
+  /// [sandboxed] is false.
+  Future<({Directory support, Directory documents, Directory cache})> separateFolders({bool sandboxed = true}) async {
     final base = await Directory.systemTemp.createTemp('nox_data_root');
     addTearDown(() => base.delete(recursive: true));
+    final home = sandboxed ? '${base.path}/Library/Containers/com.cyphernetlabs.noxapp/Data' : base.path;
     final folders = (
-      support: await Directory('${base.path}/support').create(),
-      documents: await Directory('${base.path}/documents').create(),
-      cache: await Directory('${base.path}/cache').create(),
+      support: await Directory('$home/Library/Application Support/com.cyphernetlabs.noxapp').create(recursive: true),
+      documents: await Directory('$home/Documents').create(recursive: true),
+      cache: await Directory('$home/Library/Caches/com.cyphernetlabs.noxapp').create(recursive: true),
     );
     messenger.setMockMethodCallHandler(pathChannel, (call) async {
       return switch (call.method) {
@@ -104,6 +107,17 @@ void main() {
       expect(oldAttachment.existsSync(), isFalse);
       expect(current.existsSync(), isTrue);
       expect(somebodyElses.existsSync(), isTrue);
+    });
+
+    test('on a Mac outside the sandbox Documents is the person\'s own, and its app.db is not ours to delete', () async {
+      final folders = await separateFolders(sandboxed: false);
+      final theirs = File('${folders.documents.path}/app.db')..writeAsStringSync('somebody else\'s');
+
+      await AppDataRoot.sweepLegacy();
+
+      expect(theirs.existsSync(), isTrue);
+      expect(AppDataRoot.isMacContainerPath('/Users/a/Library/Containers/com.cyphernetlabs.noxapp/Data/Documents'), isTrue);
+      expect(AppDataRoot.isMacContainerPath('/Users/a/Documents'), isFalse);
     });
 
     test('a folder that is also the data folder is never swept', () async {
