@@ -38,6 +38,12 @@ abstract class FileRemoteDataSource {
   /// whole file's plain length (phase 048): the queue's copy is sealed on the
   /// disk, so the bytes come from whoever opens it, never from a path. Nothing
   /// listens to [body] before the transfer starts.
+  ///
+  /// [body] may be a stream of a subtype of `List<int>` - the opened copy is a
+  /// `Stream<Uint8List>`. An implementation listens to it or binds a
+  /// transformer to it, never `body.transform(...)` with a transformer of
+  /// `List<int>`: `transform` checks its argument against the stream's runtime
+  /// element type, and throws.
   Future<void> putBytes({
     required String uploadPath,
     required int size,

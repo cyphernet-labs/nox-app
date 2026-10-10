@@ -109,32 +109,41 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
 
     final path = _apiClient.pathGeneration;
     final cancel = _apiClient.beginTransfer();
-    // The message was thrown away: its upload stops holding the queue now,
-    // not when its last byte has gone.
-    unawaited(cancellation?.whenCancelled.then((_) => cancel.cancel('discarded')));
     // Dio's own sendTimeout bounds the WHOLE body, which is the limit this
     // phase removes. What it needs instead is a bound on silence: every chunk
     // the socket takes rearms the watch.
     final watch = _StallWatch(_stallLimit, () => cancel.cancel('stalled'));
-    // A file can be there and still not be readable - locked, or no longer
-    // permitted: a sandbox forgets a picked file when the app restarts, while
-    // its size can still be looked up; a sealed copy can hold a chunk that no
-    // longer opens. The body is where that shows, and Dio reports it exactly
-    // as it reports a broken link; taken for one, the queue retried it - and
-    // held everything behind it - for good. The repository opens the file
-    // before declaring anything, so this is the narrower case: a file that
-    // stopped being readable since. Its errors carry its path, so they go no
-    // further than here.
     var unreadable = false;
-    final guarded = body.transform(
-      StreamTransformer<List<int>, List<int>>.fromHandlers(
+    // Everything from here on runs inside the try, so the transfer just begun
+    // and the watch just armed are handed back however this ends - a throw
+    // before the request goes out included. Kept, the registry would hold the
+    // token for good and the watch would fire on a transfer nobody runs.
+    try {
+      // The message was thrown away: its upload stops holding the queue now,
+      // not when its last byte has gone.
+      unawaited(cancellation?.whenCancelled.then((_) => cancel.cancel('discarded')));
+      // A file can be there and still not be readable - locked, or no longer
+      // permitted: a sandbox forgets a picked file when the app restarts,
+      // while its size can still be looked up; a sealed copy can hold a chunk
+      // that no longer opens. The body is where that shows, and Dio reports it
+      // exactly as it reports a broken link; taken for one, the queue retried
+      // it - and held everything behind it - for good. The repository opens
+      // the file before declaring anything, so this is the narrower case: a
+      // file that stopped being readable since. Its errors carry its path, so
+      // they go no further than here.
+      //
+      // Bound to the body, never `body.transform(...)`: `transform` checks its
+      // argument against the RUNTIME element type of the stream, and the body
+      // may be a stream of a subtype of List<int> - the queue's sealed copy is
+      // read as a Stream<Uint8List>, and no transformer of List<int> is one of
+      // Uint8List. `transform` would throw a TypeError before a byte goes, and
+      // no file message could be sent; `bind` takes any Stream<List<int>>.
+      final guarded = StreamTransformer<List<int>, List<int>>.fromHandlers(
         handleError: (error, stackTrace, sink) {
           unreadable = true;
           sink.addError(error, stackTrace);
         },
-      ),
-    );
-    try {
+      ).bind(body);
       final response = await _apiClient.dio.put<void>(
         uploadPath,
         data: guarded, // streamed from where the server stopped; never in RAM
