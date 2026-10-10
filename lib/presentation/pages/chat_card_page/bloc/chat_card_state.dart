@@ -4,8 +4,9 @@ part of 'chat_card_bloc.dart';
 enum FilesViewMode { list, grid }
 
 /// Debug-selectable card scenario (5.4, dev-only) — reproduces server-dependent
-/// states on stub data (FR-005 / FR-062).
-enum ChatCardScenario { normal, empty, offline, pinRefused, fatal }
+/// states on stub data (FR-005 / FR-062). `turnOnTor` is offline with a known
+/// cause, which the strip says in place of «No connection» (phase 045).
+enum ChatCardScenario { normal, empty, offline, pinRefused, fatal, turnOnTor }
 
 @freezed
 sealed class ChatCardState with _$ChatCardState {
@@ -25,6 +26,11 @@ sealed class ChatCardState with _$ChatCardState {
     /// but with nothing to try - a restart of the channel ends the same way
     /// (phase 042).
     @Default(false) bool isUnsupported,
+
+    /// Why there is no connection, when that is known (phase 045): the strip
+    /// says it in place of «No connection». Rides with [isOffline] and
+    /// [isServerMismatch]; null otherwise.
+    ConnectionProblem? problem,
 
     /// Who this machine belongs to, for the People section (5.4).
     ///

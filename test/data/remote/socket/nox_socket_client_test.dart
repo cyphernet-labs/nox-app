@@ -14,6 +14,7 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'fake_socket.dart';
 
@@ -689,6 +690,49 @@ void main() {
       });
     }
 
+    test('a dial that fails before a greeting is reported with the channel\'s kind (phase 045)', () async {
+      final onion = Uri.parse('wss://${'a' * 56}.onion/ws');
+      final targets = ScriptedTargets([onion, Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.refuseChannel(ChannelFailure.torOnionNotFound);
+      await waitUntil(() => targets.failed.isNotEmpty, reason: 'the failure is reported');
+
+      expect(targets.failed.first, (onion, ChannelFailure.torOnionNotFound));
+    });
+
+    test('a dial that ran out the WebSocket\'s own time is reported as a timeout', () async {
+      final onion = Uri.parse('wss://${'a' * 56}.onion/ws');
+      final targets = ScriptedTargets([onion, Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.failWith(WebSocketChannelException.from(TimeoutException('connect')));
+      await waitUntil(() => targets.failed.isNotEmpty, reason: 'the failure is reported');
+
+      expect(targets.failed.first, (onion, ChannelFailure.timeout));
+    });
+
+    test('a peer that goes away before the greeting is reported with no kind', () async {
+      final first = Uri.parse('wss://10.0.0.1:9000/ws');
+      final targets = ScriptedTargets([first, Uri.parse('wss://10.0.0.2:9000/ws')]);
+      await client.start(targets: targets);
+
+      await factory.latest.drop();
+      await waitUntil(() => targets.failed.isNotEmpty, reason: 'the failure is reported');
+
+      expect(targets.failed.first, (first, null));
+    });
+
+    test('another key is reported as such and not as a failed dial', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws'), Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.refuseServerKey();
+      await waitUntil(() => factory.created.length == 2, reason: 'the ladder goes on');
+
+      expect(targets.failed, isEmpty);
+    });
+
     test('a wrong server at the onion address never logs anybody out (FR-012)', () async {
       var rejected = false;
       client.onUnauthenticated = () => rejected = true;
@@ -954,6 +998,7 @@ class ScriptedTargets implements SocketTargetProvider {
   bool slow = false;
   final List<Uri> greeted = <Uri>[];
   final List<Uri> refused = <Uri>[];
+  final List<(Uri, ChannelFailure?)> failed = <(Uri, ChannelFailure?)>[];
 
   @override
   Future<Uri?> nextTarget() async {
@@ -972,4 +1017,7 @@ class ScriptedTargets implements SocketTargetProvider {
 
   @override
   void reportWrongServer(Uri url) => refused.add(url);
+
+  @override
+  void reportFailed(Uri url, ChannelFailure? failure) => failed.add((url, failure));
 }

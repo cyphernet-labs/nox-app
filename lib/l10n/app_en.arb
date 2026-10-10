@@ -218,10 +218,6 @@
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
   },
-  "serverNotRecognised": "This isn't the server you paired with",
-  "@serverNotRecognised": {
-    "description": "Banner on the chats list, the thread and the chat card when the machine at the paired address presents a key the pairing link did not name. Paired with the existing actionTryAgain. Deliberately not 'no connection': something answered, and waiting will not change it."
-  },
   "loginServerNotRecognised": "This server doesn't match its link",
   "@loginServerNotRecognised": {
     "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
@@ -329,5 +325,29 @@
   "actionRename": "Rename",
   "@actionRename": {
     "description": "Action on the thread notice of a chat whose name was taken; opens the rename dialog (phase 041)."
+  },
+  "connectionProblemInvalidOnion": "This isn't a valid onion address.",
+  "@connectionProblemInvalidOnion": {
+    "description": "Why there is no connection (phase 045): the onion address is not a valid v3 address. Shown at the onion field, and in place of 'No connection' on 5.1, 5.2 and 5.4, in Settings > Connection and under Connect."
+  },
+  "connectionProblemOnionNotFound": "No server answers at this onion address. Check the address and that Tor is running on the server.",
+  "@connectionProblemOnionNotFound": {
+    "description": "Why there is no connection (phase 045): no onion service is published at the address."
+  },
+  "connectionProblemOnionUnreachable": "Your server isn't answering through Tor right now. Check that it is running.",
+  "@connectionProblemOnionUnreachable": {
+    "description": "Why there is no connection (phase 045): the onion service exists, and the server behind it does not answer."
+  },
+  "connectionProblemOtherServer": "This onion address belongs to a different server.",
+  "@connectionProblemOtherServer": {
+    "description": "Why there is no connection (phase 045): the server at the onion address proved a key other than the one the pairing link named. Replaces the earlier 'not the server you paired with' banner; paired with actionTryAgain."
+  },
+  "connectionProblemTorNetwork": "Can't connect to the Tor network. Check your internet connection.",
+  "@connectionProblemTorNetwork": {
+    "description": "Why there is no connection (phase 045): the Tor network itself cannot be reached."
+  },
+  "connectionProblemTurnOnTor": "Can't reach the server directly. Turn on Use Tor to connect through Tor.",
+  "@connectionProblemTurnOnTor": {
+    "description": "Why there is no connection (phase 045): the direct path did not answer, Use Tor is off and an onion address is known. 'Use Tor' is the name of the switch."
   }
 }

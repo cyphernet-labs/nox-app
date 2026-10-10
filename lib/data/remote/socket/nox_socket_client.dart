@@ -17,6 +17,7 @@ import 'package:nox_app/domain/model/session/server_identity.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// The client half of the contract-v0 envelope: one socket, greeted once,
 /// carrying correlated commands out and journal events in.
@@ -459,21 +460,46 @@ class NoxSocketClient {
           // the network, a timeout, TLS, a peer that does not speak the
           // channel or a machine in the middle (`protocol`), Tor. None of
           // them is ever a reason to log out.
-          final failure = channelFailureOf(e);
+          final failure = channelFailureOf(e) ?? (_timedOut(e) ? ChannelFailure.timeout : null);
           if (failure == ChannelFailure.wrongServer) {
             _wrongServer(target);
             return;
           }
+          _reportFailed(target, failure);
           _onDropped('stream error: ${failure?.name ?? e.runtimeType}');
         },
         onDone: () {
-          if (epoch == _connectionEpoch) _onDropped('closed by peer');
+          if (epoch != _connectionEpoch) return;
+          _reportFailed(target, null);
+          _onDropped('closed by peer');
         },
         cancelOnError: false,
       );
     } catch (e) {
+      _reportFailed(target, null);
       _onDropped('connect failed: ${e.runtimeType}');
     }
+  }
+
+  /// Tells the target provider an attempt ended before a greeting, and why
+  /// when the channel said (phase 045). Never allowed to cost the reconnect.
+  void _reportFailed(Uri url, ChannelFailure? failure) {
+    try {
+      _targets?.reportFailed(url, failure);
+    } on Object catch (e, st) {
+      logRepository.error(target: this, error: 'failure report failed: ${e.runtimeType}', stackTrace: st);
+    }
+  }
+
+  /// A dial that ran out its own time - the WebSocket's connect timeout -
+  /// rather than one the channel refused.
+  static bool _timedOut(Object error) {
+    Object? current = error;
+    for (var depth = 0; depth < 4 && current != null; depth++) {
+      if (current is TimeoutException) return true;
+      current = current is WebSocketChannelException ? current.inner : null;
+    }
+    return false;
   }
 
   /// The machine at [url] proved a key other than the one the pairing link

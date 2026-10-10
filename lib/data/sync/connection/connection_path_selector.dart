@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/channel/channel_failure.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/server_addresses.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -20,7 +22,7 @@ import 'package:rxdart/rxdart.dart';
 /// What the path selector is doing, for the connection status (phase 040).
 @immutable
 class PathSelection {
-  const PathSelection({this.active = false, this.path, this.roundFailed = false});
+  const PathSelection({this.active = false, this.path, this.roundFailed = false, this.problem});
 
   static const PathSelection idle = PathSelection();
 
@@ -36,21 +38,54 @@ class PathSelection {
   /// blink on every rung of the ladder (research decision 12).
   final bool roundFailed;
 
-  PathSelection copyWith({bool? active, ConnectionPath? path, bool clearPath = false, bool? roundFailed}) => PathSelection(
+  /// Why the last failed round failed, when that can be told (phase 045);
+  /// held with [roundFailed], and cleared with it by a greeting.
+  final ConnectionProblem? problem;
+
+  PathSelection copyWith({
+    bool? active,
+    ConnectionPath? path,
+    bool clearPath = false,
+    bool? roundFailed,
+    ConnectionProblem? problem,
+    bool clearProblem = false,
+  }) => PathSelection(
     active: active ?? this.active,
     path: clearPath ? null : (path ?? this.path),
     roundFailed: roundFailed ?? this.roundFailed,
+    problem: clearProblem ? null : (problem ?? this.problem),
   );
 
   @override
   bool operator ==(Object other) =>
-      other is PathSelection && other.active == active && other.path == path && other.roundFailed == roundFailed;
+      other is PathSelection &&
+      other.active == active &&
+      other.path == path &&
+      other.roundFailed == roundFailed &&
+      other.problem == problem;
 
   @override
-  int get hashCode => Object.hash(active, path, roundFailed);
+  int get hashCode => Object.hash(active, path, roundFailed, problem);
 
   @override
-  String toString() => 'PathSelection(active: $active, path: ${path?.name}, roundFailed: $roundFailed)';
+  String toString() => 'PathSelection(active: $active, path: ${path?.name}, roundFailed: $roundFailed, problem: ${problem?.name})';
+}
+
+/// Why the current round has no way through Tor.
+enum _TorMiss {
+  /// `Use Tor` is off.
+  useTorOff,
+
+  /// No library, or a client the Tor network refused: nothing the person can
+  /// change here, and the obsolete client has a notice of its own.
+  unavailable,
+
+  /// No onion address is known.
+  noOnion,
+
+  /// Tor was started and did not come up within its budget, failed, or did
+  /// not start at all.
+  notUp,
 }
 
 /// Chooses how the socket reaches this person's server, before every attempt
@@ -152,6 +187,18 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// interrupted, not failed: its round never finished.
   bool _handedOutInterrupted = false;
 
+  /// How the dial of the target handed out ended, when it ended before a
+  /// greeting and the channel said why (phase 045).
+  ChannelFailure? _handedOutFailure;
+
+  /// Why the current round found no way through Tor; null when it did not get
+  /// that far or found one.
+  _TorMiss? _torMiss;
+
+  /// The connection settings as last read or watched - what the reason for a
+  /// failed dial is judged against.
+  ServerAddresses _lastAddresses = ServerAddresses.empty;
+
   /// A direct address a background check verified a moment ago. The next
   /// round hands it over without asking again: that is the switch.
   String? _verified;
@@ -206,7 +253,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _deviceSeed = Uint8List.fromList(deviceSeed);
     if (_active) return;
     _active = true;
-    _publish(_selection.value.copyWith(active: true, roundFailed: false, clearPath: true));
+    _publish(_selection.value.copyWith(active: true, roundFailed: false, clearPath: true, clearProblem: true));
     _networkSub = _network.watchChanges().listen((_) => unawaited(_onNetworkChanged()));
     // Desktop does not sleep in the background (FR-025 is about phones).
     _visibility = _lifecycle.visibility;
@@ -292,8 +339,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // switch that did not take is not a failed round - the path it left is
     // tried again right now - and neither is an attempt a network change cut
     // short.
-    if (_handedOut != null && !_handedOutGreeted && !_handedOutWasSwitch && !_handedOutInterrupted) _markFailed();
+    if (_handedOut != null && !_handedOutGreeted && !_handedOutWasSwitch && !_handedOutInterrupted) {
+      _markFailed(problem: _problemOfDial(_handedOutPath, _handedOutFailure));
+    }
     _forgetHandedOut();
+    _torMiss = null;
     final serverKey = _serverKey;
     final deviceSeed = _deviceSeed;
     if (serverKey == null || deviceSeed == null) return _noPath();
@@ -325,14 +375,14 @@ class ConnectionPathSelector implements SocketTargetProvider {
       _publish(_selection.value.copyWith(path: ConnectionPath.tor));
       return onion;
     }
-    return _noPath();
+    return _noPath(problem: _problemWithoutPath(addresses));
   }
 
   @override
   void reportGreeted(Uri url) {
     if (url != _handedOut) return;
     _handedOutGreeted = true;
-    _publish(_selection.value.copyWith(path: _handedOutPath, roundFailed: false));
+    _publish(_selection.value.copyWith(path: _handedOutPath, roundFailed: false, clearProblem: true));
     if (_handedOutPath == ConnectionPath.direct) {
       final address = _handedOutAddress;
       if (address != null) unawaited(_addresses.recordLastGood(address));
@@ -354,6 +404,12 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // Nothing to remember beyond the log: the next round probes again, and the
     // probe passes over an address that answers with another key.
     logRepository.debug(target: this, message: 'path: a direct address answered with another key at the dial');
+  }
+
+  @override
+  void reportFailed(Uri url, ChannelFailure? failure) {
+    if (url != _handedOut || _handedOutGreeted) return;
+    _handedOutFailure = failure;
   }
 
   bool _current(int round) => _active && round == _round;
@@ -381,36 +437,78 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _handedOutGreeted = false;
     _handedOutWasSwitch = false;
     _handedOutInterrupted = false;
+    _handedOutFailure = null;
   }
 
-  Uri? _noPath() {
-    _markFailed();
+  Uri? _noPath({ConnectionProblem? problem}) {
+    _markFailed(problem: problem);
     return null;
   }
 
-  void _markFailed() {
+  /// The round failed, for [problem] - null when the cause cannot be told,
+  /// which replaces whatever an earlier round said: the reason shown is the
+  /// last round's (phase 045).
+  void _markFailed({ConnectionProblem? problem}) {
     if (!_active) return;
-    _publish(_selection.value.copyWith(roundFailed: true, clearPath: true));
+    _publish(_selection.value.copyWith(roundFailed: true, clearPath: true, problem: problem, clearProblem: problem == null));
   }
+
+  /// Why a dial that was handed out ended before a greeting (phase 045,
+  /// research decision 12). Through Tor the channel names the kind; a direct
+  /// dial that failed after its address answered the probe is judged like a
+  /// round with no direct answer.
+  ConnectionProblem? _problemOfDial(ConnectionPath? path, ChannelFailure? failure) {
+    if (path != ConnectionPath.tor) return _turnOnTorHelps(_lastAddresses) ? ConnectionProblem.turnOnTor : null;
+    return switch (failure) {
+      ChannelFailure.torOnionInvalid => ConnectionProblem.invalidOnion,
+      ChannelFailure.torOnionNotFound => ConnectionProblem.onionNotFound,
+      // The service is there, and what is behind it does not answer as this
+      // server: down, slow past the dial's time, or not speaking the channel.
+      // A refused access key reads the same since nothing holds one.
+      ChannelFailure.torOnionUnreachable ||
+      ChannelFailure.timeout ||
+      ChannelFailure.torClientAuth ||
+      ChannelFailure.tls ||
+      ChannelFailure.protocol => ConnectionProblem.onionUnreachable,
+      // Tor itself: not up, or its circuits and directories out of reach.
+      ChannelFailure.torNotReady || ChannelFailure.network => ConnectionProblem.torNetwork,
+      ChannelFailure.wrongServer => ConnectionProblem.otherServer,
+      ChannelFailure.internal || null => null,
+    };
+  }
+
+  /// Why a round found no way at all: Tor that would not come up is the Tor
+  /// network's fault; with `Use Tor` off and an onion address to go to, the
+  /// way out is to turn it on (FR-016).
+  ConnectionProblem? _problemWithoutPath(ServerAddresses addresses) => switch (_torMiss) {
+    _TorMiss.useTorOff => _turnOnTorHelps(addresses) ? ConnectionProblem.turnOnTor : null,
+    _TorMiss.notUp => ConnectionProblem.torNetwork,
+    _TorMiss.unavailable || _TorMiss.noOnion || null => null,
+  };
+
+  /// Whether turning `Use Tor` on would give the next round a way: it is off,
+  /// an onion address is known, and Tor can run here.
+  bool _turnOnTorHelps(ServerAddresses addresses) =>
+      !addresses.useTor && addresses.onionHost != null && _tor.isSupported && !_tor.status.isObsolete;
 
   void _publish(PathSelection next) {
     if (_selection.value != next) _selection.add(next);
   }
 
-  Future<ServerAddresses> _readAddresses() async => (await _addresses.read()).data ?? ServerAddresses.empty;
+  Future<ServerAddresses> _readAddresses() async => _lastAddresses = (await _addresses.read()).data ?? ServerAddresses.empty;
 
   /// Brings Tor up towards the server's onion address and returns the address
   /// to dial, or null when there is no way through Tor right now.
   Future<Uri?> _bringUpTor(ServerAddresses addresses, int round) async {
     // The person's choice comes first (FR-011): with `Use Tor` off nothing
     // here may even start the client (SC-006).
-    if (!addresses.useTor) return _noTor('Use Tor is off');
+    if (!addresses.useTor) return _noTor(_TorMiss.useTorOff, 'Use Tor is off');
     // A build without the library (FR-007, FR-031).
-    if (!_tor.isSupported) return _noTor('not on this platform');
+    if (!_tor.isSupported) return _noTor(_TorMiss.unavailable, 'not on this platform');
     // The Tor network refused this build (FR-026): direct only until an update.
-    if (_tor.status.isObsolete) return _noTor('this build is obsolete');
+    if (_tor.status.isObsolete) return _noTor(_TorMiss.unavailable, 'this build is obsolete');
     final target = _torTargetFor(addresses);
-    if (target == null) return _noTor('no onion address');
+    if (target == null) return _noTor(_TorMiss.noOnion, 'no onion address');
     _torRound = round;
     _publish(_selection.value.copyWith(path: ConnectionPath.tor));
     final watch = Stopwatch()..start();
@@ -423,10 +521,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
       if (!_current(round)) return null;
       if (_tor.status.state == TorState.stopped) _torBoot = Stopwatch()..start();
       await _tor.start();
-      if (!_current(round) || _tor.status.isObsolete) return null;
+      if (!_current(round)) return null;
+      if (_tor.status.isObsolete) return _noTor(_TorMiss.unavailable, 'this build is obsolete');
       // A start that did not take - refused by the library, or overtaken by a
       // stop - leaves nothing to wait for; waiting would spend the whole budget.
-      if (_tor.status.state == TorState.stopped) return _noTor('it did not start');
+      if (_tor.status.state == TorState.stopped) return _noTor(_TorMiss.notUp, 'it did not start');
       // Nothing is handed to the client in advance: the channel dials the
       // onion address itself, and no key opens the service (phase 045).
       _torTarget = target;
@@ -435,7 +534,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
         target: this,
         message: 'path: Tor ${ready ? 'ready' : 'not ready'} after ${watch.elapsedMilliseconds} ms (${_tor.status.state.name})',
       );
-      if (!ready || !_current(round)) return null;
+      if (!_current(round)) return null;
+      if (!ready) {
+        _torMiss = _tor.status.isObsolete ? _TorMiss.unavailable : _TorMiss.notUp;
+        return null;
+      }
       return Uri(scheme: 'wss', host: target.host, port: target.port == 443 ? null : target.port, path: '/ws');
     } finally {
       if (_torRound == round) _torRound = null;
@@ -459,8 +562,9 @@ class ConnectionPathSelector implements SocketTargetProvider {
   }
 
   /// Says why Tor is not an option this round - the reason only, never the
-  /// address.
-  Uri? _noTor(String reason) {
+  /// address - and keeps it for the round's problem.
+  Uri? _noTor(_TorMiss miss, String reason) {
+    _torMiss = miss;
     logRepository.debug(target: this, message: 'path: no Tor ($reason)');
     return null;
   }
@@ -517,6 +621,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
   void _onAddresses(ServerAddresses next) {
     final previous = _seenAddresses;
     _seenAddresses = next;
+    _lastAddresses = next;
     if (!_active || previous == null) return;
     if (previous.useTor && !next.useTor) unawaited(_torTurnedOff());
     final placesChanged =

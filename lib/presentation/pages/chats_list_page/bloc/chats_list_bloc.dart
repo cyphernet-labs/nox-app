@@ -9,6 +9,7 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
@@ -73,7 +74,16 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
 
   /// «No connection» is for a whole round of path finding that found nothing,
   /// not for a path still on its way (phase 040) - or the debug scenario.
-  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatsListScenario.offline);
+  bool _isOffline() =>
+      !_isServerMismatch() &&
+      (_status.showsNoConnection || _scenario == ChatsListScenario.offline || _scenario == ChatsListScenario.turnOnTor);
+
+  /// Why, when that is known (phase 045) - or the debug scenarios' stand-ins.
+  ConnectionProblem? _problem() {
+    if (_scenario == ChatsListScenario.pinRefused) return ConnectionProblem.otherServer;
+    if (_scenario == ChatsListScenario.turnOnTor) return ConnectionProblem.turnOnTor;
+    return _isOffline() || _isServerMismatch() ? _status.problem : null;
+  }
 
   /// The server refuses this build (phase 042): the strip stays, its action
   /// does not - trying again cannot change the answer.
@@ -138,6 +148,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
           isOffline: _isOffline(),
           isServerMismatch: _isServerMismatch(),
           isUnsupported: _isUnsupported(),
+          problem: _problem(),
           torObsolete: _isTorObsolete(),
         ),
       );
@@ -281,6 +292,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
                 isUnsupported: _isUnsupported(),
+                problem: _problem(),
                 torObsolete: _isTorObsolete(),
                 hasLoadError: _scenario == ChatsListScenario.inlineError,
               ),
