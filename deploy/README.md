@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File deploy\install-windows.ps1
 | `--port N` | `-Port N` | порт сервера; по умолчанию 8443, при обновлении — прежний |
 | `--status-port N` | `-StatusPort N` | порт служебной страницы, только для этой машины; по умолчанию 8081 |
 | `--public-addr H:P` | `-PublicAddr H:P` | публичный адрес машины, если он есть |
-| `--binary PATH` | `-Binary PATH` | готовый `noxd` вместо сборки |
+| `--binary PATH` | `-Binary PATH` | готовый `noxd` вместо сборки; на macOS ставится его копия без карантина, который macOS вешает на файл, пришедший через AirDrop, почту или браузер |
 | `--no-tor` | `-NoTor` | без tor: устройства подключаются только напрямую |
 | `--tor-bin PATH` | `-TorBin PATH` | свой tor 0.4.9+ с PoW вместо скачанного (macOS, Windows; на Linux — только для проверки с `--prefix`) |
 | `--prefix DIR` `--no-service` | `-Prefix DIR` `-NoService` | проверка скрипта без изменения системы, см. ниже |

@@ -424,12 +424,31 @@ find_go() {
 	printf '%s' "$g"
 }
 
+# take_given_binary sets NEW_BINARY to the noxd given with --binary - on a
+# Mac, to a copy of it in the scratch directory without the quarantine that
+# AirDrop, Messages, Mail and browsers put on every file they bring:
+# Gatekeeper refuses to run a quarantined program nobody notarised, which
+# every noxd is, and the check below runs it. The copy is what is checked and
+# what is installed; the file given is left as it was.
+take_given_binary() {
+	NEW_BINARY=$OPT_BINARY
+	[ "$(uname -s)" = Darwin ] || return 0
+	mkdir -p "$WORK/given"
+	NEW_BINARY=$WORK/given/noxd
+	cp "$OPT_BINARY" "$NEW_BINARY" || die "cannot copy $OPT_BINARY"
+	chmod 755 "$NEW_BINARY" || die "cannot make the copy of $OPT_BINARY runnable"
+	xattr -d com.apple.quarantine "$NEW_BINARY" 2>/dev/null || true
+	if xattr -p com.apple.quarantine "$NEW_BINARY" >/dev/null 2>&1; then
+		die "macOS keeps the copy of $OPT_BINARY in quarantine, and will not run it: lift it with xattr -d com.apple.quarantine $OPT_BINARY and run the script again"
+	fi
+}
+
 # prepare_binary sets NEW_BINARY: the noxd given with --binary, or one built
 # here from the repository beside this script. Nothing is installed yet.
 prepare_binary() {
 	local go out src
 	if [ -n "$OPT_BINARY" ]; then
-		NEW_BINARY=$OPT_BINARY
+		take_given_binary
 	else
 		src=$REPO_DIR/client_backend
 		[ -f "$src/go.mod" ] || die "no server source at $src: run the script from the NOX repository, or pass --binary"
@@ -464,16 +483,26 @@ prepare_binary() {
 	# It runs here, and it is a server of this generation: the locked start
 	# and the commands this script talks to. (-h makes each print its flags
 	# and exit non-zero, which is why the output is read and not the status.)
-	local help
+	local help what=${OPT_BINARY:-$NEW_BINARY} why=""
 	help=$("$NEW_BINARY" unlock -h 2>&1 || true)
 	case $help in
 	*-status-addr*) ;;
-	*) die "$NEW_BINARY does not run here as a NOX server with 'noxd unlock'; build it for this system" ;;
+	*)
+		if [ -n "$help" ]; then
+			why=" (it said: $(printf '%s\n' "$help" | head -n 1))"
+		fi
+		if [ -n "$OPT_BINARY" ] && [ "$(uname -s)" = Darwin ]; then
+			# Named, because it is the usual reason a Mac will not run a
+			# program carried over from another one - and it is ruled out.
+			why="$why; a quarantine is not the cause - the copy that was tried had none"
+		fi
+		die "$what does not run here as a NOX server with 'noxd unlock'$why; build it for this system"
+		;;
 	esac
 	help=$("$NEW_BINARY" link -h 2>&1 || true)
 	case $help in
 	*-qr*) ;;
-	*) die "$NEW_BINARY has no 'noxd link -qr'; build it from this repository" ;;
+	*) die "$what has no 'noxd link -qr'; build it from this repository" ;;
 	esac
 }
 

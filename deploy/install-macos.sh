@@ -262,9 +262,6 @@ install_binary() {
 	else
 		put_file "$NEW_BINARY" "$NOXD" 755 root wheel
 	fi
-	# A binary carried over from another Mac may come quarantined, and
-	# launchd would not start it.
-	xattr -d com.apple.quarantine "$NOXD" 2>/dev/null || true
 }
 
 # --- launchd -----------------------------------------------------------------
