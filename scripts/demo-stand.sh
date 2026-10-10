@@ -81,11 +81,10 @@ echo "==> starting the server"
 
 # Waiting for OUR server, which is not the same as waiting for the port.
 #
-# Two traps, both hit in practice. noxd writes "listening" one statement BEFORE
-# it binds, so a server whose port is taken prints that line and then dies -
-# this script used to believe it and announce a stand that was not running,
-# with a key and a claim link for a dead process. And probing the port
-# is no better on its own: a clash means somebody ELSE answers there, healthily.
+# Two traps. A server that cannot start - its port taken, its database written
+# by another build - logs an ERROR and exits, and announcing a stand for it
+# would hand out a key and a link for a dead process. And probing the port is
+# no better on its own: a clash means somebody ELSE answers there, healthily.
 # So: wait for our process to settle, refuse on any ERROR it logged, and then
 # confirm the machine on that port is the one whose key we just minted.
 echo -n "==> waiting for the server"
@@ -110,8 +109,9 @@ for _ in $(seq 1 100); do
 done
 echo
 
-# "listening" is written before the bind, so give the bind a moment to fail and
-# re-read the error before believing the line.
+# An ERROR can land between the two greps above - a taken service-page port is
+# logged just before "listening", and without the page there is no link to
+# hand out - so the log is read once more before the line is believed.
 sleep 0.3
 if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
   echo "the server refused to start:" >&2
@@ -136,16 +136,21 @@ if ! "$STAND-smoke" -check "127.0.0.1:$PORT" "$server_key" >/dev/null 2>"$STAND/
   exit 1
 fi
 
-# Two links, one token. The startup line addresses the machine itself, because
-# that is who reads a terminal; the page addresses the network, because that is
-# who reads a QR off a screen. Same right, different reader.
-local_link="$(grep -oE 'nox://pair/[A-Za-z0-9_-]+' "$STAND/server.log" | head -1 || true)"
-page_link="$(curl -fsS "http://127.0.0.1:$STATUS_PORT/" 2>/dev/null \
-  | grep -oE 'nox://pair/[A-Za-z0-9_-]+' | head -1 || true)"
-
-if [ -z "$local_link" ] && [ -z "$server_key" ]; then
-  echo "the server printed neither a claim link nor its key:" >&2
-  cat "$STAND/server.log" >&2
+# The link comes from the running server itself, through `noxd link`: the log
+# never carries one. Asking issues a fresh link and voids the one before, which
+# is what a stand wants - ten minutes from now, not from whenever the page last
+# minted one. It is the same link the page shows as a QR code, and it names the
+# machine's address on the network, which a phone and an app on this machine
+# can both dial.
+if ! link_out="$("$STAND-noxd" link -status-addr "127.0.0.1:$STATUS_PORT" 2>"$STAND/link.err")"; then
+  echo "the server did not hand out a pairing link:" >&2
+  cat "$STAND/link.err" >&2
+  exit 1
+fi
+link="$(printf '%s\n' "$link_out" | grep -oE 'nox://pair/[A-Za-z0-9_-]+' | head -1 || true)"
+if [ -z "$link" ]; then
+  echo "noxd link answered without a link:" >&2
+  printf '%s\n' "$link_out" >&2
   exit 1
 fi
 
@@ -159,15 +164,16 @@ cat <<INFO
   database       $STAND/nox.db
   log            $STAND/server.log
 
-  claim link for an app on THIS machine
-  ${local_link:-none: this server already has an owner}
+  pairing link - ten minutes, the same one the page shows as a QR code
+  $link
 
-  claim link for a phone (the one the page shows as a QR)
-  ${page_link:-none: this machine has no address another device could reach, or it is already claimed}
+  a new one - the one above stops working (-qr draws it in the terminal too):
+      $STAND-noxd link -status-addr 127.0.0.1:$STATUS_PORT
 
   check it works, without clicking anything:
-      (cd client_backend && go run ./cmd/smoke '${local_link:-<claim link>}')
-      # then re-run this script: the smoke test claims the server
+      (cd client_backend && go run ./cmd/smoke '$link')
+      # the smoke test spends the link and leaves its own devices paired:
+      # run this script with --fresh again before a demo from scratch
 
   or run the demo by hand:
       open http://127.0.0.1:$STATUS_PORT

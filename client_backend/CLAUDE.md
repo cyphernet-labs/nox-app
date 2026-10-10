@@ -24,16 +24,31 @@ answers with the machine's own Ed25519 key the same way. Only then does
 `http.Server` see the connection, carrying the device key it proved
 (`channelPeer`). The server accepts ANY key that proves itself and grants
 rights by the store: a paired device gets everything, an unknown key only
-`pair`; `session.hello` with an unknown key is `unauthenticated` (the device
-reads it as a revocation), and `/files` refuses an unpaired key with `401`
-before it looks at the token. The greeting has no challenge, `session.hello`
-and `pair` carry no device key, and the pairing link is `nox://pair/`
-version 3 (contract §8A). People come into being only through `pair`; the
-machine belongs to ONE person (037) and `owner_user_id` survives only as the
-"this machine has been claimed" marker. Still out of scope and blocked:
-`recover` and the recovery phrase (Q16), the protocol to the relay (Q13), and
-ATS / App Review for a personal server reached through the app's own Rust
-module (Q14, due before release).
+`pair` and `pair.cancel`; `session.hello` with an unknown key is
+`unauthenticated` (the device reads it as a revocation), and `/files` refuses
+an unpaired key with `401` before it looks at the token. The greeting has no
+challenge, `session.hello` and `pair` carry no device key, and the pairing
+link is `nox://pair/` version 3 (contract §8A).
+
+**A device joins one of two ways (feature 046, contract §8A).** The MACHINE
+LINK is handed out on the machine itself - by the service page (at once while
+no device is paired, otherwise on `Add a device` / `New link`) or by
+`noxd link` - lives ten minutes, is the only live one (a new link voids the
+one before), and pairs at once: it creates the person when there is nobody,
+and joins them, with everything they wrote, when there is. A device INVITE
+(`device.invite`, ten minutes) pairs nothing by itself: `pair` with it opens
+a request, the issuing device is asked (`device.pairRequested`) and answers
+with `device.approve`, and the request closes exactly once - allowed, denied,
+expired, cancelled by the new device (`pair.cancel`), or denied because a
+device taking part in it was revoked. People come into being only through
+`pair` with a machine link. The machine belongs to ONE person (037) and there
+is no owner beside them: whether anybody can reach the machine is the device
+count, and the last device going away puts the service page back to showing a
+link. There is no separate recovery - no phrase, no codes: the machine link
+is the way back. No link and no token ever reaches the log. Still out of
+scope and blocked: the protocol to the relay (Q13), and ATS / App Review for
+a personal server reached through the app's own Rust module (Q14, due before
+release).
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -48,6 +63,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
     go vet ./...
     go test -race ./...       # -race is mandatory, not optional
     go build -o noxd . && ./noxd -addr 127.0.0.1:8080 -db nox.db
+    ./noxd link -qr           # a machine link from the RUNNING server, drawn as a code too
+                              # (-status-addr names its service page, default 127.0.0.1:8081)
+    go run ./cmd/smoke '<machine link>'   # the whole pairing flow against a running server
 
 ## Toolchain & dependencies
 
@@ -57,8 +75,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **Why `rsc.io/qr` (035):** encoding a QR is a whole capability — Reed-Solomon
   over GF(256), version selection, eight masks scored by penalty — not a
   convenience, and writing it here buys nothing but our own bugs in the thing
-  people scan to take ownership of a server. Pure Go, no dependencies of its
-  own, no CGO, so `CGO_ENABLED=0` static builds are untouched.
+  people scan to pair a device with their server - on the service page, and in
+  the terminal for `noxd link -qr`. Pure Go, no dependencies of its own, no
+  CGO, so `CGO_ENABLED=0` static builds are untouched.
 - `modernc.org/libc` does not follow semver — its version stays pinned;
   bump only together with `modernc.org/sqlite` and run the full test suite.
 - Dev tools go through `tool` directives in go.mod (Go 1.24+), never a
@@ -80,18 +99,29 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 3. **Transactional outbox.** Every mutation visible on the wire as an
    event inserts its `events` row in the SAME transaction; broadcasting
    happens only AFTER `Commit` returns (via the dispatcher). Never
-   broadcast inside a transaction. Two lifecycles are deliberately
+   broadcast inside a transaction. Three lifecycles are deliberately
    event-less: file metadata (upload registration, continuation,
    mark-uploaded, orphan sweep), because files surface to other clients
-   only through `message.send`; and identity resolution (`internal/store/identity.go`),
-   because a PERSON coming into being is not visible on the wire at all.
-   The rule is about the JOURNAL, and the three off-journal events sit outside
-   it by construction: `device.revoked`, `identity.updated` and - since 038 -
-   `device.paired` carry `seq: 0`, write no `events` row, take no cursor
-   coordinate and are never replayed. They describe who a connection is or what
-   it may still do, not what happened in the shared world, which is why a
-   disconnect may lose them and nothing breaks.
-   `server.addresses` (039) is the fourth: it says where this machine can be
+   only through `message.send`; identity resolution (`internal/store/identity.go`),
+   because a PERSON coming into being is not visible on the wire at all; and
+   pairing - tokens, requests and the device rows they write
+   (`internal/store/{pairing,requests,devices}.go`) - because who may reach
+   the machine is not the shared world the journal records.
+   The rule is about the JOURNAL, and the off-journal events sit outside it by
+   construction: `device.revoked`, `identity.updated`, `device.paired` (038)
+   and the three of pairing with approval (046) - `pair.resolved`,
+   `device.pairRequested`, `device.pairResolved` - carry `seq: 0`, write no
+   `events` row, take no cursor coordinate and are never replayed. They
+   describe who a connection is, who may join the machine or what a
+   connection may still do, not what happened in the shared world, which is
+   why a disconnect may lose them. What must not be lost has a reliable half
+   on the store: a revoked device is `unauthenticated` at its next greeting; a
+   new device repeats `pair` with the same token from the same key and is
+   answered with its request's recorded outcome (`pending` while it waits);
+   the issuing device is sent every request still waiting for its answer
+   again after each of its greetings, and an answer to a request that closed
+   meanwhile is `not_found`.
+   `server.addresses` (039) is one more: it says where this machine can be
    reached, has ONE sender - the address watcher - and the greeting reply is
    its reliable half.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
@@ -108,23 +138,31 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    mutex, and a change that seems to need one there means restructuring
    so one goroutine owns the state. The connection REGISTRY is the
    deliberate exception: `Server.mu` guards `conns` and the per-connection
-   fields other connections read (identity), because the fan-out helpers
-   walk one person's connections from another's goroutine. The device key
-   needs no lock: the channel fixes it before the connection is registered,
-   and it never changes.
-   `Server.claim`, the transfer-token store (`internal/server/tokens.go`)
-   and - since 043 - the upload-writer registry (`internal/server/writers.go`:
-   which request is writing which part, so a new PUT can interrupt one whose
-   connection died silently instead of writing beside it) hold the only
-   other three. The mutex inside each PUT's `stallReader` (`files.go`) is
-   NOT a fourth: it lives and dies with one request, guards nothing another
-   request or connection reads, and only orders that request's read-deadline
-   renewal against an interrupt, so the interrupt is never pushed back by a
-   whole stall timeout. Since 039 the registry also carries `greeted`
-   and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
-   reply is queued - which is what keeps `server.addresses` behind it. Tor
-   state reaches readers as an immutable snapshot behind `atomic.Pointer`,
-   not under a lock.
+   fields other goroutines read (identity, `greeted`, `addrVersion`),
+   because the fan-out helpers walk one person's - or one device key's -
+   connections from somewhere else: another connection's command, the
+   address watcher, the request sweeper. They collect under the lock and
+   send outside it (`connectionsWhere`). The device key needs no lock: the
+   channel fixes it before the connection is registered, and it never
+   changes.
+   The transfer-token store (`internal/server/tokens.go`) and - since 043 -
+   the upload-writer registry (`internal/server/writers.go`: which request is
+   writing which part, so a new PUT can interrupt one whose connection died
+   silently instead of writing beside it) hold the only other two. The mutex
+   inside each PUT's `stallReader` (`files.go`) is NOT a third: it lives and
+   dies with one request, guards nothing another request or connection reads,
+   and only orders that request's read-deadline renewal against an interrupt,
+   so the interrupt is never pushed back by a whole stall timeout. `greeted`
+   and `addrVersion` are set under `Server.mu` AFTER the greeting reply is
+   queued, which is what keeps `server.addresses` behind it; the requests
+   waiting for the device's answer are re-sent only after that mark, so a
+   request opened during a greeting reaches the issuer one way or the other.
+   PAIRING holds no lock of its own: tokens, requests and devices change only
+   inside store transactions, the single writer puts them in one order, and a
+   conditional UPDATE's affected-row count settles every race - two devices
+   presenting one token, an Allow against the deadline against a cancel. The
+   address snapshot reaches readers behind an `atomic.Pointer` that the
+   watcher alone writes, not under a lock.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
@@ -132,17 +170,15 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    BESIDE the writer - Ping waits a whole round trip, which over Tor is
    seconds, and a writer parked on it lets live frames overflow the queue.
    `SetReadLimit(max_frame_bytes)`.
-9. **Shutdown order:** the HTTP servers drain (onion FIRST - an onion
-   connection accepted after the main server closed the registered ones would
-   never be told to go - then main, then the status page, each on its OWN
-   deadline) →
+9. **Shutdown order:** the HTTP servers drain (the main one, then the
+   service page, each on its OWN deadline) →
    registered WS conns get `Close(StatusGoingAway)`, IN PARALLEL - one close
    handshake can take 10 s, and over Tor it does (Shutdown does NOT wait for
    hijacked conns — keep the conn registry wired via `RegisterOnShutdown`) →
-   wait for the handlers, up to 15 s → the address watcher and the tor
-   supervisor stop (the supervisor on its OWN context, so tor outlives the
-   drain the onion clients are still saying goodbye through) → hub stops →
-   DB closes. Preserve it.
+   wait for the handlers, up to 15 s → the address watcher and the request
+   sweeper stop, each on its OWN context (both send to connections that are
+   still being told goodbye, and both use the database - the sweeper writes
+   it) → hub stops → DB closes. Preserve it.
 10. **Idempotency:** `message.send` is keyed by `(author_id,
     client_message_id)`; a replayed command returns the original echo,
     never a duplicate row. The key keeps `author_id` because that is the
@@ -190,14 +226,26 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
-  the second event-less write besides file metadata
-- `internal/store/serverkey.go` — the machine's own key pair AND its owner:
-  `owner_user_id` on the single `server_identity` row is the ownership state
-  machine, and `claimed_at` is only a timestamp nothing decides by
-- `internal/store/pairing.go` — one-shot tokens and `Pair`; burning is a
-  conditional UPDATE whose affected-row count settles a two-device race
+  one of the event-less lifecycles of invariant 3
+- `internal/store/serverkey.go` — the machine's own Ed25519 key pair on the
+  single `server_identity` row. No owner: "can anybody reach this machine" is
+  `countDevices`, the one spelling of it, asked by the service page, the
+  startup line and the last device going away
+- `internal/store/pairing.go` — the two kinds of one-shot token and `Pair`:
+  the machine link (at most one unspent - issuing one voids the others in the
+  same transaction; minted by `noxd link`, by the page's buttons, and by the
+  page itself while no device is paired and no unspent link exists) and the
+  device invite, which remembers its issuer. Burning is a conditional UPDATE
+  whose affected-row count settles a two-device race
+- `internal/store/requests.go` — requests to join through an invite (046):
+  opened by `pair`, found again by the key that opened them, closed exactly
+  once - allowed (the device row is written in the same transaction), denied,
+  expired, cancelled - and the invite spent whatever the outcome
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
-  device is indistinguishable from an unknown one), rename
+  device is indistinguishable from an unknown one; the same transaction
+  closes the requests it takes part in, on either side, as denied, voids its
+  unspent invites, and - when it was the last device - voids a machine link
+  that ran out unused, so the page leads with a fresh one), rename
 - `internal/store/accesskeys.go` — onion access keys (039): one per device,
   the active set read in one transaction (the one-time invite keys left with
   044; the rest leaves with 045)
@@ -223,6 +271,24 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
 - `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
   addresses, shared vectors with the app in `testdata/link-vectors.json`
+- `internal/server/pairing.go` — the device commands of contract §8A: `pair`
+  and `pair.cancel` (the two allowed before a greeting), `device.approve`,
+  `device.list`, `device.invite`, `device.revoke`, `identity.setLabel`
+- `internal/server/requests.go` — who hears what about a request, and when:
+  `device.pairRequested` to the issuing device's greeted connections (and
+  again after each of its greetings), `pair.resolved` to the new device's
+  connections that have not greeted, `device.pairResolved` to the issuer;
+  and the sweeper (`Server.requestSweep`, 2 s) that closes what ran out
+- `internal/server/status.go`, `status_page.go`, `status_qr.go` — the service
+  page on its own loopback listener: the machine's state, the machine link
+  with its countdown, `Add a device` / `New link` (`POST /link`) and the
+  address forms (`POST /addresses`), both forms checked for this page's
+  `Origin` and the per-process form token; the QR as SVG for the page and as
+  text for `noxd link -qr`
+- `internal/server/control.go` — `POST /control/link` on that same listener,
+  the whole of `noxd link` but the printing: a local `Host`, `X-Nox-Control: 1`
+  and NO `Origin`, or 403. The command never opens the database (invariant 1):
+  it asks the running server
 - `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
   with its continuation (`file_id` in, `received` out), the PUT that keeps
   whatever arrives and carries the rest of the file from the offset its token
@@ -252,6 +318,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   or WebSocket over that connection (`dialAs` in `server_test.go`). NOT
   `httptest.NewTLSServer`: a stock TLS server skips the check this server is
   built around.
+- "No link and no token in the log" is a test, not a promise:
+  `TestNoLinkAndNoTokenEverReachesTheLog` (`logs_test.go`) drives `Run` itself
+  and reads everything the process says while links are issued - by the page,
+  its buttons and `noxd link` - and spent: a machine link, and an invite with
+  its request and its Allow.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
 - Tests through the REAL Tor network are named `TestOnion*` and run only
   when `NOX_TOR_TEST_BIN` points at a tor binary (0.4.9+); without it they
@@ -266,7 +337,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   way: there is no flag to serve plaintext or skip the check, and adding one
   would be adding the downgrade the whole design removed. The SERVICE PAGE is
   the deliberate exception and stays plain HTTP on its own loopback listener,
-  together with `GET /health`: the main port answers nothing before the check.
+  together with `GET /health` and `POST /control/link`, where `noxd link` asks
+  for a machine link: the main port answers nothing before the check.
 - Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
   local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
@@ -316,56 +388,78 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   header, and the main server is ordinarily bound to every interface. An empty
   address removes the listener rather than the handler, so the port is not held.
 - **The service page has exactly ONE script, admitted by its HASH.** It reveals a
-  Copy button and puts the claim link on the clipboard - two lines of base64 are
-  not something to select by hand. Three things keep it from being a hole, and
-  undoing any of them reopens one: the button ships HIDDEN and the script
+  Copy button and puts the machine link on the clipboard - two lines of base64
+  are not something to select by hand - and counts the minutes the link has
+  left, turning into `Link expired` with `New link` when they run out, so a page
+  left open never offers a code that stopped working. It mints nothing: a new
+  link only ever comes from a button. Three things keep it from being a hole,
+  and undoing any of them reopens one: the button ships HIDDEN and the script
   reveals it, so a page whose script did not run shows no dead control; the
   policy names `script-src 'sha256-...'` and never `'unsafe-inline'`, so exactly
   those bytes may run; and `default-src 'none'` still forbids `connect-src`, so
   the script can read the link and has nowhere to send it. The hash is DERIVED
   from the script constant on every response rather than written down: a stored
-  derivative is a second copy of one fact. A page with no link
-  carries no script and its policy admits none.
+  derivative is a second copy of one fact. A page with no LIVE link carries no
+  script and its policy admits none.
 - **Clipboard access needs a secure context, and this page has one without TLS.**
   `http://127.0.0.1` and `http://localhost` are potentially trustworthy origins;
   measured in a browser, not assumed. The fallback still exists: if the API is
   missing or refuses, the script selects the link so one keystroke finishes it.
-- **One claim token per process.** The page shows the token the startup
-  announcement already minted; minting per request would leave an unrevocable
-  door behind every browser refresh, because a claim token has no expiry.
+- **At most one machine link is unspent, and nothing mints over one on its
+  own.** Issuing a link voids every earlier unspent one in the same
+  transaction, so whatever the page showed or `noxd link` printed stops working
+  the moment a newer one exists. The page mints by itself only while no device
+  is paired AND no unspent link exists: a reload never mints, and a link that
+  ran out is never replaced behind anybody's back - the page says
+  `Link expired` and waits for `New link`. While devices exist the page shows a
+  link only on `Add a device`, so a page merely left open holds no live way in.
 - **A loopback bind draws no CODE, but still shows the LINK.** Two questions, and
   conflating them cost the page once: "can a phone dial this" decides the QR, and
   nothing decides whether a link exists. The default `-addr` is `127.0.0.1:8080`,
   where a phone cannot reach the server at all - but the app running on that same
-  machine claims it by pasting, so refusing to issue a link there leaves an owner
-  who logged out with no way back in.
+  machine pairs by pasting the link, so refusing to issue one there leaves a
+  person who signed out of their last device with no way back in. `noxd link -qr`
+  follows the same rule: no code for a link only this machine can follow.
 - **The service page checks the `Host` header.** The loopback socket keeps the
   network out; this keeps the operator's own browser out. Any site can be rebound
-  to 127.0.0.1 by DNS and read the page as same-origin - and the claim link with
-  it - and the request really does arrive from loopback, so the socket cannot
-  help.
+  to 127.0.0.1 by DNS and read the page as same-origin - and the machine link
+  with it - and the request really does arrive from loopback, so the socket
+  cannot help. Its forms (`POST /link`, `POST /addresses`) also need this page's
+  own `Origin` and the per-process form token, which a page from elsewhere
+  cannot read. `POST /control/link` turns the rule around - `X-Nox-Control: 1`
+  and NO `Origin`: a browser always sends an `Origin` on a POST, and the custom
+  header forces a CORS preflight nothing here answers, so a page from another
+  site never gets as far as sending it, while `noxd link` sends exactly that.
 - **The listener's OWN address is verified after binding.** The config check
   catches a mistyped flag; a hostname can resolve to loopback at parse time and
   elsewhere at bind time, and only the socket knows which happened.
 - **A busy status port does not stop the server.** It is logged and the page is
   skipped: 8081 is not a rare port, and people talking to each other must not
-  depend on a page nobody has opened.
-- **The TOKEN is cached, never the built link.** Caching the link froze an
-  address for the life of the process while "can a phone reach us" went on being
-  recomputed, so a laptop whose network came up after the server did drew a QR
-  over a link that still said 127.0.0.1. One fact, one cache.
-- **The held claim token is re-checked before it is shown.** It can be spent
-  between two page loads - somebody claims, the owner later revokes their last
-  device - and handing back the burnt one would point the only recovery tool
-  there is at a door that no longer opens.
-- **The QR's address is NOT `listenAddress`.** That falls back to loopback under
-  a wildcard bind, which is right for the line printed in the terminal and
-  useless for the phone reading the code off the screen. The page resolves a
-  dialable address instead, and shows no code at all when the machine has none.
-- **The page decides between its two states on the SAME ownership predicate**
-  the startup announcement uses. A second definition of "claimed" is how phase
-  033's one fact would go back to living in two records - and this one would
-  show a status page to somebody locked out of their own machine.
+  depend on a page nobody has opened. Without the page there is no machine link
+  at all - neither the page nor `noxd link` - which is why an empty
+  `-status-addr` on a machine with no device yet is logged as an error.
+- **Only the TOKEN is stored, never the built link.** The page and `noxd link`
+  rebuild the link from the unspent token whenever they are asked, and the
+  address in it is resolved at that moment. A built link kept for later froze an
+  address while "can a phone reach us" went on being recomputed, so a laptop
+  whose network came up after the server did drew a QR over a link that still
+  said 127.0.0.1. One fact, one record.
+- **The machine link's address is NOT `listenAddress`.** That falls back to
+  loopback under a wildcard bind, and the link is carried to ANOTHER device. It
+  names the address another device can dial - the bind when it names one, else
+  the first interface that is up, IPv4 first - and falls back to loopback only
+  when the machine has nothing else; a code is then drawn only when a public or
+  onion address in the link still gives a phone a way in. An INVITE
+  link takes the address the requesting device dialled instead (its `Host`
+  header; through the onion service, the first found direct address): that
+  device demonstrably reached the server there, while the machine link has no
+  device asking yet.
+- **"Can anybody reach this machine" has ONE answer: `countDevices`.** The
+  page's two states, the startup line that says where a link is, and the last
+  device going away all ask it. There is no owner marker beside it: a second
+  record of one fact is the shape that eventually disagrees with itself, and
+  here the disagreement would be a page that hides the link from somebody
+  locked out of their own machine.
 - **Known narrow window:** the greeting reads the person from the
   store and writes it to the connection a few lines later, and the fan-out
   helpers match connections by `identity.UserID` - which is empty in between. A
@@ -381,32 +475,40 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   write queue until that connection's context is cancelled, so announcing first
   puts the caller's own answer behind a stranger's backlog - and a wedged
   connection whose drop is still finishing its close handshake is seconds wide.
-  `device.revoke` set the order; `pair` and `identity.setLabel` follow it since
-  038. What the order does NOT buy: the fan-out still runs on the caller's read
-  goroutine, so the same wedged recipient delays that connection's NEXT command.
+  `device.revoke` set the order; `pair`, `pair.cancel`, `device.approve` and
+  `identity.setLabel` follow it. What the order does NOT buy: the fan-out still
+  runs on the caller's read goroutine, so the same wedged recipient delays that
+  connection's NEXT command.
   That wait is bounded by the close handshake rather than open-ended, and taking
   it away means putting the fan-out on its own goroutine - which would make
   these the only frames with no order relative to the ones around them.
-- The claim token has NO expiry. It dies by being used, only someone with
-  access to the machine ever sees it, and an expiring one would leave an
-  installed-then-forgotten server unclaimable with no way to mint another.
-  Device invites do expire, after ten minutes.
-- Ownership is a reference on `server_identity`, not a flag on `users`. The
-  table holds one row by CHECK, so "two owners" is unrepresentable without an
-  index anyone has to remember. It is written in the transaction that creates
-  the person and never derived from who is oldest: row order is not a right.
+- **Both kinds of pairing token live ten minutes.** A link that does not expire
+  is a standing way in for whoever kept a copy, and a device can pair through
+  the onion service from anywhere. Nobody is locked out by the deadline: the
+  machine link can always be issued again on the machine, and a request lives
+  no longer than the invite it was opened with.
+- **A request ends within one sweep of its deadline, not to the second.** The
+  sweeper looks every 2 s; an exact timer per request would be state to keep in
+  step with the store for no difference anybody sees against ten minutes. The
+  deadline itself is exact where it decides something: `device.approve` at or
+  past it is `not_found`, and a repeat of `pair` past it closes the request as
+  expired on the spot. Asking the store costs a read when nothing is due - the
+  writer is taken only when something is.
 - A second PERSON is unrepresentable by index (`idx_users_singleton` over the
-  constant expression `(1)`), not by convention. The consequence is deliberate
-  and easy to undo by accident: a claim against a store that holds a person but
-  no ownership mark now ATTACHES to that person instead of being refused. The
-  refusal existed because picking an owner out of several rows by order would
-  hand somebody else's history away; with one row there is nobody to pick
-  wrongly, and refusing would leave a full history permanently unreachable.
-- `claimed_at` is NOT the state machine. "Claimed" means "has an owner", and
-  nothing reads the timestamp to decide anything - one fact in two records is
-  the shape that eventually disagrees with itself. The timestamp is still
-  written, in the same statement as the owner, because the moment is
-  unrecoverable and the service page will want it.
+  constant expression `(1)`), not by convention. The machine link therefore has
+  nobody to choose between: it creates the person when there is nobody and joins
+  them when there is - and it is never refused because devices exist or because
+  the person exists. That is deliberate and easy to undo by accident: the
+  machine link is the only way back for somebody who lost every device, whoever
+  can issue it already holds the machine and its database, and refusing would
+  leave a full history permanently unreachable.
+- **Revocation closes requests on BOTH sides.** A revoked issuer can answer
+  nothing, so its waiting requests close as denied rather than holding the new
+  device at its screen for the rest of the ten minutes, and its unspent invites
+  are voided - a link from a device just told to leave must not ask the
+  person's other devices for anything. A revoked device that was itself asking
+  to join is denied too: the person who revoked it is not to be asked to let it
+  back in on a request it opened before.
 - The server's private key lives INSIDE the database file - an Ed25519 seed in
   `server_identity`. The model's case 6 warns that a backup holding only the DB
   would leave the devices facing a stranger; one artifact makes that impossible,
@@ -419,29 +521,35 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **The server accepts every key that proves itself.** Refusing unknown keys at
   the channel would make pairing impossible (a new device is unknown by
   definition) and would tell a stranger which keys are paired. Rights come from
-  the store, per command: `pair` for anyone, everything else for paired keys.
+  the store, per command: `pair` and `pair.cancel` for anyone, everything else
+  for paired keys.
 - **A failed check is answered with silence.** The server writes nothing - not
   even its own message - and closes the connection; a peer that did not prove a
   key learns nothing, including which machine it reached.
 - **An unpaired key may hold a `/ws` connection open without greeting.** There
-  is no greeting deadline (pre-existing); the cost is a goroutine per idle
-  stranger, bounded by `maxPendingChannels` only while the check runs. Recorded,
-  not fixed.
-- **No migration for a database from before 044** and there will not be one:
-  `001_init.sql` was edited in place, the schema check refuses an old file, and
-  the cure is a new database and every device paired again.
-- The claim link goes to the log AND to the service page (035), which is why
-  that page listens on loopback only and refuses to start anywhere else. The
-  pre-035 rule was "the log and nowhere else", on the reasoning that a page
-  serving the QR would hand ownership to everyone on the network. TLS (036) does
-  NOT retire that reasoning: encryption stops somebody reading the link off the
-  wire, and does nothing about a page that hands it to whoever asks. The
-  loopback bind is what answers that, and `assertLoopback` checks the socket
-  rather than the string somebody typed.
-- The CLAIM link falls back to loopback under a wildcard bind (it is read on the
-  machine), while an INVITE link uses the address the requesting device dialled
-  (its `Host` header). The two differ because an invite is carried to another
-  device, and loopback there is a link nothing can dial.
+  is no greeting deadline; the cost is a goroutine per idle stranger, bounded by
+  `maxPendingChannels` only while the check runs. A device waiting for Allow
+  does exactly this, for at most its invite's ten minutes. Recorded, not fixed.
+- **No migration for an older pre-release database**, and there will not be
+  one: `001_init.sql` is edited in place, the schema check refuses a file
+  written from another 001 (by the fingerprint of the migration text), and the
+  cure is a new database and every device paired again.
+- **No link and no token ever reaches the log.** The log is kept, copied and
+  shipped, while a link is a way in for ten minutes. The startup line, when no
+  device can reach the machine, names the service page and `noxd link` - never
+  a link; issuing one logs who asked (`service page` or `noxd link`), a closed
+  request logs its outcome, and nothing names a device, a token or an address
+  in a link. A machine link goes to the service page and to the terminal that
+  ran `noxd link`, an invite to the device that asked for it, and neither goes
+  anywhere else - which is why the page listens on loopback only and refuses
+  to start anywhere else. TLS does NOT retire that reasoning:
+  encryption stops somebody reading the link off the wire, and does nothing
+  about a page that hands it to whoever asks. The loopback bind is what answers
+  that, and `assertLoopback` checks the socket rather than the string somebody
+  typed.
+- **There is no revocation on the service page.** A lost device is revoked from
+  a device the person holds - the one just added with a machine link included.
+  The page hands out a way in; it does not judge which devices stay.
 - `users.label` is neither unique nor validated (owner, 2026-09-02): a
   greeting may never be refused because of a name, since the client
   retries a refused greeting forever.
