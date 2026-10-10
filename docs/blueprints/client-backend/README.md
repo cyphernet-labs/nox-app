@@ -30,7 +30,8 @@ client_backend/
     db/                # открытие пулов, прагмы, миграции user_version
     store/             # типы + ВСЕ чтения/записи; единственный писательский код
     hub/               # горутина-владелец множества подписчиков
-    server/            # wiring: ServeMux, WS-endpoint, REST, graceful shutdown
+    server/            # wiring: обёртка слушателя (TLS 1.3 + Eidolon), ServeMux, WS-endpoint, REST, graceful shutdown
+    eidolon/           # проверка Eidolon: сообщение 160 байт, подписи над экспортёром TLS 1.3, векторы
     protocol/          # конверт v0: типы кадров, коды ошибок, (un)marshal
 ```
 
@@ -74,10 +75,15 @@ write.SetMaxOpenConns(1)                          // ЕДИНСТВЕННЫЙ п
 ```go
 ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 g, ctx := errgroup.WithContext(ctx)
-// g.Go: http.ListenAndServe; g.Go: hub.Run(ctx); по ctx.Done() → srv.Shutdown(таймаут)
+// g.Go: net.Listen → channel listener (TLS 1.3 + Eidolon) → srv.Serve; g.Go: hub.Run(ctx);
+// on ctx.Done() → srv.Shutdown(timeout)
 ```
 
-- REST: `mux.HandleFunc("GET /health", …)`, `PUT /files/{token}`; middleware — `func(http.Handler) http.Handler`.
+- **Вход — обёртка слушателя** (`internal/server/channel.go`, контракт §1). Сервер сам принимает TCP и отдаёт `http.Server` только соединения, прошедшие оба слоя: каждое в своей горутине проходит рукопожатие TLS 1.3 и проверку Eidolon под **одним** сроком от момента приёма — 10 с на прямом входе, 30 с на onion-входе. Не прошедшее закрывается без ответа: соединение, которое не доказало ключ, не получает ничего, даже 404. Одновременно проверяются не больше 64 соединений на вход — сверх этого новые ждут в очереди ядра. Доказанный ключ устройства несёт обёртка соединения, `ConnContext` кладёт его в контекст запроса — его читают и `/ws`, и `/files`. Сам `http.Server` TLS не делает и HTTP/2 не видит: единственный TLS здесь предлагает ALPN `http/1.1`.
+- **TLS** (`internal/server/tls.go`) — только сессия и отпечаток для проверки: технический самоподписанный сертификат на одноразовом ключе ECDSA P-256, новом при каждом старте и только в памяти; `MinVersion` — TLS 1.3, ALPN `http/1.1`, `SessionTicketsDisabled` — каждое соединение проходит полное рукопожатие с подписью сервера. Кто на другом конце, решает не сертификат, а проверка.
+- **Eidolon** (`internal/eidolon`): сообщение 160 байт — ключ Ed25519 ‖ подпись над ключом ‖ подпись над экспортёром TLS 1.3 (RFC 9266: метка `EXPORTER-Channel-Binding`, пустой контекст, 32 байта). Клиент пишет первым; сервер читает ровно 160 байт, проверяет обе подписи и только потом отвечает своим сообщением. Сервер принимает любой ключ с верными подписями, а права даёт по нему: ключ спаренного устройства — всё, незнакомый — только `pair` (`session.hello` → `unauthenticated`), `/files` с незнакомым ключом — `401`. Отказ проверки (длина, подпись над ключом, подпись над экспортёром) — строка в логе без ключа и адреса; не завершённый TLS — только в отладочном. Общие векторы с модулем приложения — `specs/044-secure-channel/contracts/eidolon-vectors.json` (копия — `internal/eidolon/testdata/vectors.json`).
+- **Ключ сервера** — семя Ed25519 в `server_identity.private_key` (base64), открытый ключ — в `public_key`, в той же базе. Читается один раз при старте (`store.ServerKey`, который сверяет семя с открытым ключом и не запускает сервер при расхождении) и уходит только в обёртку слушателя; с TLS он не встречается.
+- REST: `PUT /files/{token}` и `GET /files/{token}` за той же обёрткой, что `/ws`; `GET /health` — на служебном loopback-слушателе со страницей состояния, основной порт до проверки не отвечает ничем; middleware — `func(http.Handler) http.Handler`.
 - Загрузка: `http.MaxBytesReader` лимитом — остатком файла от смещения, под которое выдан токен. Пришедшее дописывается в `<id>.part` и сохраняется при любом обрыве; надёжную длину части пакет `blob` пишет в `<id>.synced` — после `fsync` и каждые 4 MiB. Продолжение — `file.uploadBegin` с `file_id`, ответ несёт `received`. Скачивание: `http.ServeContent` — `Range`, `If-Range` и условные заголовки обрабатывает сам.
 - Предела времени на передачу нет: срок чтения (`PUT`) и записи (`GET`) продлевается перед каждым чтением и записью, и передачу обрывает только застой — 60 с без байта. Через Tor 100 MiB идут десятки минут, и предел на всю передачу обрывал бы именно путь вне дома. Пишет в часть один запрос: новый прерывает прежний (`internal/server/writers.go`).
 - Логи: `slog` + `JSONHandler`, request-middleware с методом/путём/статусом/длительностью.
@@ -86,7 +92,7 @@ g, ctx := errgroup.WithContext(ctx)
 ## 6. Тестирование
 
 - Табличные тесты + `t.Run`; БД — файл в `t.TempDir()`, миграции с нуля в каждом тесте.
-- HTTP — `httptest`; WS — `httptest.NewServer` + `websocket.Dial(ctx, s.URL)` (http-схему принимает напрямую).
+- HTTP и WS — за той же обёрткой канала, что в `Run`: `httptest.NewUnstartedServer(srv.Handler())`, у которого `Listener` — `newChannelListener(...)`. Клиент теста открывает канал, как приложение, — TLS 1.3, затем `eidolon.Initiate` от имени тестового устройства — и только потом говорит HTTP (`websocket.Dial` с `DialOptions.HTTPClient`, который так набирает). Не `httptest.NewTLSServer`: его стандартный TLS поставил бы обработчик за слой, которого продукт не использует, и оставил бы непроверенным главный вопрос — кто какой ключ доказал.
 - **`go test -race ./...` — всегда**, не опционально (race detector требует CGo только в тестовом контуре — на маке это штатно).
 - Конкурентность и replay — `testing/synctest` (GA с 1.25; в 1.27 добавлен `httptest.NewTestServer` с in-memory сетью специально под него).
 - Идеи из жанра: leaktest на WS-хендлерах (gotify), сценарные хелперы на группу endpoint'ов (PocketBase `ApiScenario`).

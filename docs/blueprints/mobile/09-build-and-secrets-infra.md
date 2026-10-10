@@ -2,7 +2,7 @@
 
 ## Ключ устройства (фаза 032) — платформенный fallback
 
-Приватный ключ устройства (семя Ed25519, 32 байта) хранится в `flutter_secure_storage` под `session.device_secret`. Блюпринт определяет хранение секретов для iOS/Android; для **desktop** здесь фиксируется явный fallback, как требует Принцип III:
+Приватный ключ устройства (семя Ed25519, 32 байта) хранится в `flutter_secure_storage` под `session.device_secret`. Модуль канала получает семя при каждом открытии соединения и доказывает им ключ устройства в проверке Eidolon; держит его в затираемом буфере на время рукопожатия, по сети уходит только открытый ключ. Блюпринт определяет хранение секретов для iOS/Android; для **desktop** здесь фиксируется явный fallback, как требует Принцип III:
 
 | Платформа | Хранилище |
 |---|---|
@@ -51,21 +51,21 @@ secrets/<flavor>.enc.yaml   (SOPS+age encrypted, committed)
 String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencies(env)
 ```
 
-> **Состояние сборочной инфраструктуры.** Поток выше — **целевая** форма. Приложение при этом давно не скелет: это законченный продукт поверх реальной локальной Sembast-БД (фичи 001–021 смёржены), серверный этап 1 (022–024) готов в `client_backend/`, а клиентский трек уже подключил приложение к живому серверу — фаза 025 выровняла клиента по контракту v0 (`seq`, wire-DTO, персистентный курсор `since`, `ServerLimits`), фаза 026 привезла WebSocket-транспорт и DI-флип фичи 016 в окружении `dev` (флейвор `stage`; моки остались за `prod`/`test`), фаза 027 — устойчивый outbox. Отстаёт именно сборочный контур: в репозитории **нет** ни `secrets/`-бандлов, ни `secrets:decrypt`-задач, ни age-ключа — конфигурация инжектится только закоммиченным `config/<flavor>.json` (`prod` несёт один `app.flavor`, `stage` — `app.flavor` + `app.apiUrl`), а сборки идут в `--debug` на всех пяти платформах (см. §4, §8). SOPS+age-конвейер ниже описан как конвенция, которая включается с первой реальной потребностью в секретах. Бэкенд **выбран** (Go-сервер `noxd` + встроенный SQLite, контракт v0; транспорт — `wss` с пиннингом по отпечатку ключа сервера, построен фазой 036; порт приезжает ссылкой спаривания), адрес сервера приехал с транспортом и лежит открытым (не секретным) `app.apiUrl` в `config/stage.json`, а вот секрето-несущий per-flavor набор так и не зафиксирован; токен приходит со stage-2-аутентификацией (этап 1 контракта работает без неё).
+> **Состояние сборочной инфраструктуры.** Поток выше — **целевая** форма. Приложение при этом давно не скелет: это законченный продукт поверх реальной локальной Sembast-БД (фичи 001–021 смёржены), серверный этап 1 (022–024) готов в `client_backend/`, а клиентский трек уже подключил приложение к живому серверу — фаза 025 выровняла клиента по контракту v0 (`seq`, wire-DTO, персистентный курсор `since`, `ServerLimits`), фаза 026 привезла WebSocket-транспорт и DI-флип фичи 016 в окружении `dev` (флейвор `stage`; моки остались за `prod`/`test`), фаза 027 — устойчивый outbox. Отстаёт именно сборочный контур: в репозитории **нет** ни `secrets/`-бандлов, ни `secrets:decrypt`-задач, ни age-ключа — конфигурация инжектится только закоммиченным `config/<flavor>.json` (`prod` несёт один `app.flavor`, `stage` — `app.flavor` + `app.apiUrl`), а сборки идут в `--debug` на всех пяти платформах (см. §4, §8). SOPS+age-конвейер ниже описан как конвенция, которая включается с первой реальной потребностью в секретах. Бэкенд **выбран** (Go-сервер `noxd` + встроенный SQLite, контракт v0; транспорт — `wss` и `https` по каналу нативного модуля: TLS 1.3 и проверка Eidolon против ключа сервера из ссылки спаривания; порт приезжает той же ссылкой), адрес сервера приехал с транспортом и лежит открытым (не секретным) `app.apiUrl` в `config/stage.json`, а вот секрето-несущий per-flavor набор так и не зафиксирован; токена контракт не несёт — соединение аутентифицирует канал.
 
 ---
 
-## 0a. Rust для Tor-клиента (фаза 040)
+## 0a. Rust для нативного модуля: канал и Tor-клиент
 
-Пакет `packages/nox_tor` — Rust-крейт с Arti, и его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте. Что нужно на машине:
+Пакет `packages/nox_tor` — Rust-крейт: канал к серверу (TLS 1.3 на rustls и проверка Eidolon) и Tor-клиент Arti. Его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте — на всех пяти платформах: каждое соединение с сервером открывает канал модуля, другого пути к серверу у приложения нет. Tor на Linux при этом выключен (`TorCapability`), но собирается в ту же библиотеку. Что нужно на машине:
 
 | Где | Что |
 |---|---|
-| все платформы, кроме Linux | `rustup`; тулчейн и цели берутся из `packages/nox_tor/rust/rust-toolchain.toml` (1.93.1). На свежей машине один раз `cd packages/nox_tor/rust && rustup show active-toolchain` — два первых запуска хука одновременно сталкиваются при скачивании тулчейна |
+| все платформы | `rustup`; тулчейн и цели берутся из `packages/nox_tor/rust/rust-toolchain.toml` (1.93.1). На свежей машине один раз `cd packages/nox_tor/rust && rustup show active-toolchain` — два первых запуска хука одновременно сталкиваются при скачивании тулчейна |
 | Android | NDK `28.2.13676358` — тот, что пинит Flutter 3.44.1 (`ndkVersion = flutter.ndkVersion`). Хук линкует библиотеку clang'ом NDK раньше, чем начинает работать Gradle |
 | iOS, macOS | Xcode. Цели развёртывания крейта — iOS 13.0 и macOS 10.15, как у приложения |
 | Windows | MSVC; собирается только на Windows |
-| Linux | ничего: хук возвращается, не трогая cargo |
+| Linux | цели `x86_64-unknown-linux-gnu` и `aarch64-unknown-linux-gnu` из того же `rust-toolchain.toml` |
 
 `make tor-test` гоняет `cargo test` крейта и `dart test` пакета. Профиль release крейта — `opt-level = "z"`, fat LTO, `strip`, `panic = "unwind"` (паника задачи Arti не должна ронять приложение).
 
@@ -285,11 +285,11 @@ run = "$FLUTTER build linux --dart-define-from-file=config/prod.json"
 - Decrypt пишет **и** `dart-define.json`, **и** нативные конфиги туда, где их ждёт IDE/Gradle/Xcode для one-click переключения флейворов.
 - Сборки резолвят Flutter через симлинк FVM (`$FLUTTER`), передают `--dart-define=app.flavor=<flavor>` + `--dart-define-from-file=...`, и сначала делают `flutter clean`.
 - `--obfuscate --split-debug-info=build/symbols` включён для релизных сборок (символы для дешифровки стек-трейсов в observability-бэкенде — см. `OBSERVABILITY_DSN` в env-наборе; **конкретный observability-вендор не зафиксирован**, DSN env-gated в `prod`/`stage`; см. `17-analytics.md` про vendor-neutral / opt-in модель).
-- `jq '{ ... }'` явно перечисляет только те ключи, которые должны попасть в `dart-define` — это allowlist, а не «весь YAML». Набор ключей (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) — **пример**: бэкенд и протокол выбраны (Go-сервер `noxd`, контракт v0), но конкретный per-flavor набор секретов ещё не зафиксирован — реальный адрес сервера уже приехал с транспортом (фаза 026), но как открытый `app.apiUrl` в `config/stage.json`, а не через секреты; токен приходит со stage-2-аутентификацией, а observability-вендор до сих пор не выбран. Добавляя новую переменную в `dart-define`, расширьте этот список **в обоих** флейворах.
+- `jq '{ ... }'` явно перечисляет только те ключи, которые должны попасть в `dart-define` — это allowlist, а не «весь YAML». Набор ключей (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) — **пример**: бэкенд и протокол выбраны (Go-сервер `noxd`, контракт v0), но конкретный per-flavor набор секретов ещё не зафиксирован — реальный адрес сервера уже приехал с транспортом (фаза 026), но как открытый `app.apiUrl` в `config/stage.json`, а не через секреты; токена контракт не несёт (соединение аутентифицирует канал), а observability-вендор до сих пор не выбран. Добавляя новую переменную в `dart-define`, расширьте этот список **в обоих** флейворах.
 
 ### 4.1 dart-define-контракт — состояние и TBD
 
-Закоммиченных dart-define-ключей сегодня два: **`app.flavor`** (несут оба `config/<flavor>.json`) и **`app.apiUrl`** (только `config/stage.json`, значение `http://127.0.0.1:8080`). **С фазы 036 он больше не адрес живого сервера**: адрес приезжает ссылкой спаривания и живёт в сессии, а у собранного в билд адреса по построению нет отпечатка — значит соединение с ним нечем проверить, и `LiveSessionStarter` его не читает. Первый читает `AppFlavor.getFlavor()` через `String.fromEnvironment('app.flavor')`; пустое/неизвестное значение → `prod` (безопасный дефолт). Второй читает `AppFlavor.getApiUrl()` через `String.fromEnvironment('app.apiUrl')`; пустая строка → `null`, то есть «сервер не сконфигурирован»: `LiveSessionStarter.start()` выходит сразу и сокет не открывается. Что происходит дальше, зависит от окружения, и это две разные истории. Для флейвора **`prod`** пустой `app.apiUrl` — штатное состояние: он поднимает `Environment.prod`, где привязаны `Mock*RemoteDataSource`, и сборка живёт на моках, как жила всегда. Для **`stage`** (единственного, кто адрес несёт) отобрать адрес — это остаться на локальном кэше **без** источника: в `Environment.dev` после флипа 026 стоят real-источники поверх сокета, и мока за ними нет. Конфиг-объект — это плоский value-object **`AppConfig`** (`lib/domain/model/app_config/app_config.dart`) из двух полей: `flavor` и nullable `apiUrl`, который с приходом транспорта (фаза 026) **реально заполняется** в stage-сборке — фича 019 завела только проводку, транспорт её включил:
+Закоммиченных dart-define-ключей сегодня два: **`app.flavor`** (несут оба `config/<flavor>.json`) и **`app.apiUrl`** (только `config/stage.json`, значение `http://127.0.0.1:8080`). **Это не адрес живого сервера**: адрес приезжает ссылкой спаривания вместе с ключом сервера и живёт в сессии, а у собранного в билд адреса ключа сервера нет по построению — канал не может проверить соединение с ним, и `LiveSessionStarter` его не читает. Первый читает `AppFlavor.getFlavor()` через `String.fromEnvironment('app.flavor')`; пустое/неизвестное значение → `prod` (безопасный дефолт). Второй читает `AppFlavor.getApiUrl()` через `String.fromEnvironment('app.apiUrl')`; пустая строка → `null`, то есть «сервер не сконфигурирован»: `LiveSessionStarter.start()` выходит сразу и сокет не открывается. Что происходит дальше, зависит от окружения, и это две разные истории. Для флейвора **`prod`** пустой `app.apiUrl` — штатное состояние: он поднимает `Environment.prod`, где привязаны `Mock*RemoteDataSource`, и сборка живёт на моках, как жила всегда. Для **`stage`** (единственного, кто адрес несёт) отобрать адрес — это остаться на локальном кэше **без** источника: в `Environment.dev` после флипа 026 стоят real-источники поверх сокета, и мока за ними нет. Конфиг-объект — это плоский value-object **`AppConfig`** (`lib/domain/model/app_config/app_config.dart`) из двух полей: `flavor` и nullable `apiUrl`, который с приходом транспорта (фаза 026) **реально заполняется** в stage-сборке — фича 019 завела только проводку, транспорт её включил:
 
 ```dart
 class AppConfig {
@@ -350,7 +350,7 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
 Сегодня vs целевое: `AppConfig` несёт `flavor` и `apiUrl`, и **оба поля читаются из dart-define** (`app.flavor` / `app.apiUrl`) — `initialize(...)` собирает объект из `flavorType` и `AppFlavor.getApiUrl()`. Полей под signature-key (`apiSignatureKey`) / observability-DSN в коде **нет** — это по-прежнему **целевые поля (пример/TBD)**. Сниппеты выше — сокращённые (обрезанные) цитаты реальных файлов, а не переписанный код.
 
-**Секрето-несущий набор dart-define-ключей — по-прежнему пример/TBD**, но по другой причине, чем раньше: wire-контракт **зафиксирован** (`docs/client-backend/protocol/contract-draft.md`, v0 — WebSocket поверх TLS + REST только под блобы, оба пиннятся по отпечатку ключа сервера), а вот per-flavor набор секретов под него — нет. Иллюстративный allowlist (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) из §4 остаётся **примером**. Транспорт (фаза 026) уже принёс dev-адрес, но открытым `app.apiUrl`, а не через секреты. Когда набор зафиксируют (боевой адрес + пиннутый ключ; токен — со stage-2-аутентификацией), добавьте соответствующие поля в `AppConfig` (и заполняйте их в `AppConfigRepositoryImpl.initialize(...)`) и расширьте `jq`-allowlist синхронно.
+**Секрето-несущий набор dart-define-ключей — по-прежнему пример/TBD**, но по другой причине, чем раньше: wire-контракт **зафиксирован** (`docs/client-backend/protocol/contract-draft.md`, v0 — WebSocket и REST только под блобы, оба по каналу TLS 1.3 с проверкой Eidolon против ключа сервера из ссылки спаривания), а вот per-flavor набор секретов под него — нет. Иллюстративный allowlist (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) из §4 остаётся **примером**. Транспорт (фаза 026) уже принёс dev-адрес, но открытым `app.apiUrl`, а не через секреты. Ключ сервера в этот набор не входит — он приезжает ссылкой спаривания вместе с адресом, по которому идёт живое соединение, — и токена контракт не несёт. Когда набор зафиксируют, добавьте соответствующие поля в `AppConfig` (и заполняйте их в `AppConfigRepositoryImpl.initialize(...)`) и расширьте `jq`-allowlist синхронно.
 
 > **Пустой ключ = выключенная фича, а не ошибка.** Когда секрето-несущие ключи появятся, пустое значение должно означать no-op, а не падение: `dev` без observability-DSN ⇒ `OBSERVABILITY_DSN=''` ⇒ телеметрия молчит (см. `17-analytics.md` — аналитика по умолчанию **выключена** до согласия пользователя). Флейвор передаётся **отдельным** ключом `app.flavor` (не из секретов).
 
@@ -628,7 +628,7 @@ jobs:
       - run: flutter test
 ```
 
-Шаг Rust нужен и гейту: `flutter test` запускает хук пакета `nox_tor` для хоста, а тесты пакета грузят собранную библиотеку. Каждый джоб `compile-check.yml` ставит тот же тулчейн с целями своей платформы; Android-джоб — ещё и NDK `28.2.13676358`; Linux-джоб Rust не ставит.
+Шаг Rust нужен и гейту: `flutter test` запускает хук пакета `nox_tor` для хоста, а тесты пакета грузят собранную библиотеку. Каждый джоб `compile-check.yml` ставит тот же тулчейн с целями своей платформы, Linux-джоб включительно (`x86_64-unknown-linux-gnu`): модуль канала собирается на всех пяти платформах. Android-джоб — ещё и NDK `28.2.13676358`.
 
 Замечания:
 - CI использует `subosito/flutter-action` напрямую (не FVM), но **версия совпадает с `.fvmrc`** (`3.44.1`), поэтому поведение идентично.
@@ -658,6 +658,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - name: Android NDK for the Tor client
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" > /dev/null
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -668,6 +675,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -678,6 +690,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -688,6 +705,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target x86_64-pc-windows-msvc
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -699,6 +721,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev
+      - name: Rust toolchain for the channel module
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target x86_64-unknown-linux-gnu
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -708,7 +734,8 @@ jobs:
 
 Замечания:
 - Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем секрето-несущий `--dart-define-from-file`. Это компайл-чек, а не релиз. Все пять джобов единообразно передают `--dart-define-from-file=config/stage.json` (`app.flavor=stage` + `app.apiUrl` локального `noxd` — на compile-smoke это не влияет, сборка ни к чему не подключается); iOS добавляет `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev` (GTK-тулчейн для desktop-эмбеддера + **build-time** зависимости плагина `flutter_secure_storage_linux`: его `CMakeLists.txt` делает `pkg_check_modules` на `libsecret-1`/`jsoncpp`, иначе `flutter build linux` падает на конфигурации CMake — `required packages were not found: libsecret-1`).
-- Этот compile-check покрывает все **5 целевых платформ** (конституция v1.3.0, принцип VI — паритет mobile↔desktop): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **включён**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Никаких desktop/Rust/FFI-шагов сверх этого нет.
+- Каждый джоб ставит тулчейн Rust из `rust-toolchain.toml` с целями своей платформы — Linux-джоб тоже (`x86_64-unknown-linux-gnu`): нативный хук собирает модуль `nox_tor` (канал к серверу и Tor-клиент) при каждой сборке на всех пяти платформах (§0a). Хук сам скачал бы тулчейн, но явный шаг держит лог сборки читаемым и цели — только нужными джобу. Android-джоб ставит ещё NDK `28.2.13676358`: хук линкует библиотеку clang'ом NDK раньше, чем начинает работать Gradle.
+- Этот compile-check покрывает все **5 целевых платформ** (конституция, принцип VI — паритет mobile↔desktop): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **включён**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Сверх тулчейна Rust (и NDK для Android) никаких desktop/FFI-шагов нет.
 
 **Platform support matrix (minimum OS).** Минимальные версии берутся из дефолтов `flutter create` под Flutter `3.44.1`. Пиннинг конкретных таргетов и подбор Linux apt-deps — **на будущее**.
 
@@ -763,7 +790,7 @@ echo "version: $(date -u +%y.%-m.%-d)+${BUILD_NUMBER}"
 
 > **NOX CD отложен.** `nox_app-cd-{stage,prod}.yml` пока **не активирован** — до появления Apple Developer / Google Play аккаунтов и desktop-сертификатов. Версионирование (`pubspec.yaml::version`, CalVer + shifted-epoch выше) и тэг-формат готовы; CD активируется при онбординге дистрибуции. До этого локально собирают через `mise run build:<platform>:<flavor>` (§4) / `make build-*` для проверки, без публикации.
 
-> **Версия — всегда закоммиченное значение.** CI может писать `pubspec.yaml::version`, но **только** через коммит — никогда runtime-инъекцией вида `flutter build --build-number=$GITHUB_RUN_NUMBER`. Версионирование протокола — **отдельная ось** от версии артефакта: у NOX это контракт v0 со схемой, согласуемой в приветствии сокета (`srv.schema_max`), а не путевой префикс вида `/api/vN` — REST-поверхность несёт только `PUT|GET /files/{token}` и `GET /health` (см. `docs/client-backend/protocol/contract-draft.md` §1–§2).
+> **Версия — всегда закоммиченное значение.** CI может писать `pubspec.yaml::version`, но **только** через коммит — никогда runtime-инъекцией вида `flutter build --build-number=$GITHUB_RUN_NUMBER`. Версионирование протокола — **отдельная ось** от версии артефакта: у NOX это контракт v0 со схемой, согласуемой в приветствии сокета (`srv.schema_max`), а не путевой префикс вида `/api/vN` — REST-поверхность основного порта несёт только `PUT|GET /files/{token}`, а `GET /health` живёт на служебном loopback-слушателе сервера (см. `docs/client-backend/protocol/contract-draft.md` §1–§2).
 
 ---
 
@@ -824,14 +851,14 @@ lib/design/gen/
 - [ ] `pubspec.yaml` объявляет `sdk: '>=3.12.0 <4.0.0'` и `flutter: 3.44.1`; `version` = закоммиченный `YY.M.D+SHIFTED_EPOCH` (в скелете placeholder `26.1.1+0`).
 - [ ] `config/prod.json` несёт `{"app.flavor": "prod"}`, `config/stage.json` — `app.flavor` + `app.apiUrl` (адрес локального `noxd`, приехал с транспортом в фазе 026); используются единообразно на всех пяти платформах в скелете (desktop — постоянно).
 - [ ] `.mise.toml` пинит `sops 3.9` / `age 1.2`, `SOPS_AGE_KEY_FILE` → приватный ключ, `FLUTTER` → `.fvm/flutter_sdk`; скелетные `build:<platform>:<flavor>` = `$FLUTTER build … --debug --dart-define-from-file=config/<flavor>.json` (10 комбинаций; **нет** `secrets:*`).
-- [ ] `.sops.yaml` содержит creation rule + (placeholder) командный публичный age-ключ; `secrets/` и decrypt-задачи — конвенция на будущее (бэкенд выбран, адрес сервера приехал с транспортом в фазе 026, но открытым `app.apiUrl`, а не через секреты; секрето-несущий per-flavor набор всё ещё не зафиксирован, токен — со stage-2-аутентификацией).
+- [ ] `.sops.yaml` содержит creation rule + (placeholder) командный публичный age-ключ; `secrets/` и decrypt-задачи — конвенция на будущее (бэкенд выбран, адрес сервера приехал с транспортом в фазе 026, но открытым `app.apiUrl`, а не через секреты; секрето-несущий per-flavor набор всё ещё не зафиксирован; ключ сервера приезжает ссылкой спаривания, токена контракт не несёт).
 - [ ] Decrypt-задачи (когда появятся) атомарны (`.tmp` + `mv`), пишут `dart-define.json` (jq-allowlist, vendor-neutral `OBSERVABILITY_DSN`) + нативные конфиги; набор ключей — пример/TBD.
 - [ ] `Makefile`: `deps`/`generate`/`format`/`analyze`/`test` (+ локальные golden-цели `golden-update`/`golden-verify`) + композитный `gate`; рекомендованный сплит `format` (mutating) vs `format-check` (non-mutating CI-гейт); build-обёртки делегируют в `mise run build:*`; **нет** `make release-*`.
 - [ ] Gradle (target): dimension `app` (`stage`/`prod`), per-flavor `applicationId` (`com.cyphernetlabs.noxapp[.stage]`), детект флейвора, выбор keystore, secrets-хук на `pre<Flavor><BuildType>Build`. Скелет: флейворов/подписи/хука нет, namespace `com.cyphernetlabs.nox_app` (underscore) vs applicationId `com.cyphernetlabs.noxapp`, compile/minSdk из `flutter.*`, label `NOX`, release на debug-ключах.
 - [ ] iOS (target): `Stage.xcconfig` / `Prod.xcconfig` + схемы `stage`/`prod`; Firebase plist через `secrets:decrypt`; fastlane на будущее. Скелет: флейворы не заведены.
 - [ ] Desktop-идентичность (§7a): macOS `PRODUCT_NAME=NOX` + bundle id `com.cyphernetlabs.noxapp`; Windows `ProductName "NOX"` / `BINARY_NAME "nox_app"`; Linux `APPLICATION_ID com.cyphernetlabs.noxapp` / `BINARY_NAME nox_app`; только prod-идентичность.
 - [ ] `.github/workflows/ci.yml`: один джоб `gate` на `macos-latest`, ветки `[develop, master]`, pub get → один кодоген → non-mutating format-check (`git ls-files lib test`) → analyze → test; `subosito/flutter-action` `3.44.1`; без `working-directory`.
-- [ ] `.github/workflows/compile-check.yml`: пять джобов (Android/iOS/macOS/Windows/Linux), ветки `[develop, master]` + `workflow_dispatch`, каждый `--dart-define-from-file=config/stage.json` (iOS `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev`); все 5 целевых платформ (конституция v1.3.0, принцип VI).
+- [ ] `.github/workflows/compile-check.yml`: пять джобов (Android/iOS/macOS/Windows/Linux), ветки `[develop, master]` + `workflow_dispatch`, каждый `--dart-define-from-file=config/stage.json` (iOS `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev`); каждый ставит тулчейн Rust с целями своей платформы, Linux включительно, Android — ещё NDK `28.2.13676358` (модуль `nox_tor` собирается на всех пяти); все 5 целевых платформ (конституция, принцип VI).
 - [ ] Релизы — one-dispatch (`release-stage.yml`/`release-production.yml`); **нет** `make release-*` / `script_*.sh`; CD (`nox_app-cd-{stage,prod}.yml`) отложен до Apple/Play/desktop-сертификатов.
 - [ ] `.gitignore` исключает `.secrets-runtime/`, `.fvm/flutter_sdk`, `**/*.enc.yaml.dec`, расшифрованные нативные конфиги/keystores и Generated-блок (`*.g.dart`/`*.freezed.dart`/`*.config.dart`/`lib/design/gen/`).
 - [ ] Упаковка/подпись desktop задокументированы как «на будущее» (§11a); compile-smoke для desktop — есть (§8.2).

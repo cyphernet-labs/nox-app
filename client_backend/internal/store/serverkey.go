@@ -2,12 +2,8 @@ package store
 
 import (
 	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -15,32 +11,29 @@ import (
 )
 
 // ServerIdentity is the machine's own long-lived identity: the key a device
-// pins the connection against, and the moment somebody claimed this server.
+// recognises it by, and the moment somebody claimed it.
 //
-// The key is ECDSA P-256 and the certificate is issued on it. Ed25519 would be
-// the natural choice and does not work: Dart's BoringSSL does not offer
-// ed25519 in signature_algorithms, so the handshake dies before the client's
-// certificate callback ever runs - measured, not assumed (feature 036).
+// The key is Ed25519 and it never touches TLS (feature 044). The server proves
+// it inside every channel, signing the session's binding (internal/eidolon),
+// and the pairing link carries it whole - thirty-two bytes, where the P-256
+// point of 036 needed a fingerprint to fit. TLS gets a throwaway certificate of
+// its own on every start, so the two roles cannot be confused: this key names
+// the MACHINE and is never handed to a TLS stack, which is also why nothing
+// about what Dart's BoringSSL offers in a handshake constrains it any more.
 //
 // Both halves live in the database file rather than beside it, because the
 // authentication model's case 6 warns that a backup holding only the DB would
-// break pinning for every paired device at once; one artifact makes that
-// impossible. Anyone who can read this file has already read every message, so
-// the key adds no new class of exposure.
+// lock out every paired device at once; one artifact makes that impossible.
+// Anyone who can read this file has already read every message, so the key adds
+// no new class of exposure.
 //
 // The private half is deliberately NOT a field here. This struct is handed to
 // the status page and to device.invite, two paths that have no use for a
-// secret - it is reached through ServerSigner instead.
+// secret - it is reached through ServerKey instead.
 type ServerIdentity struct {
-	// PublicKey is the DER SubjectPublicKeyInfo, base64. The whole SPKI rather
-	// than the raw point: it is byte-for-byte what the verifying side digs out
-	// of the certificate, so neither end has to reconstruct it.
-	PublicKey string
-	// Fingerprint is sha256 over that SPKI, base64 - the thirty-two bytes the
-	// pairing link carries. DERIVED on every read and never stored: a stored
-	// derivative is a second copy of one fact, and two copies eventually
-	// disagree.
-	Fingerprint string
+	// PublicKey is the machine's Ed25519 public key: what the pairing link
+	// carries, and what the server's message in the channel check presents.
+	PublicKey ed25519.PublicKey
 	// OwnerUserID is the person this machine belongs to, empty while nobody
 	// owns it. It is the ONLY definition of "claimed": deciding by ClaimedAt
 	// instead would put one fact in two records, and two records of one fact
@@ -63,7 +56,7 @@ var ErrNoServerIdentity = errors.New("server identity not initialised")
 // Generation and insertion share one immediate transaction, so two goroutines
 // racing at startup cannot end up with two different keys - which would be
 // worse than a failure, because devices paired against the losing key would
-// pin something the server no longer has.
+// expect a key the server no longer has.
 func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
@@ -79,138 +72,77 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 		return ServerIdentity{}, err
 	}
 
-	// Minting a key for a store that ALREADY holds people would silently break
-	// pinning for every device paired against the old one - the exact outcome
-	// case 6 of the authentication model warns about. It happens when a restore
-	// brings back users without server_identity, and it must be loud: the right
-	// answer is to finish the restore, not to hand out a new identity.
+	// Minting a key for a store that ALREADY holds people would silently lock
+	// out every device paired against the old one - the exact outcome case 6 of
+	// the authentication model warns about. It happens when a restore brings
+	// back users without server_identity, and it must be loud: the right answer
+	// is to finish the restore, not to hand out a new identity.
 	people, err := countPeople(ctx, tx)
 	if err != nil {
 		return ServerIdentity{}, err
 	}
 	if people > 0 {
 		return ServerIdentity{}, fmt.Errorf(
-			"this database holds %d people but no server identity: minting a new key would break pinning for every "+
+			"this database holds %d people but no server identity: minting a new key would lock out every "+
 				"paired device - restore server_identity from the same backup as the rest of the database", people)
 	}
 
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
+	// The SEED is stored, not Go's 64-byte private key: it is the standard
+	// shape of an Ed25519 private key, the one every other implementation
+	// reads, and the rest of the key follows from it.
+	var seed [ed25519.SeedSize]byte
+	if _, err := rand.Read(seed[:]); err != nil {
 		return ServerIdentity{}, fmt.Errorf("generate server key: %w", err)
 	}
-	// PKCS#8 for the private half, SPKI for the public one - both
-	// self-describing. A raw scalar would not carry the curve, moving "this is
-	// always P-256" out of the data and into the code, and a scalar written
-	// without left padding silently becomes a different key.
-	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return ServerIdentity{}, fmt.Errorf("marshal server key: %w", err)
-	}
-	spki, err := x509.MarshalPKIXPublicKey(priv.Public())
-	if err != nil {
-		return ServerIdentity{}, fmt.Errorf("marshal server public key: %w", err)
-	}
-	pubB64 := base64.StdEncoding.EncodeToString(spki)
-
-	// The onion service's key is minted with the machine's TLS key, in the same
-	// transaction, so a store never exists with one and not the other (039).
-	// A seed, not tor's expanded form: the standard shape of an Ed25519 private
-	// key, from which both the public key and tor's ED25519-V3 blob follow.
-	var onionSeed [32]byte
-	if _, err := rand.Read(onionSeed[:]); err != nil {
-		return ServerIdentity{}, fmt.Errorf("generate onion key: %w", err)
-	}
+	pub := ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
 
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO server_identity (id, public_key, private_key, onion_seed, claimed_at) VALUES (1, ?, ?, ?, NULL)",
-		pubB64, base64.StdEncoding.EncodeToString(pkcs8), base64.StdEncoding.EncodeToString(onionSeed[:]))
+		"INSERT INTO server_identity (id, public_key, private_key, claimed_at) VALUES (1, ?, ?, NULL)",
+		base64.StdEncoding.EncodeToString(pub), base64.StdEncoding.EncodeToString(seed[:]))
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("insert server identity: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return ServerIdentity{}, fmt.Errorf("commit ensure server identity: %w", err)
 	}
-	return ServerIdentity{PublicKey: pubB64, Fingerprint: FingerprintOfSPKI(spki)}, nil
+	return ServerIdentity{PublicKey: pub}, nil
 }
 
-// FingerprintOfSPKI is the ONE place the link's thirty-two bytes are computed.
+// ServerKey reads the private half. Narrow on purpose: it is the only way in,
+// and it is reached once, at startup, by the code that answers the channel
+// check.
 //
-// Exported because the verifying side needs the identical function over a
-// certificate's RawSubjectPublicKeyInfo: the whole scheme is that the two
-// inputs are the same bytes, and two spellings of one hash is how that stops
-// being true.
-func FingerprintOfSPKI(spkiDER []byte) string {
-	sum := sha256.Sum256(spkiDER)
-	return base64.StdEncoding.EncodeToString(sum[:])
-}
-
-// ErrLegacyServerKey says the row predates feature 036 and cannot be read.
-//
-// There is no migration by decision: nothing has shipped, so the cure is to
-// delete the development database. Saying that out loud is the whole point -
-// silently trying to parse the old shape would fail somewhere far from here,
-// and a stack trace is a worse answer than a sentence.
-var ErrLegacyServerKey = errors.New(
-	"server_identity holds a pre-036 Ed25519 key: there is no migration before the first release - " +
-		"delete the development database and let the server mint a new identity")
-
-// ServerSigner reads the private half. Narrow on purpose: it is the only way
-// in, and it is reached only by the code that builds the TLS certificate.
-func (s *Store) ServerSigner(ctx context.Context) (crypto.Signer, error) {
-	var privB64 string
+// The seed is checked against the stored public key before it is handed out.
+// The two columns say one thing twice - the link is built from one, the check
+// is signed with the other - and a pair that disagrees would hand every device
+// a key the server cannot prove. Refusing to start says so where it can be
+// fixed; serving would say it as a refusal on every device.
+func (s *Store) ServerKey(ctx context.Context) (ed25519.PrivateKey, error) {
+	var pubB64, seedB64 string
 	err := s.read.QueryRowContext(ctx,
-		"SELECT private_key FROM server_identity WHERE id = 1").Scan(&privB64)
+		"SELECT public_key, private_key FROM server_identity WHERE id = 1").Scan(&pubB64, &seedB64)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoServerIdentity
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read server private key: %w", err)
 	}
-	der, err := base64.StdEncoding.DecodeString(privB64)
+	seed, err := base64.StdEncoding.DecodeString(seedB64)
 	if err != nil {
 		return nil, fmt.Errorf("decode server private key: %w", err)
 	}
-	// An Ed25519 seed is 32 raw bytes and parses as nothing; saying so by
-	// length is clearer than letting PKCS#8 fail with its own words.
-	if len(der) == 32 {
-		return nil, ErrLegacyServerKey
+	if len(seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("server private key is %d bytes, want a %d-byte Ed25519 seed", len(seed), ed25519.SeedSize)
 	}
-	key, err := x509.ParsePKCS8PrivateKey(der)
+	pub, err := decodeServerPublicKey(pubB64)
 	if err != nil {
-		return nil, fmt.Errorf("parse server private key: %w", err)
+		return nil, err
 	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		return nil, fmt.Errorf("server private key is %T, which cannot sign", key)
+	priv := ed25519.NewKeyFromSeed(seed)
+	if !pub.Equal(priv.Public()) {
+		return nil, errors.New("server_identity is inconsistent: the stored public key is not the private key's")
 	}
-	return signer, nil
-}
-
-// OnionSeed reads the onion service's private seed (039).
-//
-// Narrow for the same reason as ServerSigner, and read once: startup hands it
-// to the tor supervisor, which derives the public key and the address from it
-// and keeps it from there. Nothing else asks - ServerIdentity, which the status
-// page and device.invite get, carries no onion field at all, so the private
-// half is never one field away from a page.
-func (s *Store) OnionSeed(ctx context.Context) ([]byte, error) {
-	var seedB64 string
-	err := s.read.QueryRowContext(ctx,
-		"SELECT onion_seed FROM server_identity WHERE id = 1").Scan(&seedB64)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNoServerIdentity
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read onion seed: %w", err)
-	}
-	seed, err := base64.StdEncoding.DecodeString(seedB64)
-	if err != nil {
-		return nil, fmt.Errorf("decode onion seed: %w", err)
-	}
-	if len(seed) != 32 {
-		return nil, fmt.Errorf("onion seed is %d bytes, want 32", len(seed))
-	}
-	return seed, nil
+	return priv, nil
 }
 
 // ServerIdentity reads the machine's identity without creating one.
@@ -336,32 +268,40 @@ type rowQuerier interface {
 }
 
 func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, error) {
-	var pub string
+	var pubB64 string
 	var claimedAt sql.NullInt64
 	var owner sql.NullString
 	err := q.QueryRowContext(ctx,
-		"SELECT public_key, claimed_at, owner_user_id FROM server_identity WHERE id = 1").Scan(&pub, &claimedAt, &owner)
+		"SELECT public_key, claimed_at, owner_user_id FROM server_identity WHERE id = 1").Scan(&pubB64, &claimedAt, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ServerIdentity{}, ErrNoServerIdentity
 	}
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("read server identity: %w", err)
 	}
-	spki, err := base64.StdEncoding.DecodeString(pub)
+	pub, err := decodeServerPublicKey(pubB64)
 	if err != nil {
-		return ServerIdentity{}, fmt.Errorf("decode server public key: %w", err)
-	}
-	// 32 raw bytes is a pre-036 Ed25519 key. Refuse here rather than hand out
-	// an identity whose fingerprint nobody can match.
-	if len(spki) == 32 {
-		return ServerIdentity{}, ErrLegacyServerKey
+		return ServerIdentity{}, err
 	}
 	return ServerIdentity{
 		PublicKey:   pub,
-		Fingerprint: FingerprintOfSPKI(spki),
 		OwnerUserID: owner.String,
 		ClaimedAt:   claimedAt.Int64,
 	}, nil
+}
+
+// decodeServerPublicKey reads the stored public key and refuses anything that
+// is not thirty-two bytes: a link built from it would carry a key no channel
+// check can ever match.
+func decodeServerPublicKey(b64 string) (ed25519.PublicKey, error) {
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, fmt.Errorf("decode server public key: %w", err)
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("server public key is %d bytes, want a %d-byte Ed25519 key", len(raw), ed25519.PublicKeySize)
+	}
+	return ed25519.PublicKey(raw), nil
 }
 
 // ownerRowExists reports whether the person named by the ownership marker is

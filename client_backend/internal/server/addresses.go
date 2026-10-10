@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"nox.app/client-backend/internal/protocol"
-	"nox.app/client-backend/internal/tor"
 )
 
 const (
@@ -26,7 +24,9 @@ const (
 	defaultAddressPoll = 30 * time.Second
 )
 
-// addressSet is where this machine can be reached (039, contract §3).
+// addressSet is where this machine can be reached (039, 045, contract §3):
+// the addresses it finds on its own networks, and the public and onion address
+// stored in its database when they are set.
 //
 // Version only grows and never travels: it is how the watcher - the ONE sender
 // of server.addresses - knows which connections already have this list, so no
@@ -34,11 +34,17 @@ const (
 type addressSet struct {
 	Version uint64   `json:"-"`
 	Direct  []string `json:"direct"`
-	Onion   string   `json:"onion,omitempty"`
+	// Public is the stored public host:port, absent when none is set.
+	Public string `json:"public,omitempty"`
+	// Onion is the stored onion address with the service's port, absent when
+	// none is set. Whether tor is running does not enter into it: tor is a
+	// separate service, and a device that finds nobody at the address says so
+	// itself.
+	Onion string `json:"onion,omitempty"`
 }
 
 func (a *addressSet) equal(b *addressSet) bool {
-	return a.Onion == b.Onion && slices.Equal(a.Direct, b.Direct)
+	return a.Public == b.Public && a.Onion == b.Onion && slices.Equal(a.Direct, b.Direct)
 }
 
 // usableIPs lists the addresses of the machine's interfaces that are up,
@@ -74,10 +80,10 @@ func dialableIP(ip net.IP) bool {
 
 // directAddresses is the direct half of the list (FR-026).
 //
-// A wildcard bind lists every usable interface address with the port of the
-// main entry. A concrete bind lists itself - unless it is loopback, which a
-// device elsewhere can never use and a device on this machine already knows
-// from its link. The order is addressRank's, then the text: a reshuffle of
+// A wildcard bind lists every usable interface address with the main port. A
+// concrete bind lists itself - unless it is loopback, which a device elsewhere
+// can never use and a device on this machine already knows from its link. The
+// order is addressRank's, then the text: a reshuffle of
 // interfaces is not a change, and the cap drops the least likely addresses
 // rather than whichever happen to sort last.
 //
@@ -170,18 +176,35 @@ func resolveHost(host string) ([]net.IP, error) {
 	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
-// computeAddresses builds the list as it stands now.
-func (s *Server) computeAddresses() *addressSet {
+// computeAddresses builds the list as it stands now: the interfaces looked at
+// again, the stored addresses read again.
+//
+// A read that fails is not the addresses changing, any more than a resolver
+// that fails is the name moving: the snapshot keeps what it had rather than
+// telling every device the addresses are gone and, a look later, back.
+func (s *Server) computeAddresses(ctx context.Context) *addressSet {
+	cur := s.addrs.Load()
 	direct, ok := directAddresses(s.cfg.Addr, s.listIPs, s.resolveHost)
 	if !ok {
 		direct = []string{}
-		if cur := s.addrs.Load(); cur != nil {
+		if cur != nil {
 			direct = cur.Direct
 		}
 	}
 	set := &addressSet{Direct: direct}
-	if s.tor.Offered() {
-		set.Onion = s.tor.Address() + ".onion:" + strconv.Itoa(tor.OnionPort)
+	conf, err := s.configuredAddresses(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("stored addresses unreadable, keeping the last known", "err", err)
+		}
+		if cur != nil {
+			set.Public, set.Onion = cur.Public, cur.Onion
+		}
+		return set
+	}
+	set.Public = conf.Public
+	if conf.Onion != "" {
+		set.Onion = net.JoinHostPort(conf.Onion, onionPort)
 	}
 	return set
 }
@@ -189,8 +212,8 @@ func (s *Server) computeAddresses() *addressSet {
 // refreshAddresses stores a new snapshot when the list changed. Only the
 // watcher calls it once the server is serving; startup calls it once before
 // any listener opens, so the very first greeting already has a list.
-func (s *Server) refreshAddresses() bool {
-	next := s.computeAddresses()
+func (s *Server) refreshAddresses(ctx context.Context) bool {
+	next := s.computeAddresses(ctx)
 	cur := s.addrs.Load()
 	if cur != nil && cur.equal(next) {
 		return false
@@ -203,7 +226,10 @@ func (s *Server) refreshAddresses() bool {
 	return true
 }
 
-// pokeAddresses asks the watcher to look now. Never blocks.
+// pokeAddresses asks the watcher to look now. Never blocks. A greeting pokes,
+// so a list that moved while it was being answered follows the reply; so does
+// the service page's Set, which is how a new address reaches the greeted
+// connections within moments rather than at the next poll (SC-003).
 func (s *Server) pokeAddresses() {
 	select {
 	case s.addrKick <- struct{}{}:
@@ -224,7 +250,7 @@ func (s *Server) runAddressWatcher(ctx context.Context) {
 		case <-tick.C:
 		case <-s.addrKick:
 		}
-		s.refreshAddresses()
+		s.refreshAddresses(ctx)
 		s.sendAddresses()
 	}
 }
@@ -278,10 +304,10 @@ func (s *Server) markGreeted(c *client, version uint64) {
 	}
 }
 
-// inviteDirectAddress is the direct host for an invite requested over onion,
-// where the Host header holds the onion name: the head of the list, which is
-// in order of preference with IPv4 first, else the bind address as the claim
-// link would print it.
+// inviteDirectAddress is the direct host for an invite requested through the
+// onion service, where the Host header holds the onion name: the head of the
+// list, which is in order of preference with IPv4 first, else the bind address
+// as the claim link would print it.
 func (s *Server) inviteDirectAddress() string {
 	if cur := s.addrs.Load(); cur != nil && len(cur.Direct) > 0 {
 		return cur.Direct[0]

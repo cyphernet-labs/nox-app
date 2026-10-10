@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
@@ -28,8 +29,9 @@ class AwayProber implements DirectProber {
   bool away = false;
 
   @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required String fingerprint}) =>
-      away ? Future<DirectProbeResult>.value(const DirectProbeResult()) : _real.probe(candidates, fingerprint: fingerprint);
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) => away
+      ? Future<DirectProbeResult>.value(const DirectProbeResult())
+      : _real.probe(candidates, serverKey: serverKey, deviceSeed: deviceSeed);
 }
 
 /// A network that changes when [change] says so.

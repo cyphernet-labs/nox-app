@@ -16,14 +16,15 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 
 import 'login_bloc_test.mocks.dart';
 
-/// A version-1 link, as every claim and every home-only invite is: the only
-/// road to its server is the direct one.
-const String _homeLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+/// A link with one direct address and nothing else (the contract's `minimal`
+/// vector).
+const String _homeLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
-/// A version-2 link as the Go server builds it: the direct road, and the
-/// onion address behind it.
+/// A link that also carries the server's onion address (the `full` vector).
+/// Until phase 045 it pairs only at home all the same: the onion service opens
+/// for a paired device's key alone.
 const String _onionLink =
-    'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+    'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
 
 /// A phase this test drives by hand. The real one is the socket's.
 class _FakePhase implements SessionPhaseService {
@@ -143,13 +144,11 @@ void main() {
     tearDown(() async => getIt.reset());
 
     blocTest<LoginBloc, LoginState>(
-      'a stranger behind an onion link is its own error, not a network one (FR-030)',
+      'a refusal with nothing usable in the field is its own error, not a network one',
       // Telling the person to check their connection here sends them after
-      // something that is working perfectly and will never be the cause. And
-      // behind an onion address a stranger's key is a real anomaly: nobody can
-      // hold that address without the server's keys.
+      // something that is working perfectly and will never be the cause.
       build: () => LoginBloc(demo: true),
-      seed: () => const LoginState(id: _onionLink),
+      seed: () => const LoginState(id: 'not a link'),
       act: (bloc) async {
         await Future<void>.delayed(Duration.zero);
         phase.emit(SessionPhase.serverMismatch);
@@ -158,7 +157,21 @@ void main() {
     );
 
     blocTest<LoginBloc, LoginState>(
-      'a stranger at the address of a version-1 link means "not home", not "wrong server" (FR-005)',
+      'until phase 045 even a link carrying the onion address pairs at home: a stranger there means "not home"',
+      // The pairing goes over the link's direct addresses only (FR-019), so a
+      // stranger's key can only have met it there - where it is the expected
+      // answer away from home.
+      build: () => LoginBloc(demo: true),
+      seed: () => const LoginState(id: _onionLink),
+      act: (bloc) async {
+        await Future<void>.delayed(Duration.zero);
+        phase.emit(SessionPhase.serverMismatch);
+      },
+      expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.errorHomeNetworkOnly)],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a stranger at the address of a link means "not home", not "wrong server" (FR-011)',
       // Away from home a different machine sits at that address, and the link
       // has no other road. "This server doesn't match its link" would send the
       // person looking for a rebuilt server that is sitting at home untouched.
@@ -185,8 +198,9 @@ void main() {
     );
 
     for (final (kind, link, expected) in [
-      ('a version-2 link', _onionLink, LoginStatus.errorServerMismatch),
-      ('a version-1 link', _homeLink, LoginStatus.errorHomeNetworkOnly),
+      ('a link carrying the onion address', _onionLink, LoginStatus.errorHomeNetworkOnly),
+      ('a link with a direct address only', _homeLink, LoginStatus.errorHomeNetworkOnly),
+      ('something that is not a link', 'a-link', LoginStatus.errorServerMismatch),
     ]) {
       blocTest<LoginBloc, LoginState>(
         'the refusal outranks the "no channel" that sign-in reports after it, on $kind',
@@ -307,9 +321,10 @@ void main() {
     );
   });
 
-  // 040: a version-1 link has one road to its server, the direct one. Away from
-  // home not reaching it is the expected outcome, so the screen says where
-  // pairing works instead of blaming the network (FR-022).
+  // Until phase 045 every link has one road to its server for pairing, the
+  // direct one (FR-019). Away from home not reaching it is the expected
+  // outcome, so the screen says where pairing works instead of blaming the
+  // network.
   group('LoginBloc and a link that works only at home (040)', () {
     late MockAuthRepository auth;
 
@@ -322,7 +337,7 @@ void main() {
     tearDown(() async => getIt.reset());
 
     blocTest<LoginBloc, LoginState>(
-      'a version-1 link whose server did not answer says pairing works at home',
+      'a link whose server did not answer says pairing works at home',
       build: () {
         when(
           auth.signIn(identifier: anyNamed('identifier')),
@@ -342,9 +357,9 @@ void main() {
     );
 
     blocTest<LoginBloc, LoginState>(
-      'a version-2 link that reached nothing keeps the plain network error',
-      // Both roads were tried, the onion one works from any network, and "go
-      // home" would be advice about a limit this link does not have.
+      'a link carrying the onion address that reached nothing says pairing works at home too, until phase 045',
+      // Its onion address is kept for after the pairing; the pairing itself
+      // went only where a new device can be let in.
       build: () {
         when(
           auth.signIn(identifier: anyNamed('identifier')),
@@ -355,7 +370,7 @@ void main() {
         ..add(const LoginEvent.idChanged(_onionLink))
         ..add(const LoginEvent.signInRequested()),
       wait: const Duration(milliseconds: 300),
-      verify: (bloc) => expect(bloc.state.status, LoginStatus.errorNetwork),
+      verify: (bloc) => expect(bloc.state.status, LoginStatus.errorHomeNetworkOnly),
     );
 
     blocTest<LoginBloc, LoginState>(
@@ -378,9 +393,11 @@ void main() {
       (RepositoryException.invalidRequest, LoginStatus.errorFormat),
       (RepositoryException.notFound, LoginStatus.errorExpired),
       (RepositoryException.authentication, LoginStatus.errorRejected),
+      // A link of a version above this build's (044, FR-017): update the app.
+      (RepositoryException.unsupportedSchema, LoginStatus.errorNewerVersion),
     ]) {
       blocTest<LoginBloc, LoginState>(
-        'a refusal of the link itself keeps its own message on a version-1 link (${exception.name})',
+        'a refusal of the link itself keeps its own message (${exception.name})',
         // The server answered, about the link: none of these is about where the
         // device is.
         build: () {

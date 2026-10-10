@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -37,21 +36,18 @@ func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
 	}
 
 	body := statusBody(t, srv)
-	if !strings.Contains(body, "https://nox.app/p/#") {
+	if !strings.Contains(body, "nox://pair/") {
 		t.Fatalf("no claim link on an unclaimed server's page: %s", body)
 	}
-	// The page and the QR beside it are how the first device learns what to
-	// pin. A link carrying anything else hands out a server nobody can reach.
-	id, err := srv.store.ServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
+	// The page and the QR beside it are how the first device learns which key
+	// to expect in the channel. A link carrying anything else hands out a
+	// server nobody can reach.
+	got := readLink(t, linkOf(t, body))
+	if !got.ServerKey.Equal(serverKeyOf(t, srv)) {
+		t.Fatalf("the page's link carries %x, want this machine's key %x", got.ServerKey, serverKeyOf(t, srv))
 	}
-	want, err := base64.StdEncoding.DecodeString(id.Fingerprint)
-	if err != nil {
-		t.Fatalf("decode the fingerprint: %v", err)
-	}
-	if got := fingerprintInLink(t, linkOf(t, body)); !bytes.Equal(got, want) {
-		t.Fatalf("the page's link carries %x, want this machine's fingerprint %x", got, want)
+	if len(got.Direct) != 1 || got.Direct[0] != "192.168.1.10:8080" {
+		t.Fatalf("the page's link names %v, want the address a phone can dial", got.Direct)
 	}
 	if !strings.Contains(body, "<svg") {
 		t.Fatalf("no QR on an unclaimed server's page: %s", body)
@@ -122,7 +118,7 @@ func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 	claimDevice(t, ts, srv)
 
 	body := statusBody(t, srv)
-	if strings.Contains(body, "https://nox.app/p/#") {
+	if strings.Contains(body, "nox://pair/") {
 		t.Fatalf("a claimed server still offers a claim link: %s", body)
 	}
 	if strings.Contains(body, "<svg") {
@@ -138,9 +134,10 @@ func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 	if strings.Contains(body, "People") {
 		t.Fatalf("the page still counts people: %s", body)
 	}
-	// This one refreshes: uptime and counters shown without one read as now.
-	if !strings.Contains(body, `http-equiv="refresh"`) {
-		t.Fatal("the status page does not refresh, so it shows stale numbers as current")
+	// It no longer refreshes itself (045): it carries the address forms, and a
+	// reload every few seconds wipes an address halfway through being pasted.
+	if strings.Contains(body, `http-equiv="refresh"`) {
+		t.Fatal("the claimed page refreshes itself under the address forms")
 	}
 }
 
@@ -151,14 +148,14 @@ func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dialable(srv)
 	dev, _ := claimDevice(t, ts, srv)
-	if strings.Contains(statusBody(t, srv), "https://nox.app/p/#") {
+	if strings.Contains(statusBody(t, srv), "nox://pair/") {
 		t.Fatal("a claimed server offered a link before the device was revoked")
 	}
 
 	if err := srv.store.RevokeDevice(context.Background(), dev.pub); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
-	if !strings.Contains(statusBody(t, srv), "https://nox.app/p/#") {
+	if !strings.Contains(statusBody(t, srv), "nox://pair/") {
 		t.Fatal("an owner who lost every device is not offered a way back in")
 	}
 }
@@ -171,9 +168,9 @@ func TestThePageNamesNobodyAndShowsNoKeys(t *testing.T) {
 	var id identity
 	mustUnmarshal(t, data["identity"], &id)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 	c.send(`{"id":2,"cmd":"identity.setLabel","data":{"label":"Anastasia"}}`)
 	c.expectOK(2)
 	c.send(`{"id":3,"cmd":"chat.create","data":{"name":"Kitchen renovation"}}`)
@@ -216,11 +213,17 @@ func TestTheMainListenerNeverServesTheServicePage(t *testing.T) {
 }
 
 // A page for people must not change a machine's answer: OS services and the
-// tunnel read this one.
+// tunnel read this one. It moved to the page's listener with 044 - the main
+// port answers nobody who has not proved a key - and its answer did not move.
 func TestHealthAnswersExactlyWhatItAnswered(t *testing.T) {
 	_, srv := newTestServer(t)
+	main := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(main, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if main.Code != http.StatusNotFound {
+		t.Fatalf("/health on the main mux = %d, want 404: it lives beside the service page", main.Code)
+	}
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	srv.StatusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/health = %d, want 200", rec.Code)
 	}
@@ -325,7 +328,7 @@ func TestALoopbackBindDrawsNoCodeAndSaysWhy(t *testing.T) {
 	// And the LINK is still there. Conflating "no phone can dial this" with
 	// "there is no link" left an owner on the default bind - which is loopback
 	// - unable to claim their own server from the app running right there.
-	if !strings.Contains(body, "https://nox.app/p/#") {
+	if !strings.Contains(body, "nox://pair/") {
 		t.Fatalf("a loopback-bound server offers no link at all: %s", body)
 	}
 	if got := countLiveClaimTokens(t, srv); got != 1 {
@@ -570,7 +573,7 @@ func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	page := &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+	page := &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: pageReadHeaderTimeout}
 	go func() { _ = page.Serve(listener) }()
 	t.Cleanup(func() { _ = page.Close() })
 
@@ -586,7 +589,7 @@ func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the page: %v", err)
 	}
-	if !strings.Contains(string(body), "https://nox.app/p/#") {
+	if !strings.Contains(string(body), "nox://pair/") {
 		t.Fatalf("the page came back without its claim link: %s", body)
 	}
 }

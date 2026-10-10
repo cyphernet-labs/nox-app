@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"log/slog"
 	"sync"
 	"time"
@@ -32,32 +30,22 @@ type client struct {
 
 	// Owned by the read goroutine.
 	helloDone bool
-	// deviceKey is the key this connection authenticated with. Written by the
-	// read goroutine and read by ANOTHER connection's goroutine in
-	// Server.dropDevice, so both sides go through Server.mu - otherwise it is a
-	// data race, and a device revoked while it is greeting keeps a full session
-	// because the revoker saw an empty key.
-	// challenge is the 32 random bytes this connection handed the device in the
-	// greeting. Kept per connection so a signature captured on one connection
-	// cannot be replayed on another.
-	challenge string
+	// deviceKey is the key this connection PROVED in the channel check, base64
+	// as devices.device_key stores it - never a key a command named (044). Set
+	// once before the connection joins the registry and never changed, so the
+	// goroutines that read it - another connection's dropDevice among them -
+	// need no lock: joining the registry under Server.mu publishes it. A
+	// device revoked while it is still greeting is therefore found by its key
+	// from the first byte, not only once the greeting got far enough to say it.
 	deviceKey string
 	// closeReason accompanies the close sentinel through the write queue.
 	closeReason string
 	// requestHost is the address this device dialled to get here, from the
 	// request's Host header. It is the only address the server knows to be
 	// reachable from somewhere other than the machine itself, which is what an
-	// invite link needs.
+	// invite link needs - and, when it is an onion name, the only sign that the
+	// connection came through tor (045).
 	requestHost string
-	// viaOnion says the connection came in through the onion entry (039). Set
-	// once, before the read loop starts, and never changed: a claim is refused
-	// on it, its timeouts are the onion ones, and an invite asked for over it
-	// takes its direct host from the address list rather than from Host.
-	viaOnion bool
-	// writeTimeout bounds one frame write and one ping's wait for its pong:
-	// the server's for a direct connection, onionTimeout for an onion one.
-	// Set once before writePump starts.
-	writeTimeout time.Duration
 	// greeted and addrVersion belong to the registry (Server.mu): greeted is
 	// set once the greeting reply - carrying the address snapshot of
 	// addrVersion - is queued, and only then does the watcher send this
@@ -148,12 +136,11 @@ func (c *client) enqueueLive(frame []byte) bool {
 }
 
 // writePump is the sole writer of frames to the connection: it drains out,
-// and starts keepAlive beside itself.
+// and starts keepAlive beside itself. One frame write and one ping's wait for
+// its pong get the server's writeTimeout - the slow path's, for every
+// connection (045), since one from tor looks like any other.
 func (c *client) writePump() {
-	timeout := c.writeTimeout
-	if timeout == 0 {
-		timeout = c.srv.writeTimeout
-	}
+	timeout := c.srv.writeTimeout
 	go c.keepAlive(timeout)
 	for {
 		select {
@@ -223,12 +210,4 @@ func (c *client) forward() {
 			return
 		}
 	}
-}
-
-func newChallenge() (string, error) {
-	var buf [32]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(buf[:]), nil
 }

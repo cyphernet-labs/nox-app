@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -243,7 +244,7 @@ void main() {
       _Lifecycle(),
       socket,
       recheckEvery: const Duration(hours: 1),
-    )..begin(linkAddress: _link, fingerprint: 'pin');
+    )..begin(linkAddress: _link, serverKey: Uint8List(32), deviceSeed: Uint8List(32));
     sync = SyncService(
       socket,
       getIt<SyncRepository>(),

@@ -39,7 +39,7 @@ void main() {
   }
 
   // A link the Go server actually produced, captured from a live noxd.
-  const link = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+  const link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
   testWidgets('presenting a pairing link lands on Set username, stack cleared', (tester) async {
     // No live channel in this environment, so there is no server to ask and

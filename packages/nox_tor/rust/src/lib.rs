@@ -1,10 +1,16 @@
-//! The embedded Tor client of the NOX app (phase 040): Arti behind a C ABI.
+//! The NOX app's native module, behind a C ABI: the channel to its server
+//! (phase 044, `nox_chan_*`) and the embedded Tor client (phase 040,
+//! `nox_tor_*`) the channel takes to the onion service.
 //!
-//! The contract is `specs/040-tor-app/contracts/ffi.md`. No function blocks
-//! and none lets a panic cross into the app: each body runs under
-//! `catch_unwind`, and a panic comes back as the INTERNAL code.
+//! The contracts are `specs/044-secure-channel/contracts/ffi-channel.md` and
+//! `specs/040-tor-app/contracts/ffi.md`, less what
+//! `specs/045-tor-service-addresses/contracts/ffi-tor.md` takes out: the
+//! client holds no keys, and an onion channel goes by the address alone. No
+//! function blocks and none lets a panic cross into the app: each body runs
+//! under `catch_unwind`, and a panic comes back as the INTERNAL code of its
+//! contract.
 
-pub mod bridge;
+pub mod channel;
 pub mod engine;
 pub mod obsolete;
 pub mod onion;
@@ -12,7 +18,9 @@ pub mod status;
 
 use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, UnwindSafe};
+use std::time::Duration;
 
+use channel::code;
 use status::{error, NoxTorStatus};
 use zeroize::Zeroizing;
 
@@ -20,6 +28,11 @@ const VERSION: &CStr = c"arti-client 0.47.0";
 
 fn guarded(f: impl FnOnce() -> i32 + UnwindSafe) -> i32 {
     catch_unwind(f).unwrap_or(-(error::INTERNAL as i32))
+}
+
+/// `guarded` for the channel's functions, whose INTERNAL is its own.
+fn chan_guarded<T: From<i32>>(f: impl FnOnce() -> T + UnwindSafe) -> T {
+    catch_unwind(f).unwrap_or_else(|_| T::from(-code::INTERNAL))
 }
 
 /// # Safety
@@ -51,30 +64,6 @@ pub extern "C" fn nox_tor_stop() {
     });
 }
 
-/// # Safety
-/// `onion_host` is NUL-terminated; `client_key32` points at 32 bytes.
-#[no_mangle]
-pub unsafe extern "C" fn nox_tor_set_target(onion_host: *const c_char, port: u16, client_key32: *const u8) -> i32 {
-    guarded(|| {
-        let Some(host) = read_str(onion_host) else {
-            return error::RET_INVALID_ARGUMENT;
-        };
-        if client_key32.is_null() || !host.ends_with(".onion") {
-            return error::RET_INVALID_ARGUMENT;
-        }
-        // Straight from the caller's bytes into a heap buffer that wipes
-        // itself: no copy of the key is left on this stack.
-        let mut key = Box::new(Zeroizing::new([0u8; 32]));
-        key.copy_from_slice(std::slice::from_raw_parts(client_key32, 32));
-        engine::set_target(host, port, key)
-    })
-}
-
-#[no_mangle]
-pub extern "C" fn nox_tor_clear_target() -> i32 {
-    guarded(engine::clear_target)
-}
-
 #[no_mangle]
 pub extern "C" fn nox_tor_set_dormant(dormant: bool) {
     let _ = guarded(|| {
@@ -93,24 +82,6 @@ pub unsafe extern "C" fn nox_tor_status(out: *mut NoxTorStatus) -> i32 {
         }
         *out = engine::status();
         0
-    })
-}
-
-/// # Safety
-/// `out32` points at 32 writable bytes.
-#[no_mangle]
-pub unsafe extern "C" fn nox_tor_bridge_secret(out32: *mut u8) -> i32 {
-    guarded(|| {
-        if out32.is_null() {
-            return error::RET_INVALID_ARGUMENT;
-        }
-        match engine::bridge_secret() {
-            Some(secret) => {
-                std::ptr::copy_nonoverlapping(secret.as_ptr(), out32, 32);
-                0
-            }
-            None => error::RET_NOT_STARTED,
-        }
     })
 }
 
@@ -140,14 +111,111 @@ pub extern "C" fn nox_tor_version() -> *const c_char {
     VERSION.as_ptr()
 }
 
+/// Opens a channel: the handle at once, the outcome as an event (OPEN, or
+/// CLOSED with the kind of failure). `target_kind` 0 is a direct address - an
+/// IP or a name - and 1 an onion service through the started Tor client.
+///
+/// # Safety
+/// `host` is NUL-terminated UTF-8; `device_seed32` and `server_key32` point at
+/// 32 bytes each.
+#[no_mangle]
+pub unsafe extern "C" fn nox_chan_open(
+    target_kind: i32,
+    host: *const c_char,
+    port: u16,
+    device_seed32: *const u8,
+    server_key32: *const u8,
+    connect_timeout_ms: u32,
+    on_event: Option<channel::EventFn>,
+) -> i64 {
+    chan_guarded(|| {
+        let invalid = i64::from(code::RET_INVALID_ARGUMENT);
+        let (Some(on_event), Some(host)) = (on_event, read_str(host)) else {
+            return invalid;
+        };
+        if host.is_empty() || port == 0 || connect_timeout_ms == 0 || device_seed32.is_null() || server_key32.is_null()
+        {
+            return invalid;
+        }
+        let (host, port) = (host.to_owned(), port);
+        let target = match target_kind {
+            0 => channel::Target::Direct { host, port },
+            1 => channel::Target::Onion { host, port },
+            _ => return invalid,
+        };
+        // Straight from the caller's bytes into a heap buffer that wipes
+        // itself: no copy of the seed is left on this stack.
+        let mut seed = Box::new(Zeroizing::new([0u8; 32]));
+        seed.copy_from_slice(std::slice::from_raw_parts(device_seed32, 32));
+        // No real seed is all zero, and ec25519 would panic on one.
+        if seed.iter().all(|&b| b == 0) {
+            return invalid;
+        }
+        let mut server_key = [0u8; 32];
+        server_key.copy_from_slice(std::slice::from_raw_parts(server_key32, 32));
+        let budget = Duration::from_millis(u64::from(connect_timeout_ms));
+        channel::open(target, seed, server_key, budget, on_event)
+    })
+}
+
+/// Queues a copy of the bytes; returns the queued size after the write.
+///
+/// # Safety
+/// `data` points at `len` bytes, or `len` is 0.
+#[no_mangle]
+pub unsafe extern "C" fn nox_chan_write(handle: i64, data: *const u8, len: usize) -> i64 {
+    chan_guarded(|| {
+        if len == 0 {
+            return channel::write(handle, &[]);
+        }
+        if data.is_null() {
+            return i64::from(code::RET_INVALID_ARGUMENT);
+        }
+        channel::write(handle, std::slice::from_raw_parts(data, len))
+    })
+}
+
+/// Dart passed `len` more inbound bytes on: the module reads again.
+#[no_mangle]
+pub extern "C" fn nox_chan_ack(handle: i64, len: usize) -> i32 {
+    chan_guarded(|| channel::ack(handle, len))
+}
+
+/// DRAINED with `code = ticket` once all queued before this call is out.
+#[no_mangle]
+pub extern "C" fn nox_chan_flush(handle: i64, ticket: i32) -> i32 {
+    chan_guarded(|| channel::flush(handle, ticket))
+}
+
+/// TLS close_notify after the queue; reading goes on.
+#[no_mangle]
+pub extern "C" fn nox_chan_shutdown_write(handle: i64) -> i32 {
+    chan_guarded(|| channel::shutdown_write(handle))
+}
+
+/// Tears the channel down at once; CLOSED follows, and after it the handle
+/// is gone.
+#[no_mangle]
+pub extern "C" fn nox_chan_close(handle: i64) -> i32 {
+    chan_guarded(|| channel::close(handle))
+}
+
+/// # Safety
+/// `data` and `len` are what one OPEN or DATA event carried, each freed once.
+#[no_mangle]
+pub unsafe extern "C" fn nox_chan_buf_free(data: *mut u8, len: usize) {
+    chan_guarded(|| {
+        channel::free_buffer(data, len);
+        0
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::CString;
-    use std::io::{Read, Write};
     use std::path::PathBuf;
     use std::sync::Mutex;
-    use std::time::Duration;
 
     /// The engine is process-wide; tests that start it take turns.
     static SERIAL: Mutex<()> = Mutex::new(());
@@ -179,19 +247,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         status_now()
-    }
-
-    #[test]
-    fn set_target_rejects_what_is_not_an_onion_service_or_a_key() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        let key = [1u8; 32];
-        let host = CString::new("example.com").unwrap();
-        assert_eq!(unsafe { nox_tor_set_target(host.as_ptr(), 443, key.as_ptr()) }, error::RET_INVALID_ARGUMENT);
-        let onion = CString::new("25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion").unwrap();
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, std::ptr::null()) }, error::RET_INVALID_ARGUMENT);
-        // A well-formed target before start is refused, not silently kept.
-        engine::reset_for_test();
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, error::RET_NOT_STARTED);
     }
 
     #[test]
@@ -268,99 +323,124 @@ mod tests {
         let _ = std::fs::remove_file(blocker);
     }
 
-    #[test]
-    fn a_rebuild_keeps_the_target_and_the_bridge_the_app_holds() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("carried");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        let key = [1u8; 32];
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
-        let port = status_now().port;
-        assert_ne!(port, 0);
-        let mut secret = [0u8; 32];
-        assert_eq!(unsafe { nox_tor_bridge_secret(secret.as_mut_ptr()) }, 0);
-        // Rebuilt - and failing again, which is beside the point here.
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(status_now().port, port);
-        let mut kept = [0u8; 32];
-        assert_eq!(unsafe { nox_tor_bridge_secret(kept.as_mut_ptr()) }, 0);
-        assert_eq!(kept, secret);
-        assert_eq!(engine::target_host_for_test().as_deref(), Some(ONION));
-        // The old runtime is gone by now, and the bridge answers from the new
-        // one: a wrong secret is turned away at once instead of sitting in the
-        // listen queue with nobody accepting.
-        std::thread::sleep(Duration::from_millis(200));
-        let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-        let wrong: [u8; 32] = std::array::from_fn(|i| !secret[i]);
-        socket.write_all(&wrong).unwrap();
-        let mut byte = [0u8; 1];
-        let answer = socket.read(&mut byte);
-        let closed = match &answer {
-            Ok(0) => true,
-            Err(e) => e.kind() == std::io::ErrorKind::ConnectionReset,
-            Ok(_) => false,
-        };
-        assert!(closed, "the bridge did not answer: {answer:?}");
-        engine::reset_for_test();
-        let _ = std::fs::remove_file(blocker);
+    fn record() -> Option<channel::EventFn> {
+        Some(channel::registry::tests::record)
     }
 
-    /// The app starts its clock on a refusal when the error ENTERS it. One left
-    /// over from the previous key would never enter again.
-    #[test]
-    fn a_new_target_drops_a_key_refusal_and_nothing_else() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("refusal");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        let key = [1u8; 32];
-        for refusal in [error::WRONG_CLIENT_AUTH, error::MISSING_CLIENT_AUTH] {
-            engine::set_error_for_test(refusal);
-            assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
-            assert_eq!(status_now().error, error::NONE, "refusal {refusal} outlived the target change");
+    /// The code of the handle's CLOSED, waiting for it ten seconds at most.
+    fn closed(handle: i64) -> Option<i32> {
+        for _ in 0..500 {
+            let seen = channel::registry::tests::seen(handle);
+            if let Some((_, _, code)) = seen.iter().find(|(kind, _, _)| *kind == channel::event::CLOSED) {
+                return Some(*code);
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        engine::set_error_for_test(error::TIMEOUT);
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
-        assert_eq!(status_now().error, error::TIMEOUT, "only a refusal of the key is about the key");
+        None
+    }
+
+    fn open_onion(host: &str, budget_ms: u32) -> i64 {
+        let host = CString::new(host).unwrap();
+        let (seed, key) = ([1u8; 32], [2u8; 32]);
+        let handle = unsafe { nox_chan_open(1, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), budget_ms, record()) };
+        assert!(handle > 0, "{handle}");
+        handle
+    }
+
+    #[test]
+    fn a_channel_is_refused_without_every_argument() {
+        let invalid = i64::from(code::RET_INVALID_ARGUMENT);
+        let host = CString::new("127.0.0.1").unwrap();
+        let empty = CString::new("").unwrap();
+        let (seed, key, zero) = ([1u8; 32], [2u8; 32], [0u8; 32]);
+        let not_utf8 = [0xffu8, 0xfe, 0];
+        let open = |kind, host: *const c_char, port, seed: *const u8, key: *const u8, ms, on_event| unsafe {
+            nox_chan_open(kind, host, port, seed, key, ms, on_event)
+        };
+        let null = std::ptr::null();
+        for (refused, why) in [
+            (open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, None), "no callback"),
+            (open(0, null as *const c_char, 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "no host"),
+            (open(0, empty.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "an empty host"),
+            (
+                open(0, not_utf8.as_ptr() as *const c_char, 443, seed.as_ptr(), key.as_ptr(), 1000, record()),
+                "not UTF-8",
+            ),
+            (open(0, host.as_ptr(), 0, seed.as_ptr(), key.as_ptr(), 1000, record()), "port 0"),
+            (open(0, host.as_ptr(), 443, null, key.as_ptr(), 1000, record()), "no seed"),
+            (open(0, host.as_ptr(), 443, seed.as_ptr(), null, 1000, record()), "no server key"),
+            (open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 0, record()), "no time at all"),
+            (open(2, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "an unknown kind"),
+            (open(-1, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "a negative kind"),
+            (open(0, host.as_ptr(), 443, zero.as_ptr(), key.as_ptr(), 1000, record()), "an all-zero seed"),
+        ] {
+            assert_eq!(refused, invalid, "{why}");
+        }
+    }
+
+    #[test]
+    fn a_handle_that_is_not_there_finds_nothing() {
+        let closed_handle = i64::from(code::RET_CLOSED);
+        for handle in [0, -1, i64::MAX] {
+            assert_eq!(unsafe { nox_chan_write(handle, b"x".as_ptr(), 1) }, closed_handle, "{handle}");
+            assert_eq!(unsafe { nox_chan_write(handle, std::ptr::null(), 0) }, closed_handle, "{handle}");
+            assert_eq!(nox_chan_ack(handle, 0), code::RET_CLOSED);
+            assert_eq!(nox_chan_flush(handle, 1), code::RET_CLOSED);
+            assert_eq!(nox_chan_shutdown_write(handle), code::RET_CLOSED);
+            assert_eq!(nox_chan_close(handle), code::RET_CLOSED);
+        }
+        // Bytes that are not there are a bad argument before any handle is looked at.
+        assert_eq!(unsafe { nox_chan_write(i64::MAX, std::ptr::null(), 5) }, i64::from(code::RET_INVALID_ARGUMENT));
+        // Nothing to free is nothing to do.
+        unsafe { nox_chan_buf_free(std::ptr::null_mut(), 0) };
+    }
+
+    #[test]
+    fn an_onion_channel_closes_as_not_ready_until_tor_is_ready() {
+        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        engine::reset_for_test();
+        let handle = open_onion(ONION, 1000);
+        assert_eq!(closed(handle), Some(code::TOR_NOT_READY), "never started");
+        let (blocker, bad) = unusable_dir("chan_failed");
+        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
+        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
+        let handle = open_onion(ONION, 1000);
+        assert_eq!(closed(handle), Some(code::TOR_NOT_READY), "failed");
+        // A broken address is broken whether or not Tor is up.
+        let handle = open_onion("nope.onion", 1000);
+        assert_eq!(closed(handle), Some(code::TOR_ONION_INVALID));
         engine::reset_for_test();
         let _ = std::fs::remove_file(blocker);
     }
 
-    /// The group a hedge was won in stays for the service and key it won for,
-    /// and goes with them.
+    /// An onion channel runs on the Tor client's runtime, and goes with it: a
+    /// stop under a channel still ends that channel with its CLOSED.
     #[test]
-    fn the_connect_group_goes_with_its_target() {
+    fn an_onion_channel_ends_when_its_tor_client_stops() {
         let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("group");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        let other = CString::new(onion::onion_from_pubkey(&[0u8; 32])).unwrap();
-        let (key, other_key) = ([1u8; 32], [2u8; 32]);
-        let won = arti_client::IsolationToken::new();
-        let set = |host: &CString, key: &[u8; 32]| unsafe { nox_tor_set_target(host.as_ptr(), 443, key.as_ptr()) };
-
-        assert_eq!(set(&onion, &key), 0);
-        engine::connect_group_won_for_test(won);
-        assert_eq!(set(&onion, &key), 0);
-        assert_eq!(engine::connect_group_for_test(), Some(won), "the same target again keeps it");
-        assert_eq!(set(&onion, &other_key), 0);
-        assert_eq!(engine::connect_group_for_test(), None, "another key forgets it");
-        engine::connect_group_won_for_test(won);
-        assert_eq!(set(&other, &other_key), 0);
-        assert_eq!(engine::connect_group_for_test(), None, "another service forgets it");
-        engine::connect_group_won_for_test(won);
-        assert_eq!(nox_tor_clear_target(), 0);
-        assert_eq!(engine::connect_group_for_test(), None, "clearing the target forgets it");
+        let dir = std::env::temp_dir().join(format!("nox_tor_chan_{}", std::process::id()));
+        let state = CString::new(dir.join("state").to_str().unwrap()).unwrap();
+        let cache = CString::new(dir.join("cache").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { nox_tor_start(state.as_ptr(), cache.as_ptr()) }, 0);
+        // Ready as far as the channel can tell. The client itself is still
+        // bootstrapping, and the connect waits for that: nowhere near done
+        // when the stop comes.
+        for _ in 0..500 {
+            if engine::onion_context().is_some() {
+                break;
+            }
+            engine::set_state_for_test(status::state::READY);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(engine::onion_context().is_some(), "no client was built");
+        let handle = open_onion(ONION, 60_000);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(channel::registry::tests::seen(handle), [], "nothing before the connect is through");
+        nox_tor_stop();
+        assert_eq!(closed(handle), Some(code::NETWORK));
         engine::reset_for_test();
-        let _ = std::fs::remove_file(blocker);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The app remembers a client the network refused by this string, and only
@@ -377,5 +457,19 @@ mod tests {
             })
             .expect("arti-client in Cargo.lock");
         assert_eq!(VERSION.to_str().unwrap(), format!("arti-client {pinned}"));
+    }
+
+    /// The client solves an onion service's proof of work (045, FR-018). Gone,
+    /// the feature would not show at run time - tor-hsclient builds a stub that
+    /// never offers a solution - so the manifest itself is checked.
+    #[test]
+    fn the_tor_client_is_built_to_solve_proof_of_work() {
+        let manifest = include_str!("../Cargo.toml");
+        let features = manifest
+            .split_once("arti-client = {")
+            .and_then(|(_, rest)| rest.split_once("] }"))
+            .map(|(features, _)| features)
+            .expect("arti-client in Cargo.toml");
+        assert!(features.lines().any(|line| line.trim() == r#""hs-pow-full","#), "{features}");
     }
 }

@@ -18,14 +18,22 @@ class LoggerLogRepository implements LogRepository {
   /// A v3 onion host anywhere in a line.
   static final RegExp _onion = RegExp(r'[a-z2-7]{56}\.onion', caseSensitive: false);
 
-  /// What every line goes through on its way out (phase 040, FR-013).
+  /// A pairing link anywhere in a line: version 3 (`nox://pair/…`, phase 044)
+  /// and the `https://nox.app/p/#…` of the builds before it, which a person
+  /// may still paste.
+  static final RegExp _link = RegExp(r'(nox://pair/|https://nox\.app/p/#)[A-Za-z0-9_\-=]*', caseSensitive: false);
+
+  /// What every line goes through on its way out (phase 040, FR-013; phase
+  /// 044, FR-022).
   ///
   /// The onion address lets anyone who has it ask the Tor network whether this
-  /// person's server is up, and it travels inside exceptions this code does not
-  /// write: `dart:io` puts the request URI into an `HttpException`, and the
-  /// repositories log what they catch. Scrubbing here, on the way out, covers
-  /// every one of them, including the ones nobody has met yet.
-  static String scrub(String line) => line.replaceAll(_onion, '[onion]');
+  /// person's server is up, and a pairing link is a token that pairs a device
+  /// with it. Both travel inside text this code does not write: `dart:io`
+  /// puts the request URI into an `HttpException`, a `FormatException` quotes
+  /// its source, and the repositories log what they catch. Scrubbing here, on
+  /// the way out, covers every one of them, including the ones nobody has met
+  /// yet.
+  static String scrub(String line) => line.replaceAll(_link, '[link]').replaceAll(_onion, '[onion]');
 
   @override
   void debug({Object? target, required String message}) {
