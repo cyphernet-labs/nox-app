@@ -92,6 +92,12 @@ func (c *client) handlePair(cmd protocol.Command) {
 		status := r.Outcome
 		if status == "" {
 			status = statusPending
+			// The device waits here for an answer that can take the invite's
+			// ten minutes, so the connection waits with it, free of a
+			// stranger's two minutes and of being pushed out for a newcomer
+			// (unpaired.go) - set up before the reply, so neither can land
+			// between the two.
+			c.awaitAnswer(r)
 		}
 		c.sendFrame(protocol.OKReply(cmd.ID, pairReply{Status: status, RequestID: r.RequestID, ExpiresAt: r.ExpiresAt}))
 		// After the reply, like every fan-out (§9): the issuing device is asked
@@ -303,11 +309,12 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
 	c.srv.dropDevice(key)
 	// The requests the revoked device took part in closed with it. The device
-	// waiting on each is told; so is the device asked to answer it, unless that
-	// is the one just revoked - its connections are closing, and the dialog
-	// goes with the device.
+	// waiting on each is told, its connection a stranger again (endWait); so
+	// is the device asked to answer it, unless that is the one just revoked -
+	// its connections are closing, and the dialog goes with the device.
 	for _, r := range rev.Closed {
 		c.logger.Info("pairing request closed", "outcome", r.Outcome)
+		c.srv.endWait(r)
 		c.srv.tellNewDevice(r, nil)
 		if r.IssuerKey != key {
 			c.srv.tellIssuer(r)

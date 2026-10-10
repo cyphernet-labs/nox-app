@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"nox.app/client-backend/internal/store"
 )
 
 // A key no device row names may only pair, and only over /ws (contract §1,
@@ -18,6 +20,16 @@ import (
 // session in time and in how many are open at once, and any other request by
 // ending its connection with the answer. A paired device's connection is held
 // to none of it.
+//
+// A pairing through an invite waits for Allow on the device that issued it
+// (046), for up to the invite's ten minutes - far past a stranger's two. While
+// its request waits, the connection that presented the invite last is held to
+// neither limit and waits instead, under a deadline of the request's own
+// (awaitAnswer); when the request closes, an allowed device is paired and a
+// refused one is a stranger again (endWait). One connection holds each
+// request's wait, so strangers can hold no more connections this way than
+// requests wait - and a request opens only with an invite one of the person's
+// own devices issued, and lives no longer than it.
 
 const (
 	// defaultUnpairedTimeout is how long a connection of a key nobody paired
@@ -25,12 +37,9 @@ const (
 	// right behind the server's greeting, so a device that means to pair has
 	// done so within one round trip - seconds through Tor - and two minutes is
 	// that many times over. Without a limit the server's own pings would keep
-	// such a connection alive for as long as its holder liked.
-	//
-	// 046 adds a pairing that waits for the person to approve it on another
-	// device, for up to an invite's ten minutes. That waiting connection must
-	// extend this deadline or be exempt from it, or every approval slower than
-	// two minutes fails.
+	// such a connection alive for as long as its holder liked. A pairing that
+	// waits for Allow is the one stranger that needs longer, and it gets its
+	// request's own deadline instead (awaitAnswer).
 	defaultUnpairedTimeout = 2 * time.Minute
 	// defaultMaxUnpaired is how many connections of keys nobody paired may be
 	// open at once. A person pairs one device at a time, and 32 leaves room
@@ -149,47 +158,129 @@ func (s *Server) boundRequestBody(c net.Conn, state http.ConnState) {
 
 // holdUnpaired puts c among the connections of keys nobody paired - closing
 // the oldest of them if c is one too many - and arms its deadline. The
-// returned func disarms the deadline; the handler calls it as the connection
+// returned func lets go of whatever c is held to by then - its place, or the
+// wait it moved to (awaitAnswer) - and the handler calls it as the connection
 // ends.
 func (s *Server) holdUnpaired(c *client) (release func()) {
-	cut, report := s.admitUnpaired(c)
-	for _, old := range cut {
-		// Off this goroutine: a close handshake can take seconds, and the
-		// newcomer's greeting must not wait on a stranger's goodbye.
-		go old.close(websocket.StatusTryAgainLater, "too many unpaired connections")
-	}
-	if report > 0 {
-		// Counts only, like the channel's entry: no key, no address.
-		s.logger.Warn("unpaired connections closed to make room", "closed", report)
-	}
-	deadline := time.AfterFunc(s.unpairedTimeout, func() {
-		// Out of the count at once, the way a connection closed to make room
-		// is: its close handshake can take seconds, and a place it no longer
-		// needs must not push out somebody else meanwhile.
-		if s.forgetUnpaired(c) {
-			c.logger.Info("unpaired connection closed: it did not pair in time")
-			c.close(websocket.StatusPolicyViolation, "not paired in time")
-		}
-	})
-	return func() { deadline.Stop() }
+	s.mu.Lock()
+	cut, report := s.placeUnpairedLocked(c)
+	s.mu.Unlock()
+	s.closeToMakeRoom(cut, report)
+	return func() { s.letGo(c) }
 }
 
-// admitUnpaired makes c the newest unpaired connection and takes the oldest out
-// while there are too many, returning them for the caller to close outside the
-// lock. It also returns how many to report: everything taken out since the last
-// warning, at most once a minute, so that a flood does not flood the log as
-// well. What is not reported yet rides on the next warning.
-func (s *Server) admitUnpaired(c *client) (cut []*client, report int) {
+// settleUnpaired takes c out of a stranger's limits once its key is known to
+// be a paired device's: it paired, or it greeted as a device that paired on
+// another connection after this one opened. Its deadline then finds nothing to
+// close, and a wait it held ends with it.
+func (s *Server) settleUnpaired(c *client) {
+	s.letGo(c)
+}
+
+// awaitAnswer exempts c from a stranger's limits while r - the request its
+// `pair` has just found waiting - waits for the answer of the device that
+// issued the invite (046). An Allow can take the invite's whole ten minutes,
+// and the two minutes a stranger gets, or a newcomer pushing it out, would end
+// every slower one. Called BEFORE the reply, so neither can land between the
+// two.
+//
+// The wait has a deadline of its own all the same: the request's, the one
+// sweep it may take to be closed, and the two minutes a stranger gets past
+// that. Its end puts the connection back under the limits (endWait) before
+// this deadline comes, so this one only bounds a wait whose end nobody
+// reported.
+//
+// One connection holds each request's wait: the one that presented it last.
+// The same key presenting the same invite on another connection - the app
+// does, on every new connection - takes the wait over, and the connection it
+// leaves is a stranger again, with a place and two minutes of its own.
+//
+// A connection held to no limit has nothing to be exempt from: a paired
+// device's, or one already cut, which is closing.
+func (c *client) awaitAnswer(r store.PairRequest) {
+	s := c.srv
+	if s.beforeWait != nil {
+		s.beforeWait(r.RequestID)
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if c.unpaired == nil && c.waitsOn == "" {
+		s.mu.Unlock()
+		return
+	}
+	// Out of its place - or of a wait on another request - first, so the
+	// place the displaced holder takes below can never push c itself out.
+	s.letGoLocked(c)
+	var cut []*client
+	var report int
+	if prev := s.waits[r.RequestID]; prev != nil {
+		s.letGoLocked(prev)
+		cut, report = s.placeUnpairedLocked(prev)
+	}
+	s.waits[r.RequestID] = c
+	c.waitsOn = r.RequestID
+	s.armLocked(c, time.Until(time.Unix(r.ExpiresAt, 0))+s.requestSweep+s.unpairedTimeout)
+	s.mu.Unlock()
+	s.closeToMakeRoom(cut, report)
+
+	// The request can close between the store's "pending" and the wait taking
+	// hold above - an Allow, a Deny, a cancel, the sweep - and whoever closed
+	// it found nobody waiting on it. So it is asked again now that the wait
+	// holds: a close from here on finds this connection, and one before is
+	// caught by this read.
+	outcome, err := s.store.PairRequestOutcome(c.ctx, r.RequestID)
+	switch {
+	case err != nil && c.ctx.Err() != nil:
+		// The connection is going; its handler lets go of the wait.
+	case err != nil:
+		// A store that cannot answer counts as "no longer waiting", as it
+		// counts as "not paired" at the door: the connection is a stranger
+		// again, and a device that still waits takes the wait back by
+		// presenting its invite on its next connection.
+		c.logger.Error("read the pairing request", "err", err)
+		r.Outcome = ""
+		s.endWait(r)
+	case outcome != "":
+		r.Outcome = outcome
+		s.endWait(r)
+	}
+}
+
+// endWait ends the wait on r once r has closed, whoever closed it - an answer,
+// a cancel, the sweep, a revocation - and before either side is told. Allowed,
+// the device is paired, and its connection is a paired device's: held to
+// nothing. Any other way, nothing the connection holds says it will pair any
+// more, so it is a stranger again: a place and two minutes, like a newcomer.
+func (s *Server) endWait(r store.PairRequest) {
+	s.mu.Lock()
+	var cut []*client
+	var report int
+	if holder := s.waits[r.RequestID]; holder != nil {
+		s.letGoLocked(holder)
+		if r.Outcome != store.OutcomeAllowed {
+			cut, report = s.placeUnpairedLocked(holder)
+		}
+	}
+	s.mu.Unlock()
+	s.closeToMakeRoom(cut, report)
+}
+
+// placeUnpairedLocked makes c the newest unpaired connection, with a deadline
+// of its own, and takes the oldest out while there are too many, returning
+// them for the caller to close outside the lock. It also returns how many to
+// report: everything taken out since the last warning, at most once a minute,
+// so that a flood does not flood the log as well. What is not reported yet
+// rides on the next warning. Waiting connections are not among the places, so
+// a newcomer never pushes one out.
+func (s *Server) placeUnpairedLocked(c *client) (cut []*client, report int) {
 	// A loop rather than one cut: a cap shrunk while connections were held
 	// still comes out at the cap.
 	for s.unpaired.Len() > 0 && s.unpaired.Len() >= s.maxUnpaired {
 		oldest := s.unpaired.Front().Value.(*client)
-		s.forgetUnpairedLocked(oldest)
+		s.letGoLocked(oldest)
 		cut = append(cut, oldest)
 	}
 	c.unpaired = s.unpaired.PushBack(c)
+	s.armLocked(c, s.unpairedTimeout)
 	if len(cut) > 0 {
 		s.unpairedCut += len(cut)
 		if now := time.Now(); now.Sub(s.unpairedWarned) >= shedLogInterval {
@@ -199,29 +290,74 @@ func (s *Server) admitUnpaired(c *client) (cut []*client, report int) {
 	return cut, report
 }
 
-// settleUnpaired takes c out of the unpaired connections once its key is known
-// to be a paired device's: it paired, or it greeted as a device that paired on
-// another connection after this one opened. Its deadline then finds nothing to
-// close.
-func (s *Server) settleUnpaired(c *client) {
-	s.forgetUnpaired(c)
+// closeToMakeRoom closes the connections a newcomer took the places of, and
+// reports the count it was handed.
+func (s *Server) closeToMakeRoom(cut []*client, report int) {
+	for _, old := range cut {
+		// Off this goroutine: a close handshake can take seconds, and the
+		// newcomer's greeting must not wait on a stranger's goodbye.
+		go old.close(websocket.StatusTryAgainLater, "too many unpaired connections")
+	}
+	if report > 0 {
+		// Counts only, like the channel's entry: no key, no address.
+		s.logger.Warn("unpaired connections closed to make room", "closed", report)
+	}
 }
 
-// forgetUnpaired takes c out of the unpaired connections, and reports whether
-// it was still there - false once it settled, was closed to make room, or
-// left.
-func (s *Server) forgetUnpaired(c *client) bool {
+// armLocked gives what c is held to now a deadline d away, in place of any
+// earlier one. Every change of hold moves holdGen on, so a timer that fires as
+// c moves from one hold to the next - a place to a wait, a wait back to a
+// place - finds a newer number and closes nothing.
+func (s *Server) armLocked(c *client, d time.Duration) {
+	if c.deadline != nil {
+		c.deadline.Stop()
+	}
+	c.holdGen++
+	gen := c.holdGen
+	c.deadline = time.AfterFunc(d, func() { s.outOfTime(c, gen) })
+}
+
+// outOfTime closes c when the hold its deadline was armed for is still the
+// one c is held to.
+func (s *Server) outOfTime(c *client, gen uint64) {
+	s.mu.Lock()
+	due := c.holdGen == gen
+	if due {
+		// Out of the count at once, the way a connection closed to make room
+		// is: its close handshake can take seconds, and a place it no longer
+		// needs must not push out somebody else meanwhile.
+		s.letGoLocked(c)
+	}
+	s.mu.Unlock()
+	if due {
+		c.logger.Info("unpaired connection closed: it did not pair in time")
+		c.close(websocket.StatusPolicyViolation, "not paired in time")
+	}
+}
+
+// letGo takes c out of a stranger's limits - its place or its wait, with the
+// deadline of either.
+func (s *Server) letGo(c *client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.forgetUnpairedLocked(c)
+	s.letGoLocked(c)
 }
 
-// forgetUnpairedLocked is forgetUnpaired with s.mu held.
-func (s *Server) forgetUnpairedLocked(c *client) bool {
-	if c.unpaired == nil {
-		return false
+// letGoLocked is letGo with s.mu held. A no-op for a connection held to
+// nothing - a paired device's, or one that settled, ran out of time, was taken
+// out to make room, or left - beyond moving holdGen on.
+func (s *Server) letGoLocked(c *client) {
+	if c.unpaired != nil {
+		s.unpaired.Remove(c.unpaired)
+		c.unpaired = nil
 	}
-	s.unpaired.Remove(c.unpaired)
-	c.unpaired = nil
-	return true
+	if c.waitsOn != "" {
+		delete(s.waits, c.waitsOn)
+		c.waitsOn = ""
+	}
+	if c.deadline != nil {
+		c.deadline.Stop()
+		c.deadline = nil
+	}
+	c.holdGen++
 }

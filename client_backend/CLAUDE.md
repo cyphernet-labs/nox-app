@@ -28,9 +28,11 @@ answers with the machine's own Ed25519 key the same way. Only then does
 (`channelPeer`). The server accepts ANY key that proves itself and grants
 rights by the store: a paired device gets everything, an unknown key only
 `pair` and `pair.cancel` - within two minutes, on one of at most 32 such
-connections (`unpaired.go`); `session.hello` with an unknown key is
-`unauthenticated` (the device reads it as a revocation), and `/files` refuses
-an unpaired key with `401` before it looks at the token. Off `/ws` an unknown
+connections (`unpaired.go`), unless an invite it presented waits for Allow:
+that connection waits, free of both, until the request closes (046);
+`session.hello` with an unknown key is `unauthenticated` (the device reads it
+as a revocation), and `/files` refuses an unpaired key with `401` before it
+looks at the token. Off `/ws` an unknown
 key gets one request per connection: the door in front of the mux
 (`limitStrangers`) ends the connection with every answer but a WebSocket
 upgrade. The greeting has no challenge, `session.hello` and `pair` carry no
@@ -157,9 +159,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    `unpaired` as well - the /ws connections of keys nobody paired, oldest
    first, each holding its own place in the list (`unpaired.go`) - because a
    newcomer's handler takes the oldest of them out to make room, and each
-   one's deadline fires on a timer's goroutine. The device key needs no
-   lock: the channel fixes it before the connection is registered, and it
-   never changes.
+   one's deadline fires on a timer's goroutine; and `waits`, the connection
+   waiting on each pairing request (046), because the request closes on
+   whichever goroutine closed it - an answer, a cancel, the sweeper, a
+   revocation - and that goroutine puts the waiting connection back among
+   the strangers or lets it go. The device key needs no lock: the channel
+   fixes it before the connection is registered, and it never changes.
    The transfer-token store (`internal/server/tokens.go`), the upload-writer
    registry (043, `internal/server/writers.go`: which request is writing
    which part, so a new PUT can interrupt one whose connection died silently
@@ -326,8 +331,17 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   from then on drops it, as for a transfer); a stranger's session is closed
   with 1008 if it has not paired within 2 minutes, and at most 32 are open
   at once - the OLDEST is closed with 1013 for a newcomer, never the
-  newcomer. `pair` or `session.hello` succeeding on it settles it; a paired
-  device's connection is never held to either limit. The main `http.Server`
+  newcomer. `pair` pairing on it or `session.hello` succeeding settles it; a
+  paired device's connection is never held to either limit. A `pair` that
+  answers `pending` (046) moves its connection from its place to a WAIT on
+  the request (`awaitAnswer`, `Server.waits`): out of the cap's count, never
+  pushed out, under the request's own deadline (plus one sweep and two
+  minutes, a bound only). One connection holds each request's wait - the
+  last to present it; the one it leaves is a newcomer again. Whoever closes
+  the request ends the wait (`endWait`): allowed lets the connection go,
+  any other outcome puts it back as a newcomer with two fresh minutes; and
+  a close landing between the store's `pending` and the wait taking hold is
+  caught by reading the request again once it holds. The main `http.Server`
   (`configureMain`, shared by `Run` and the test stack) closes a connection
   idle for 2 minutes between requests (only a paired device's is ever
   kept), hands `OPTIONS *` to the handler instead of answering it itself
@@ -410,7 +424,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   holds a stranger's deadline and cap, and that a stranger's connection ends
   with every answer but an upgrade - a body declared and never sent and
   net/http's own answers included - while a paired device's stays for the
-  next request; the addresses are
+  next request; it holds too that a pairing waiting for Allow outlives the
+  deadline and the cap and is paired after, that the last connection to
+  present a request holds its wait, and that a request ending without a
+  pairing - Deny, Cancel, its time, or a close landing before the wait took
+  hold (`beforeWait`) - makes the connection a stranger again; the addresses are
   `address_settings_test.go`, `status_addresses_test.go` and
   `internal/store/addresses_test.go`; the log
   is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -
@@ -661,12 +679,18 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   newcomer, never the newcomer: a refusal
   would let 32 connections renewed every two minutes keep every new device
   from pairing, where closing the oldest makes a stranger open 32 within each
-  of a device's round trips. **046 must extend or exempt the deadline** for a
-  pairing that waits on the person's approval (up to an invite's ten
-  minutes), and keep such a connection from being the oldest a flood closes,
-  or every slow approval fails. What stays open: within its two minutes a
+  of a device's round trips. A pairing through an invite is the one stranger
+  that needs longer (046): Allow can take the invite's whole ten minutes, so
+  while its request waits the connection it was presented on last holds a
+  WAIT instead of a place - neither the deadline nor the cap applies to it -
+  and the request's end puts it back as a newcomer or, allowed, lets it go.
+  That keeps a bound: one connection per waiting request, and a request
+  opens only with an invite a paired device issued and lives no longer than
+  it. What stays open: within its two minutes a
   stranger may send `pair` as often as it likes, each failed attempt one
-  short write transaction on the single writer; and the connections past the
+  short write transaction on the single writer - and a stranger holding a
+  leaked invite may hold its one waiting connection until the person answers
+  or the invite's time runs out; and the connections past the
   check are not capped as a whole - a stranger may open them one after
   another, each held for one request's budgets (30 s for its headers) at the
   price of a full handshake, so what bounds how many it holds is how fast it

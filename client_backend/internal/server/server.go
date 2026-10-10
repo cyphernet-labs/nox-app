@@ -137,6 +137,11 @@ type Server struct {
 	// part became its file and before the database hears of it - the window a
 	// client hanging up, a continuation or a crash lands in. Nil outside tests.
 	afterFinalize func(fileID string)
+	// And in pairing (046): right after `pair` found its request waiting and
+	// before the connection's wait takes hold - the window an Allow, a Deny,
+	// a cancel or the sweep can close the request in with nobody waiting on
+	// it yet. Nil outside tests.
+	beforeWait func(requestID string)
 	// What the service page shows about the process itself. Set once at
 	// startup: the schema version the migrator reported, the moment this
 	// process began. A person who closed that terminal has no other way to it.
@@ -159,10 +164,10 @@ type Server struct {
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns, transfers and unpaired; wg tracks connection handlers
-	// so shutdown can wait for hijacked connections. Infrastructure-only
-	// synchronization (ws-rest-patterns §5); business state stays
-	// goroutine-owned.
+	// mu guards conns, transfers, unpaired and waits; wg tracks connection
+	// handlers so shutdown can wait for hijacked connections.
+	// Infrastructure-only synchronization (ws-rest-patterns §5); business
+	// state stays goroutine-owned.
 	mu    sync.Mutex
 	conns map[*client]struct{}
 	// transfers holds the file transfers under way. Each runs on a connection
@@ -170,15 +175,23 @@ type Server struct {
 	// a revocation walks this set beside conns (dropDevice).
 	transfers map[*transfer]struct{}
 	// unpaired holds the connections in conns whose key no device row named
-	// when they connected - strangers, who may only pair - oldest first
-	// (unpaired.go). Under mu with conns: a newcomer's handler takes the
-	// oldest out to make room, and each one's deadline, on a timer's
-	// goroutine, takes it out if it is still there. unpairedCut and
-	// unpairedWarned space the warning about the ones taken out to make room.
+	// when they connected - strangers, who may only pair - oldest first, but
+	// for those waiting on a pairing request (waits) (unpaired.go). Under mu
+	// with conns: a newcomer's handler takes the oldest out to make room, a
+	// request closing on another goroutine puts its waiting connection back,
+	// and each one's deadline, on a timer's goroutine, takes it out if it is
+	// still there. unpairedCut and unpairedWarned space the warning about the
+	// ones taken out to make room.
 	unpaired       *list.List
 	unpairedCut    int
 	unpairedWarned time.Time
-	wg             sync.WaitGroup
+	// waits holds, by request id, the connection waiting on each pairing
+	// request an invite opened (046): the one that presented it last. Such a
+	// connection has left unpaired - held to neither of its limits while the
+	// request waits - and its request's end, by whoever brings it, finds it
+	// here. Under mu with conns, for the same reasons as unpaired.
+	waits map[string]*client
+	wg    sync.WaitGroup
 }
 
 // transfer is one /files request under way: the device key its connection
@@ -222,6 +235,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		conns:            make(map[*client]struct{}),
 		transfers:        make(map[*transfer]struct{}),
 		unpaired:         list.New(),
+		waits:            make(map[string]*client),
 	}
 }
 
@@ -384,6 +398,12 @@ func (s *Server) dropDevice(deviceKey string) {
 	for c := range s.conns {
 		if c.deviceKey == deviceKey {
 			doomed = append(doomed, c)
+			// A connection on its way out holds no place and waits on
+			// nothing (unpaired.go): its goodbye can take seconds, and a
+			// request of the revoked device closing right after this must
+			// not put it back among the strangers, where it would push out
+			// one of them.
+			s.letGoLocked(c)
 		}
 	}
 	var cut []*channelConn
@@ -532,12 +552,13 @@ func (s *Server) track(c *client) {
 	s.mu.Unlock()
 }
 
-// untrack takes c out of the registry, and out of the unpaired connections if
-// it was still one: a connection that is gone holds no place.
+// untrack takes c out of the registry, and out of a stranger's limits if it was
+// still held to them: a connection that is gone holds no place and waits on
+// nothing.
 func (s *Server) untrack(c *client) {
 	s.mu.Lock()
 	delete(s.conns, c)
-	s.forgetUnpairedLocked(c)
+	s.letGoLocked(c)
 	s.mu.Unlock()
 }
 

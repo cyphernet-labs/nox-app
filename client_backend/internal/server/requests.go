@@ -124,12 +124,14 @@ func (s *Server) announcePairRequested(r store.PairRequest) {
 
 // announcePairClosed tells both sides a request is over: the new device how it
 // ended (id set when it was allowed), the issuing device that it no longer
-// waits for an answer.
+// waits for an answer. The connection that waited on it is let go of first
+// (endWait): paired, or a stranger again.
 //
 // The log says that it ended and how - never which devices, and never the
 // invite: the outcome is all an operator needs to see pairing at work.
 func (s *Server) announcePairClosed(r store.PairRequest, id *identity) {
 	s.logger.Info("pairing request closed", "outcome", r.Outcome)
+	s.endWait(r)
 	s.tellNewDevice(r, id)
 	s.tellIssuer(r)
 }

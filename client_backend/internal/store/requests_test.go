@@ -570,3 +570,27 @@ func TestTheSchemaKeepsARequestHonest(t *testing.T) {
 		t.Fatal("a second request for one invite was written")
 	}
 }
+
+// The server reads how a request stands once a connection's wait on it took
+// hold, to catch a close that landed in between (046): no outcome while it
+// waits, the outcome once it closed, and not found for a request nobody
+// opened.
+func TestPairRequestOutcomeReadsHowARequestStands(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	_, token := withIssuer(t, s, 200)
+	r := openRequest(t, s, token, "dev-new", 210)
+
+	if got, err := s.PairRequestOutcome(ctx, r.RequestID); err != nil || got != "" {
+		t.Fatalf("a waiting request: outcome %q, err %v - want none", got, err)
+	}
+	if _, err := s.DecidePairRequest(ctx, r.RequestID, "dev-issuer", false, 220); err != nil {
+		t.Fatalf("Deny: %v", err)
+	}
+	if got, err := s.PairRequestOutcome(ctx, r.RequestID); err != nil || got != OutcomeDenied {
+		t.Fatalf("a denied request: outcome %q, err %v - want %q", got, err, OutcomeDenied)
+	}
+	if _, err := s.PairRequestOutcome(ctx, "r_0000000000000000"); !errors.Is(err, ErrRequestNotFound) {
+		t.Fatalf("a request nobody opened: err %v, want ErrRequestNotFound", err)
+	}
+}
