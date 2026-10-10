@@ -405,6 +405,7 @@ dnf_tor() {
 	base=centos
 	if [ "$(os_release ID)" = fedora ]; then base=fedora; fi
 	if [ "$base" = centos ] && ! rpm -q epel-release >/dev/null 2>&1; then
+		undo_push "dnf remove -y -q epel-release >/dev/null 2>&1 || true"
 		dnf install -y -q epel-release || note "could not add EPEL; the Tor Project's packages may need it"
 	fi
 	key=https://rpm.torproject.org/$base/public_gpg.key
