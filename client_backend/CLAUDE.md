@@ -458,7 +458,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   key as noise, and a connection closing alone over a WAL that looks empty
   deletes it. Any ONE of the three files is enough, never the database's
   alone: a crash in the middle of a checkpoint can tear the database's first
-  block while the WAL still holds that page.
+  block while the WAL still holds that page. An EMPTY database is not asked
+  about at all, as SQLite does not ask: it deletes a WAL or a journal beside a
+  database of zero pages unread, and a new database cut off in its first
+  transaction is exactly an empty file beside a journal whose header has no
+  magic yet - asking that journal refused the right key on every start.
 - **A chunk cut back is sealed again under the same nonce.** Safe while the
   bytes are the same, which is what a client continuing an upload sends; other
   bytes under the same index could come only from a faulty device of the

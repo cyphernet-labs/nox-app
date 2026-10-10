@@ -27,16 +27,30 @@ import (
 // So the files are read here first, read-only and without SQLite, the way the
 // "adiantum" VFS reads them: in 4 KiB blocks, each decrypted with Adiantum
 // under the data key and a tweak that is the block's offset in its file. The
-// first block of each file starts with that file's header, and a header comes
-// out of a block only under the key that wrote it. A refused key has then
-// changed nothing on disk: no file opened for writing, none created.
+// first block of each file starts with that file's header - a journal's only
+// once SQLite has written its magic, which it does after a sync, having
+// written zeros there first - and a header comes out of a block only under
+// the key that wrote it. A refused key has then changed nothing on disk: no
+// file opened for writing, none created.
 //
 // Any one of the three files showing its header is enough. The database's
 // alone would turn the right key away after a crash in the middle of a
 // checkpoint, which can leave the database's first block torn - noise under
 // every key - while the WAL still holds that page and SQLite reads it from
-// there. A crash while the WAL starts over is the other way round, and a
-// database that crashed in its very first transaction has only its journal.
+// there. A crash while the WAL starts over is the other way round, and when
+// the switch to WAL tears the page 1 it was writing, only the journal that
+// puts it back shows the key.
+//
+// An EMPTY database is not asked about at all, whatever lies beside it, as
+// SQLite does not ask: beside a database of zero pages it deletes a WAL or a
+// journal without reading either and makes the database under the key it is
+// given. A new database cut off in its first transaction leaves exactly that -
+// an empty file beside a journal whose header has no magic yet - and asking
+// that journal would refuse the right key on every start. A database shorter
+// than a block is one page to SQLite, which then does read the journal beside
+// it, so there the journal still answers: SQLite writes a new database only
+// once its journal holds the magic, and that journal is what empties a first
+// write that tore.
 
 const (
 	// blockSize is what the VFS encrypts in: 4 KiB, SQLite's default page.
@@ -69,13 +83,20 @@ var sqliteFiles = []struct {
 }
 
 // checkKey returns ErrWrongKey when key did not write the database at path,
-// having read its files and changed nothing. A database nothing was written
-// to yet - no file, or none with a whole block - has no key to check against,
-// and any key makes it.
+// having read its files and changed nothing. A database still to be made - no
+// file, an empty one, or one with no whole block in it or beside it - has no
+// key to check against, and any key makes it.
 func checkKey(path string, key []byte) error {
 	resolved, err := realPath(path)
 	if err != nil || resolved == "" {
 		return err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("check the data key against %s: %w", resolved, err)
+	}
+	if info.Size() == 0 {
+		return nil
 	}
 	cipher := adiantum.New(key)
 	written := false
