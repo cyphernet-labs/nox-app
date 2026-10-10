@@ -130,7 +130,7 @@
 
 ### 049 — Установка сервера
 
-- Скрипты для Linux (systemd), macOS (launchd) и Windows (служба): сервер; tor не старше 0.4.9 — пакет дистрибутива или Tor Project, на macOS — сборка Tor Project, на Windows — Tor Expert Bundle; настройки tor с onion-сервисом и PoW; пароль при первом запуске; адреса — параметрами запуска; в конце — ссылка для первого устройства.
+- Скрипты для Linux (systemd), macOS (launchd) и Windows (служба): сервер; tor не старше 0.4.9 — пакет дистрибутива или Tor Project, на macOS — сборка Tor Project, на Windows — Tor Expert Bundle; настройки tor с onion-сервисом, PoW и пределом в 16 потоков на цепочку (`HiddenServiceMaxStreams 16`, `HiddenServiceMaxStreamsCloseCircuit 1` — PoW не ограничивает потоки на построенной цепочке); пароль при первом запуске; адреса — параметрами запуска; в конце — ссылка для первого устройства.
 - Проверка: macOS — здесь, Linux и Windows — у владельца.
 
 ### Для всех фич
