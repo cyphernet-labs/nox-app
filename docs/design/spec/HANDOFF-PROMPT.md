@@ -18,9 +18,9 @@
 ПОРЯДОК РАБОТЫ:
 ФАЗА 1 — Foundations. Создай переменные/стили из design-system.md: цветовые переменные для двух режимов (Light §2.2 и Dark §2.3, все роли ColorScheme), текстовые стили (§3 type scale + mono для ID + wordmark), радиусы (§4), elevation (§5), сетка/отступы 4dp (§6). Цвет можно сгенерировать из seed #12B4B4 в Material Theme Builder — значения в §2.2/§2.3 должны совпасть.
 ФАЗА 2 — Components. Собери переиспользуемые M3-компоненты из §9 design-system.md: нижняя панель + docked FAB «+» (4.1), message bubble (свой/чужой, со статус-иконками), элемент списка чатов (с аватаром и unread-бейджем), identity card, поля/кнопки/SearchBar/SegmentedButton/SwitchListTile/RadioListTile, progress-индикаторы, file-chip, composer, QR-overlay, QR bottom-sheet, SnackBar/MaterialBanner/AlertDialog, generated-avatar (палитра §2.5). Используй варианты/состояния. На экранах ставь ИНСТАНСЫ, не детачь.
-ФАЗА 3 — Screens. Построй 17 экранов (список ниже), каждый — в Light И Dark. Размер фрейма — стандартный мобильный (например 393×852). Бери цвета/текст/отступы строго из токенов и спеков, не хардкодь.
+ФАЗА 3 — Screens. Построй 20 экранов (список ниже), каждый — в Light И Dark. Размер фрейма — стандартный мобильный (например 393×852). Бери цвета/текст/отступы строго из токенов и спеков, не хардкодь.
 
-ЭКРАНЫ (id — файл): 1.1 splash, 2.1 login, 2.2 qr-scan, 2.3 set-username, 3.1 error, 4.1 tab-bar-shell, 5.1 chats-list, 5.2 chat, 5.3 file-view, 5.4 chat-card, 6.1 create-chat, 7.1 settings-root, 7.2 notifications, 7.3 appearance, 7.4 language, 7.6 terms, 7.7 about. (7.5 Support — вне scope, не делай.)
+ЭКРАНЫ (id — файл): 1.1 splash, 2.1 login, 2.2 qr-scan, 2.3 set-username, 2.4 connect, 3.1 error, 4.1 tab-bar-shell, 5.1 chats-list, 5.2 chat, 5.3 file-view, 5.4 chat-card, 6.1 create-chat, 7.1 settings-root, 7.2 notifications, 7.3 appearance, 7.4 language, 7.6 terms, 7.7 about, 7.8 devices, 7.10 connection. (7.5 Support — вне scope, не делай.)
 Для экранов со значимыми состояниями отрисуй их отдельными фреймами/вариантами: loading / empty / error там, где они описаны в спеке экрана (особенно 5.1, 5.2, 2.3, 6.1, 3.1, 5.3).
 
 ЖЁСТКИЕ ПРАВИЛА:
@@ -39,7 +39,7 @@
 РЕЗУЛЬТАТ — Figma-файл со страницами:
 - «Foundations» (цветовые переменные light/dark, текстовые стили, сетка, elevation, иконки);
 - «Components» (компоненты из §9 с вариантами/состояниями);
-- «Screens» (17 экранов × Light/Dark, сгруппированы по потокам: Onboarding 1.1–3.1, Shell+Chats 4.1/5.x/6.1, Settings 7.x).
+- «Screens» (20 экранов × Light/Dark, сгруппированы по потокам: Onboarding 1.1–3.1, Shell+Chats 4.1/5.x/6.1, Settings 7.x).
 
 По завершении дай короткий список: что собрано, какие плейсхолдеры использованы, и «нужны уточнения» (если есть).
 ```
@@ -56,7 +56,7 @@
 | `overview.md` | продуктовая модель + все принятые решения + глобальные UI-конвенции (аватары, иконки файлов, уровни ошибок, форматы времени, offline) |
 | `top-level-screens.md` | карта экранов и потоки |
 | `design-system.md` | дизайн-токены: цвет (из логотипа), типографика, форма, elevation, отступы, движение, иконки, токены компонентов §9 |
-| `screens/*.md` | 18 файлов-спецификаций (17 экранов в scope + `support.md` — заглушка 7.5, вне scope) |
+| `screens/*.md` | 21 файл-спецификация (20 экранов в scope + `support.md` — заглушка 7.5, вне scope) |
 | `assets/logo-reference.png` | референс логотипа (источник палитры) |
 
 ### Почему промпт построен «foundations → components → screens»
@@ -65,7 +65,7 @@
 
 ### Чек-лист приёмки (по чему проверять результат)
 
-- [ ] Присутствуют все 17 in-scope экранов, каждый в Light и Dark.
+- [ ] Присутствуют все 20 in-scope экранов, каждый в Light и Dark.
 - [ ] Весь текст совпадает с таблицами «Микрокопирайт» (английский, дословно).
 - [ ] Компоненты переиспользованы инстансами; цвета через переменные, не хардкод-hex.
 - [ ] Splash — тёмный фон; QR-поверхность в 7.1 — белая в обеих темах.

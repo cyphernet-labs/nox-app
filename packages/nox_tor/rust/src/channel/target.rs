@@ -177,6 +177,21 @@ fn onion_failure_kind(kind: ErrorKind) -> i32 {
         | ErrorKind::OnionServiceProtocolViolation
         | ErrorKind::OnionServiceMissingClientAuth
         | ErrorKind::OnionServiceWrongClientAuth => code::TOR_ONION_UNREACHABLE,
+        // The service's own answer to the stream: an END cell, which only
+        // comes back over a finished rendezvous - so the Tor network works and
+        // the service was reached, and what stands behind it did not take the
+        // stream. A server that is down behind a running tor reads exactly so
+        // (the tor answers CONNECTREFUSED), and "the Tor network" would send
+        // the person to check their internet instead of their server.
+        ErrorKind::RemoteConnectionRefused
+        | ErrorKind::RemoteStreamClosed
+        | ErrorKind::RemoteStreamReset
+        | ErrorKind::RemoteStreamError
+        | ErrorKind::RemoteNetworkFailed
+        | ErrorKind::RemoteHostNotFound
+        | ErrorKind::RemoteHostResolutionFailed
+        | ErrorKind::ExitPolicyRejected
+        | ErrorKind::ExitTimeout => code::TOR_ONION_UNREACHABLE,
         ErrorKind::BootstrapRequired => code::TOR_NOT_READY,
         _ => match classify_kind(kind) {
             // The network no longer takes this client: Tor is not coming up.
@@ -333,7 +348,8 @@ mod tests {
     }
 
     /// A service that asks for a key is out of reach: since 045 the client
-    /// holds none, and TOR_CLIENT_AUTH is never the answer.
+    /// holds none, and TOR_CLIENT_AUTH is never the answer. Neither is the
+    /// service's own END to the stream a fault of the Tor network.
     #[test]
     fn an_arti_failure_is_the_channels_by_its_kind() {
         for (kind, expected) in [
@@ -343,11 +359,22 @@ mod tests {
             (ErrorKind::OnionServiceConnectionFailed, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::OnionServiceProtocolViolation, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::OnionServiceNotFound, code::TOR_ONION_NOT_FOUND),
+            // The service's END: the server behind a running tor is down.
+            (ErrorKind::RemoteConnectionRefused, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteStreamClosed, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteStreamReset, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteStreamError, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteNetworkFailed, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::ExitPolicyRejected, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::ExitTimeout, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::OnionServiceAddressInvalid, code::TOR_ONION_INVALID),
             (ErrorKind::BootstrapRequired, code::TOR_NOT_READY),
             (ErrorKind::SoftwareDeprecated, code::TOR_NOT_READY),
             (ErrorKind::Internal, code::INTERNAL),
             (ErrorKind::TorNetworkTimeout, code::NETWORK),
+            // Our own clock ran out somewhere on the way: the network's.
+            (ErrorKind::RemoteNetworkTimeout, code::NETWORK),
+            (ErrorKind::CircuitCollapse, code::NETWORK),
         ] {
             assert_eq!(onion_failure_kind(kind), expected, "{kind:?}");
         }

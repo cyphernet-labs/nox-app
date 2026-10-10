@@ -106,6 +106,17 @@ void main() {
     expect(line.dy, lessThan(field.dy), reason: 'above the fields');
   });
 
+  testWidgets('an onion address the module refused is shown at the onion field, not above the fields', (tester) async {
+    status.value = const ConnectionStatus(state: LinkState.offline, problem: ConnectionProblem.invalidOnion);
+    await pump(tester);
+
+    expect(find.text(l10nEn.connectionProblemInvalidOnion), findsOneWidget, reason: 'said once');
+    final error = tester.getTopLeft(find.text(l10nEn.connectionProblemInvalidOnion));
+    final onion = tester.getTopLeft(find.widgetWithText(TextField, l10nEn.connectOnionAddressLabel));
+    expect(error.dy, greaterThan(onion.dy), reason: 'under the onion field');
+    expect(find.text(l10nEn.noConnection), findsNothing);
+  });
+
   testWidgets('with no cause known it says there is no connection', (tester) async {
     status.value = const ConnectionStatus(state: LinkState.offline);
     await pump(tester);

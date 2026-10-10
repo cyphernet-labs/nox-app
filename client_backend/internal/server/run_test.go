@@ -221,9 +221,10 @@ func TestTheOldTorFlagStopsTheStartWithAHint(t *testing.T) {
 
 // The address parameters end to end (045): a good one lands in the database
 // before anything listens - the first link the page shows already names it -
-// and a bad one leaves the server running with a warning on the page. The
-// onion address reaches neither the log nor any other line (FR-022), and the
-// startup log carries no link at all (046, FR-005).
+// and a bad one leaves the server running with a warning on the page. Neither
+// the onion address nor a link that carries it reaches the log (FR-022): the
+// startup line says where the link for a first device is, never what it is
+// (046, FR-005).
 func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	cfg := testRunConfig(t)
 	cfg.OnionAddr = testOnionAddr + ":443"
@@ -254,9 +255,10 @@ func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	if !strings.Contains(out, "-public-addr") || !strings.Contains(out, "start parameter not applied") {
 		t.Fatalf("the refused parameter is not named in the log:\n%s", out)
 	}
-	// The link is on the page, not in the log - and the page's first link
-	// names the onion service already.
-	if strings.Contains(out, "nox://pair/") {
+	// The link is on the page, not in the log - not even masked, since no line
+	// is ever handed one - and the page's first link names the onion service
+	// already.
+	if strings.Contains(out, "nox://pair/") || strings.Contains(out, "[link]") {
 		t.Fatalf("a link reached the startup log:\n%s", out)
 	}
 	if !strings.Contains(out, "no device can reach this server yet") {

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -73,6 +75,13 @@ var removedTorFlags = []string{"tor", "tor-bin", "tor-dir"}
 // defaults. The files directory defaults to "<db>-files" next to the
 // database so backup and relocation stay a two-neighbor affair.
 func Load(args []string, getenv func(string) string) (Config, error) {
+	return load(args, getenv, os.Stderr)
+}
+
+// load is Load with the writer the flag package prints to: the usage text a
+// mistyped flag or -h brings up. In the binary that is stderr - the service's
+// journal - and a test reads it.
+func load(args []string, getenv func(string) string, usage io.Writer) (Config, error) {
 	defAddr := getenv("NOX_ADDR")
 	if defAddr == "" {
 		defAddr = "127.0.0.1:8080"
@@ -88,14 +97,19 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	}
 
 	fs := flag.NewFlagSet("noxd", flag.ContinueOnError)
+	fs.SetOutput(usage)
 	addr := fs.String("addr", defAddr, "listen address (host:port); tor's onion service points here too")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
 	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page and /health, empty to disable both")
-	publicAddr := fs.String("public-addr", getenv("NOX_PUBLIC_ADDR"),
-		"public address (host:port) written to the database when it first appears or changes")
-	onionAddr := fs.String("onion-addr", getenv("NOX_ONION_ADDR"),
-		"onion address (<56 characters>.onion) written to the database when it first appears or changes")
+	// The two address parameters take the environment AFTER parsing, not as
+	// their defaults: a default is printed in the usage text, and the usage
+	// text goes to the journal whenever a flag is mistyped - with the onion
+	// address in it (FR-022).
+	publicAddr := fs.String("public-addr", "",
+		"public address (host:port) written to the database when it first appears or changes (or NOX_PUBLIC_ADDR)")
+	onionAddr := fs.String("onion-addr", "",
+		"onion address (<56 characters>.onion) written to the database when it first appears or changes (or NOX_ONION_ADDR)")
 	// Boolean-shaped, so a removed flag fails at its own name whatever follows
 	// it: "-tor false", "-tor=false" and "-tor-bin /usr/bin/tor" all stop here
 	// with the hint, instead of a value-taking flag swallowing the next word.
@@ -112,6 +126,17 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	// and a fresh database opens in the working directory.
 	if fs.NArg() > 0 {
 		return Config{}, fmt.Errorf("unexpected argument %q (every flag takes its value as -name value or -name=value)", fs.Arg(0))
+	}
+
+	// A flag given on the command line wins over the environment, even an
+	// empty one, exactly as a default would have.
+	given := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if !given["public-addr"] {
+		*publicAddr = getenv("NOX_PUBLIC_ADDR")
+	}
+	if !given["onion-addr"] {
+		*onionAddr = getenv("NOX_ONION_ADDR")
 	}
 
 	if _, _, err := net.SplitHostPort(*addr); err != nil {

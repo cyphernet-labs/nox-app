@@ -12,24 +12,17 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/coder/websocket"
 )
 
 // dialRun opens a WebSocket as d on a server Run started: the channel to its
 // main port, proving d's key against the machine's, then the upgrade.
 func dialRun(t *testing.T, addr string, serverKey ed25519.PublicKey, d *device) *wsClient {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	client := newTestChannel(addr, serverKey, &testDevices{}).clientAs(d)
-	conn, _, err := websocket.Dial(ctx, "https://"+addr+"/ws", &websocket.DialOptions{HTTPClient: client})
+	c, err := dialRunVia(t, addr, serverKey, d, "", nil)
 	if err != nil {
 		t.Fatalf("websocket.Dial: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
-	conn.SetReadLimit(1 << 20)
-	return &wsClient{t: t, conn: conn, ctx: ctx, dev: d}
+	return c
 }
 
 // getPage fetches the service page of a server Run started, as the browser on

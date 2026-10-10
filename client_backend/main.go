@@ -27,7 +27,9 @@ func main() {
 		os.Exit(link(os.Args[2:]))
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	// Scrubbed from the very first line: a configuration error can quote the
+	// onion address it was given (FR-022).
+	logger := slog.New(server.ScrubLogs(slog.NewJSONHandler(os.Stderr, nil)))
 
 	cfg, err := config.Load(os.Args[1:], os.Getenv)
 	if err != nil {

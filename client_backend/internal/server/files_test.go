@@ -607,9 +607,10 @@ func TestATransferNeedsAPairedKeyAsWellAsAToken(t *testing.T) {
 	}
 }
 
-// The key is looked up on every request, not once per connection: a device
-// revoked while its connection is still open loses its transfers with its row,
-// the way it loses its socket.
+// The key is looked up on every request, not once per connection. A
+// connection kept open between two transfers carries none under way, so a
+// revocation has nothing on it to cut (see the test below) - and the next
+// request on it is refused instead.
 func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
 	ts, srv := newTestServer(t)
 	anna := dialWS(t, ts, srv)
@@ -655,6 +656,105 @@ func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("PUT from a device revoked mid-connection = %d, want 401", resp.StatusCode)
 	}
+}
+
+// Revoking a device cuts its transfers under way, not only its socket. Each
+// transfer runs on a connection of its own, which closing the socket does not
+// touch, and nothing but silence ends one - so a lost phone halfway through a
+// download would otherwise go on reading the person's files for as long as it
+// kept reading. Its upload stops taking bytes and keeps the ones it had, its
+// download breaks off far short of the file, and the person's other devices
+// go on as they were.
+func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "revoke.db"), nil, func(s *Server) {
+		// Nothing but the revocation may end them here: silence would take a
+		// minute.
+		s.stallTimeout = time.Minute
+	})
+	t.Cleanup(closeAll)
+	owner := greeted(t, ts, srv)
+	lost := pairedDevice(t, ts, srv)
+	phone := dialAs(t, ts, srv, lost)
+	phone.expectGreeting()
+	phone.hello(1, "")
+	const mime = "application/octet-stream"
+
+	// The phone has an upload half sent...
+	upload := randomPayload(t, 200000)
+	upID, upToken, _ := declare(t, phone, 2, "up.bin", len(upload), mime, "")
+	put := openRawPutAs(t, ts, lost, upToken, len(upload))
+	put.send(upload[:50000])
+	waitPart(t, srv, upID, 50000)
+	// ...and a download it is reading, larger than the socket buffers on both
+	// ends can hold, so the server is still writing when the revocation comes.
+	movie := randomPayload(t, 32<<20)
+	movieID := storeFile(t, srv, movie)
+	resp, err := channelOf(t, ts).clientAs(lost).Get(ts.URL + "/files/" + downloadBegin(t, phone, 3, movieID))
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	head := make([]byte, 64<<10)
+	if _, err := io.ReadFull(resp.Body, head); err != nil {
+		t.Fatalf("read the first bytes: %v", err)
+	}
+	// The owner is uploading at the same moment.
+	mine := randomPayload(t, 100000)
+	mineID, mineToken, _ := declare(t, owner, 2, "mine.bin", len(mine), mime, "")
+	kept := openRawPutAs(t, ts, owner.dev, mineToken, len(mine))
+	kept.send(mine[:30000])
+	waitPart(t, srv, mineID, 30000)
+	if n := transfersOf(srv, lost.pub); n != 2 {
+		t.Fatalf("%d of the phone's transfers are under way, want its upload and its download", n)
+	}
+
+	revoked := time.Now()
+	owner.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, lost.pub))
+
+	// The upload: the server stops reading at once, says nothing - the
+	// connection just ends - and keeps exactly the bytes from before.
+	waitIdle(t, srv, upID)
+	put.expectCut(5 * time.Second)
+	if info, err := os.Stat(partPath(srv, upID)); err != nil || info.Size() != 50000 {
+		t.Fatalf("the part after the cut: %v, %v; want the 50000 bytes from before it", info, err)
+	}
+	if srv.blob.Exists(upID) {
+		t.Fatal("the revoked device's upload became a file")
+	}
+
+	// The download: what was already on its way still arrives, and then the
+	// body breaks off - far short of the file, and long before a stall could
+	// have cut it.
+	rest, err := io.ReadAll(resp.Body)
+	if err == nil || len(head)+len(rest) >= len(movie) {
+		t.Fatalf("the download went on past the revocation: %d of %d bytes, err=%v", len(head)+len(rest), len(movie), err)
+	}
+	if took := time.Since(revoked); took > srv.stallTimeout/6 {
+		t.Fatalf("the transfers ended %v after the revocation", took)
+	}
+	eventually(t, "the phone has no transfer left", func() bool { return transfersOf(srv, lost.pub) == 0 })
+
+	// The owner's upload was never touched.
+	kept.send(mine[30000:])
+	if code := kept.status(5 * time.Second); code != http.StatusNoContent {
+		t.Fatalf("the owner's upload after the revocation = %d, want 204", code)
+	}
+	if !bytes.Equal(diskBytes(t, srv, mineID), mine) {
+		t.Fatal("the owner's file is not the bytes that were sent")
+	}
+}
+
+// transfersOf counts the transfers under way on connections that proved key.
+func transfersOf(srv *Server, key string) int {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	n := 0
+	for tr := range srv.transfers {
+		if tr.deviceKey == key {
+			n++
+		}
+	}
+	return n
 }
 
 // A handler served without the channel in front of it - a wiring mistake, a

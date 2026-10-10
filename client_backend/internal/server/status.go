@@ -319,8 +319,9 @@ func (s *Server) machineLinkBuilder(ctx context.Context) (linkBuilder, error) {
 func (b linkBuilder) build(token string) (string, bool, error) {
 	link, carries, err := buildLink(b.key, token, b.host, b.conf)
 	if err != nil {
-		// The error can quote the host it could not encode.
-		return "", false, fmt.Errorf("build machine link: %s", maskOnion(err.Error()))
+		// The error can quote the host it could not encode, and it goes to the
+		// log alone, whose handler masks an onion name (logscrub.go).
+		return "", false, fmt.Errorf("build machine link: %w", err)
 	}
 	return link, b.dialable || carries.Public || carries.Onion, nil
 }

@@ -21,8 +21,8 @@ import 'live_target.dart';
 ///
 /// Run manually, not in the gate: it needs a server, and the native module
 /// built from this tree (every connection is a channel of it, phase 044).
-///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -tor=false
-///   2. flutter test test/live/pairing_live_probe.dart --dart-define=link=LINK   # the nox://pair/ link noxd prints
+///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -status-addr 127.0.0.1:8081
+///   2. flutter test test/live/pairing_live_probe.dart --dart-define=link=LINK   # the claim link on http://127.0.0.1:8081
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

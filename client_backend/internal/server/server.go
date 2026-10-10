@@ -136,15 +136,29 @@ type Server struct {
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns; wg tracks connection handlers so shutdown can wait
-	// for hijacked connections. Infrastructure-only synchronization
-	// (ws-rest-patterns §5); business state stays goroutine-owned.
+	// mu guards conns and transfers; wg tracks connection handlers so
+	// shutdown can wait for hijacked connections. Infrastructure-only
+	// synchronization (ws-rest-patterns §5); business state stays
+	// goroutine-owned.
 	mu    sync.Mutex
 	conns map[*client]struct{}
-	wg    sync.WaitGroup
+	// transfers holds the file transfers under way. Each runs on a connection
+	// of its own since 044, which closing a device's socket does not touch, so
+	// a revocation walks this set beside conns (dropDevice).
+	transfers map[*transfer]struct{}
+	wg        sync.WaitGroup
+}
+
+// transfer is one /files request under way: the device key its connection
+// proved, and that connection.
+type transfer struct {
+	deviceKey string
+	conn      *channelConn
 }
 
 // New builds a Server over an opened store, a running hub and a blob store.
+// Its log goes through the scrubbing handler whatever logger it is handed
+// (logscrub.go).
 func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:              cfg,
@@ -152,7 +166,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		hub:              h,
 		blob:             bl,
 		tokens:           newTokenStore(),
-		logger:           logger,
+		logger:           scrubbedLogger(logger),
 		writers:          newUploadWriters(),
 		stallTimeout:     defaultStallTimeout,
 		checkpointBytes:  defaultCheckpointBytes,
@@ -170,6 +184,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		requestSweep:     defaultRequestSweep,
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
+		transfers:        make(map[*transfer]struct{}),
 	}
 }
 
@@ -290,12 +305,19 @@ func (s *Server) WaitConnections(ctx context.Context) error {
 	}
 }
 
-// dropDevice cuts off every live connection authenticated with a revoked key,
-// and tells each one why before the socket closes.
+// dropDevice cuts off every live connection authenticated with a revoked key:
+// its sockets, each told why before it closes, and its file transfers under
+// way, cut without a word - a transfer has no frame to carry a reason on, and
+// the socket carries it.
 //
 // Immediately, not on the device's next attempt: a sold tablet would otherwise
 // keep reading the conversation for as long as it stays online, which is the
-// whole thing revocation exists to stop.
+// whole thing revocation exists to stop. For a transfer that is no figure of
+// speech: nothing but silence ends one (043), so a download already under way
+// would go on for as long as the tablet kept reading it.
+//
+// The transfers go first. Cutting one only closes a socket and never waits,
+// while telling a socket why can wait on that connection's full queue.
 func (s *Server) dropDevice(deviceKey string) {
 	s.mu.Lock()
 	doomed := make([]*client, 0, 1)
@@ -304,7 +326,16 @@ func (s *Server) dropDevice(deviceKey string) {
 			doomed = append(doomed, c)
 		}
 	}
+	var cut []*channelConn
+	for tr := range s.transfers {
+		if tr.deviceKey == deviceKey {
+			cut = append(cut, tr.conn)
+		}
+	}
 	s.mu.Unlock()
+	for _, conn := range cut {
+		conn.cut()
+	}
 	payload, err := json.Marshal(map[string]string{"device_key": deviceKey})
 	if err != nil {
 		// Cannot fail for a map of strings, but the connections still have to
@@ -447,6 +478,20 @@ func (s *Server) untrack(c *client) {
 	s.mu.Unlock()
 }
 
+// trackTransfer registers a transfer under the device key its connection
+// proved, until the returned func takes it out again.
+func (s *Server) trackTransfer(deviceKey string, conn *channelConn) (untrack func()) {
+	tr := &transfer{deviceKey: deviceKey, conn: conn}
+	s.mu.Lock()
+	s.transfers[tr] = struct{}{}
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.transfers, tr)
+		s.mu.Unlock()
+	}
+}
+
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -471,6 +516,10 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // and the HTTP server, and shuts everything down in order on ctx
 // cancellation. It returns when the process is fully stopped.
 func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger) error {
+	// Every line of the process goes through the scrubbing handler, from the
+	// first one on: the address parameters are applied below, before anything
+	// listens (FR-022).
+	logger = scrubbedLogger(logger)
 	dbs, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -522,8 +571,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return fmt.Errorf("read the server key: %w", err)
 	}
 	// The address parameters land before any listener opens, so the first
-	// greeting and the first link already name them (045, FR-003). A malformed
-	// one is a warning, never a reason to stay down.
+	// greeting and the first link the page or `noxd link` hands out already
+	// name them (045, FR-003). A malformed one is a warning, never a reason to
+	// stay down.
 	addrWarnings, err := applyAddressParams(ctx, st, cfg, logger)
 	if err != nil {
 		return err
@@ -562,6 +612,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ConnContext:       withChannelPeer,
+		// net/http's own complaints - a handler's panic value above all - go
+		// through the same handler as every other line, scrubbed, instead of
+		// straight to stderr.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
@@ -603,7 +657,11 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			return err
 		}
 		if statusListener != nil {
-			statusServer = &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: pageReadHeaderTimeout}
+			statusServer = &http.Server{
+				Handler:           srv.StatusHandler(),
+				ReadHeaderTimeout: pageReadHeaderTimeout,
+				ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+			}
 		}
 	}
 
@@ -765,14 +823,16 @@ func staleSchemaError(dbPath string) error {
 }
 
 // sayHowToPair tells the operator, when no device can reach this machine, where
-// a link for one is - and never the link itself (046, FR-005).
+// a link for one is - and never the link itself (046, FR-005; 045, FR-022).
 //
 // The log is the one place a pairing link must not go: it is kept, copied,
 // shipped to collectors and read by whoever reads logs, while the link is a way
-// in for ten minutes. The service page and `noxd link` hand it out on this
-// machine instead, and both are named here. Without the page's listener there
-// is no way to get a link at all - neither of them works - and that is said
-// loudly, because a machine with no device and no link cannot be paired.
+// in for ten minutes - from anywhere, since a device can pair through the onion
+// service, whose key the link carries packed. The service page and `noxd link`
+// hand it out on this machine instead, and both are named here. Without the
+// page's listener there is no way to get a link at all - neither of them works
+// - and that is said loudly, because a machine with no device and no link
+// cannot be paired.
 func sayHowToPair(ctx context.Context, st *store.Store, cfg config.Config, logger *slog.Logger) error {
 	counts, err := st.CountEverything(ctx)
 	if err != nil {

@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:nox_tor/channel.dart';
@@ -157,20 +159,54 @@ class ScriptedChannelApi implements NoxChannelApi {
 /// A channel over a real loopback TCP connection to a plain server, so the
 /// HTTP and WebSocket stacks can be run over [NoxChannel] end to end - the
 /// bytes they write reach a real `HttpServer`, and its answers come back.
+///
+/// Its sending side is the module's, as far as a writer can tell: a write is
+/// queued and its size returned, one writer drains the queue into the socket
+/// a chunk at a time - at the pace the server reads, through the kernel's
+/// buffers - and [writable] holds a writer back while more than a window is
+/// queued, releasing it as soon as the queue is back within the window.
 class LoopbackChannel implements NoxChannel {
-  LoopbackChannel._(this._socket) {
+  LoopbackChannel._(this._socket, this._drainBytesPerSecond) {
     _socket.done.then((_) => _end(null), onError: (Object _) => _end(ChannelFailure.network));
   }
 
-  static Future<LoopbackChannel> connect(int port) async => LoopbackChannel._(await Socket.connect(InternetAddress.loopbackIPv4, port));
+  /// [drainBytesPerSecond] paces the writer, as a slow path paces the
+  /// module's: without it, the queue drains as fast as the server reads.
+  static Future<LoopbackChannel> connect(int port, {int? drainBytesPerSecond}) async =>
+      LoopbackChannel._(await Socket.connect(InternetAddress.loopbackIPv4, port), drainBytesPerSecond);
+
+  /// The most one step of the writer takes, as the module's.
+  static const int chunkBytes = 64 * 1024;
 
   final Socket _socket;
+  final int? _drainBytesPerSecond;
   final Completer<ChannelFailure?> _closed = Completer<ChannelFailure?>();
   bool _shut = false;
   int closeCalls = 0;
 
+  final ListQueue<Uint8List> _queue = ListQueue<Uint8List>();
+  int _queued = 0;
+  int _enqueued = 0;
+  int _written = 0;
+  bool _writing = false;
+  Completer<void>? _writable;
+  final List<(int, Completer<void>)> _flushes = <(int, Completer<void>)>[];
+
+  /// The most that was ever queued at once - for tests that check the window
+  /// held.
+  int peakQueued = 0;
+
   void _end(ChannelFailure? failure) {
-    if (!_closed.isCompleted) _closed.complete(failure);
+    if (_closed.isCompleted) return;
+    _closed.complete(failure);
+    final error = StateError('the channel is closed');
+    _writable?.completeError(error);
+    _writable = null;
+    for (final (_, flush) in _flushes) {
+      flush.completeError(error);
+    }
+    _flushes.clear();
+    _queue.clear();
   }
 
   @override
@@ -179,21 +215,77 @@ class LoopbackChannel implements NoxChannel {
   @override
   int write(Uint8List bytes) {
     if (_closed.isCompleted || _shut) throw StateError('the channel is closed');
-    _socket.add(bytes);
-    return 0;
+    if (bytes.isEmpty) return _queued;
+    _queue.add(Uint8List.fromList(bytes));
+    _queued += bytes.length;
+    _enqueued += bytes.length;
+    if (_queued > peakQueued) peakQueued = _queued;
+    unawaited(_drain());
+    return _queued;
+  }
+
+  /// The one writer: a chunk into the socket, then wait for the socket to
+  /// take it - which waits for the server when the kernel's buffers are full.
+  Future<void> _drain() async {
+    if (_writing) return;
+    _writing = true;
+    try {
+      while (_queue.isNotEmpty && !_closed.isCompleted) {
+        final bytes = _queue.removeFirst();
+        for (var at = 0; at < bytes.length && !_closed.isCompleted; at += chunkBytes) {
+          final chunk = Uint8List.sublistView(bytes, at, min(at + chunkBytes, bytes.length));
+          _socket.add(chunk);
+          await _socket.flush();
+          final rate = _drainBytesPerSecond;
+          if (rate != null) await Future<void>.delayed(Duration(microseconds: chunk.length * 1000000 ~/ rate));
+          _queued -= chunk.length;
+          _written += chunk.length;
+          if (_queued <= channelWindowBytes) {
+            final waiting = _writable;
+            _writable = null;
+            waiting?.complete();
+          }
+          _answerFlushes();
+        }
+      }
+    } on Object {
+      // The socket's done reports how the channel ended.
+    } finally {
+      _writing = false;
+    }
+    if (_queue.isEmpty && _shut && !_closed.isCompleted) _socket.close().ignore();
+  }
+
+  void _answerFlushes() {
+    _flushes.removeWhere((entry) {
+      final (at, flush) = entry;
+      if (at > _written) return false;
+      flush.complete();
+      return true;
+    });
   }
 
   @override
-  Future<void> get writable => Future<void>.value();
+  Future<void> get writable {
+    if (_closed.isCompleted) return Future<void>.error(StateError('the channel is closed'));
+    if (_queued <= channelWindowBytes) return Future<void>.value();
+    return (_writable ??= Completer<void>()).future;
+  }
 
   @override
-  Future<void> flush() => _socket.flush();
+  Future<void> flush() {
+    if (_closed.isCompleted) return Future<void>.error(StateError('the channel is closed'));
+    final flush = Completer<void>();
+    _flushes.add((_enqueued, flush));
+    _answerFlushes();
+    return flush.future;
+  }
 
   @override
   void shutdownWrite() {
     if (_shut) return;
     _shut = true;
-    _socket.close().ignore();
+    if (!_writing && _queue.isEmpty) _socket.close().ignore();
   }
 
   @override
@@ -212,9 +304,12 @@ class LoopbackChannel implements NoxChannel {
 /// address. Without a [port], each channel goes to the loopback port its
 /// direct target names - for tests that move between servers by address.
 class LoopbackChannelApi implements NoxChannelApi {
-  LoopbackChannelApi([this.port]);
+  LoopbackChannelApi([this.port, this.drainBytesPerSecond]);
 
   final int? port;
+
+  /// Paces the writer of every channel this opens (see [LoopbackChannel]).
+  final int? drainBytesPerSecond;
   final List<ChannelTarget> targets = <ChannelTarget>[];
   final List<LoopbackChannel> opened = <LoopbackChannel>[];
 
@@ -231,7 +326,7 @@ class LoopbackChannelApi implements NoxChannelApi {
     if (to == null) throw const ChannelOpenException(ChannelFailure.torNotReady);
     final LoopbackChannel channel;
     try {
-      channel = await LoopbackChannel.connect(to);
+      channel = await LoopbackChannel.connect(to, drainBytesPerSecond: drainBytesPerSecond);
     } on SocketException {
       throw const ChannelOpenException(ChannelFailure.network);
     }

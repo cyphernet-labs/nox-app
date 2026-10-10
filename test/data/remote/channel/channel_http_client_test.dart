@@ -127,7 +127,7 @@ void main() {
     channels.unbind();
   });
 
-  test('a new binding drops the pooled clients, the same one keeps them, and unbinding ends every open', () async {
+  test('a new binding drops the pooled clients, the same one keeps them, and after unbinding nothing opens', () async {
     final api = ScriptedChannelApi();
     final channels = ChannelHttpClient(api);
     var discarded = 0;
@@ -143,6 +143,34 @@ void main() {
     channels.unbind();
     expect(channels.boundServerKey, isNull);
     await expectLater(channels.client.getUrl(Uri.parse('https://10.0.0.5:8443/')), throwsA(isA<SocketException>()));
+  });
+
+  test('unbinding ends the opens under way on both clients, and a channel that opens anyway is closed on arrival', () async {
+    // A logout: the person's server is nobody this install may reach now, an
+    // open still running included.
+    final api = ScriptedChannelApi();
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    // Each outcome taken as it comes, so a request failing early is no
+    // unhandled error.
+    final requests = [
+      channels.client.getUrl(Uri.parse('https://10.0.0.5:8443/ws')),
+      channels.transferClient.getUrl(Uri.parse('https://10.0.0.5:8443/files/x')),
+    ].map((request) => request.then<Object?>((_) => null, onError: (Object error) => error)).toList();
+    await Future<void>.delayed(Duration.zero);
+    expect(api.calls, hasLength(2), reason: 'both opens are under way in the module');
+
+    channels.unbind();
+    await Future<void>.delayed(Duration.zero);
+
+    for (final call in api.calls) {
+      expect(call.cancelled, isTrue, reason: 'the cancel reaches every open');
+    }
+    final late = [FakeNoxChannel(), FakeNoxChannel()];
+    for (var i = 0; i < late.length; i++) {
+      api.calls[i].result.complete(late[i]);
+    }
+    expect(await Future.wait(requests), everyElement(isA<SocketException>()));
+    expect([for (final channel in late) channel.closeCalls], [1, 1], reason: 'a channel opened after the cancel is closed on arrival');
   });
 
   test('the log names the path and the outcome - never an onion host or a key', () async {
@@ -186,8 +214,9 @@ void main() {
       channels.unbind();
     });
 
-    test('a body larger than the window is written through addStream and arrives whole', () async {
-      final api = LoopbackChannelApi(server.port);
+    test('a body larger than the window is written through addStream, held to the window, and arrives whole', () async {
+      // Paced, so the queue outgrows the window and the writer is held back.
+      final api = LoopbackChannelApi(server.port, 16 * 1024 * 1024);
       final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
       final dio = Dio()..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => channels.transferClient);
       final size = 3 * channelWindowBytes + 17;
@@ -197,6 +226,9 @@ void main() {
         options: Options(headers: {Headers.contentLengthHeader: size}, responseType: ResponseType.plain),
       );
       expect(response.data, 'PUT /files/token $size');
+      final peak = api.opened.single.peakQueued;
+      expect(peak, greaterThan(channelWindowBytes), reason: 'the queue did outgrow the window');
+      expect(peak, lessThanOrEqualTo(2 * channelWindowBytes), reason: 'by one write at most: the source was paused');
       channels.unbind();
     });
 

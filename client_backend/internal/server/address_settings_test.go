@@ -215,13 +215,13 @@ func startStore(t *testing.T) *store.Store {
 	return st
 }
 
-// start applies the two parameters the way Run does, and returns what it
-// warned about and what it logged.
+// start applies the two parameters the way Run does - its log scrubbed, as
+// Run's is - and returns what it warned about and what it logged.
 func start(t *testing.T, st *store.Store, public, onion string) ([]addressWarning, string) {
 	t.Helper()
 	logs := &syncBuffer{}
 	warnings, err := applyAddressParams(context.Background(), st, config.Config{PublicAddr: public, OnionAddr: onion},
-		slog.New(slog.NewTextHandler(logs, nil)))
+		slog.New(ScrubLogs(slog.NewTextHandler(logs, nil))))
 	if err != nil {
 		t.Fatalf("applyAddressParams: %v", err)
 	}
@@ -318,6 +318,23 @@ func TestAMalformedStartParameterKeepsTheStoredAddressAndWarnsEveryStart(t *test
 	}
 }
 
+// A public address is named when it is refused - it is not a secret, and the
+// operator needs to see what they wrote - unless it is an onion name pasted
+// into the wrong parameter, which the log masks like any other.
+func TestARefusedPublicParameterIsNamedButAnOnionNameInItIsNot(t *testing.T) {
+	st := startStore(t)
+	if _, logs := start(t, st, "nox.example.org", ""); !strings.Contains(logs, "nox.example.org") {
+		t.Fatalf("the refused public address is not named:\n%s", logs)
+	}
+	_, logs := start(t, st, testOnionAddr+":443", "")
+	if !strings.Contains(logs, "-public-addr") || !strings.Contains(logs, "[onion]") {
+		t.Fatalf("the refusal is not logged with the name masked:\n%s", logs)
+	}
+	if strings.Contains(logs, strings.TrimSuffix(testOnionAddr, ".onion")) {
+		t.Fatalf("the onion address reached the log:\n%s", logs)
+	}
+}
+
 // A hand edit can leave a value no road in would have written. Startup says
 // so once, without the value.
 func TestAStoredAddressFromAHandEditIsReportedWithoutItsValue(t *testing.T) {
@@ -333,31 +350,6 @@ func TestAStoredAddressFromAHandEditIsReportedWithoutItsValue(t *testing.T) {
 	}
 	if strings.Contains(logs, string(name)) {
 		t.Fatalf("the stored value reached the log:\n%s", logs)
-	}
-}
-
-// The mask catches an onion address in any spelling a library might quote it
-// in, and leaves everything else alone.
-func TestMaskOnionHidesOnionAddressesOnly(t *testing.T) {
-	name := strings.TrimSuffix(testOnionAddr, ".onion")
-	for _, in := range []string{
-		`request Origin "evil.example" is not authorized for Host "` + testOnionAddr + `:443"`,
-		"host " + strings.ToUpper(testOnionAddr) + " refused",
-		"bare " + name + " name",
-	} {
-		got := maskOnion(in)
-		if strings.Contains(strings.ToLower(got), name) || !strings.Contains(got, "[onion]") {
-			t.Errorf("maskOnion(%q) = %q", in, got)
-		}
-	}
-	for _, in := range []string{
-		`request Origin "evil.example" is not authorized for Host "192.168.1.20:8443"`,
-		"websocket: protocol violation",
-		base64.StdEncoding.EncodeToString(make([]byte, 16)),
-	} {
-		if got := maskOnion(in); got != in {
-			t.Errorf("maskOnion(%q) = %q, want it unchanged", in, got)
-		}
 	}
 }
 

@@ -24,8 +24,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The library's message can quote Host, and a connection through the
 		// onion service carries the onion name there (FR-022). Nothing tells
-		// such a connection apart any more, so every one is masked.
-		s.logger.Warn("websocket accept failed", "err", maskOnion(err.Error()))
+		// such a connection apart any more; the log's handler masks the name
+		// in every line (logscrub.go).
+		s.logger.Warn("websocket accept failed", "err", err)
 		return
 	}
 	// Track the hijacked connection so shutdown can wait for it (invariant 9).

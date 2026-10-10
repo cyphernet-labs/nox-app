@@ -23,6 +23,9 @@ class DirectProbeResult {
 abstract class DirectProber {
   /// Tries [candidates] in order of preference and returns the first where the
   /// server proves [serverKey] to a device proving the key of [deviceSeed].
+  ///
+  /// Both are copied before this returns: the caller's arrays stay the
+  /// caller's, and it may wipe them while the round is still running.
   Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed});
 }
 

@@ -1096,6 +1096,14 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 
 > Референс десктопной раскладки (rail, ширины, слоты) — `docs/design/system/nox-desktop-screens/`. Брейкпоинт `Constants.railBreakpoint = 840` задан в `lib/general/constants.dart` (см. `06-theming.md`).
 
+### 6.6 Связь: экран подключения, раздел «Связь» и причина на плашке (фаза 045)
+
+Три поверхности, через которые человек видит и правит путь до сервера; сам путь — [14-networking-and-auth.md](14-networking-and-auth.md) §6.
+
+- **Экран подключения** — `ConnectPage` (`lib/presentation/pages/connect_page/`, маршрут `/onboarding/connect`) с `ConnectBloc`: одно Freezed-состояние значения с `copyWith` (форма §6.1, не trio) — поля, их ошибки формата, `useTor`, статус `ConnectStatus {idle, connecting, linkExpired, linkRejected, failed}` и причина `problem`. Формат проверяет `AddressFormat` (`lib/general/connection/address_format.dart`), и только изменённое: значение, равное значению из ссылки, годно как есть. Экран входа 2.1 (`LoginBloc`) ссылку только читает: отказ разбора (`errorFormat`, `errorNewerVersion`) говорит сам, а читаемую ссылку — вставленную, отсканированную на 2.2 или прочитанную с картинки — отправляет сюда (`navConnect`). `Connect` зовёт `AuthRepository.signIn(identifier:, connection: ConnectionSettings)`, дальше app-state-спина (§6.2) уводит на 2.3 или 4.1. Пока идёт попытка, блок слушает `ConnectionStatusService` и показывает найденную причину сразу, а системный back закрыт `PopScope`. Раскладка — `AppOnboardingScaffoldWidget` с `leading` (стрелка назад на узкой ширине).
+- **Раздел «Связь»** — `ConnectionPage` (`/settings/connection`, `AppDetailScaffoldWidget`) поверх `ConnectionBody`; на широкой ширине то же тело заполняет detail-панель настроек (`_Section.connection` в `settings_root_page.dart`) — раскол Body/Page, как у остальных листьев настроек. Блок `ConnectionSettingsBloc` принадлежит телу: `Save` и `Use Tor` идут через `sequential()` (обе записи — чтение-изменение-запись одной записи, и обе перезапускают канал), подписки — на `ServerAddressesRepository.watch()` (новые адреса сервера ложатся в поля, которые человек не правит) и на `ConnectionStatusService` (строка над полями, пока связи нет); любое применённое изменение — `SessionPhaseService.reconnect()`. Поля обоих экранов — один виджет `AppConnectionFieldsWidget`.
+- **Причина на плашке.** Состояния 5.1, 5.2 и 5.4 несут `problem` рядом с `isOffline` / `isServerMismatch`; `AppNoticeStripWidget` говорит текст причины, когда он известен, иначе `noConnection`, а при `isServerMismatch` — текст `otherServer`. Текст причины берётся только из `ConnectionProblemText.text(l10n)` (`lib/presentation/helpers/connection_problem_text.dart`): одна причина не должна звучать на разных экранах по-разному. Для голденов у каждого из трёх экранов есть отладочный сценарий `turnOnTor`.
+
 ---
 
 ## 7. Общие виджеты `App*Widget` (stateless)

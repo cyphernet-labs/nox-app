@@ -41,12 +41,13 @@ const usage = `usage: smoke <machine link>
        smoke -check <host:port> <server key, base64>
 
 Give it a machine link: the one on the service page of a running noxd, or the
-one "noxd link" prints. It works on a fresh server - the first device creates
-the person - and on one that has a person already, whom the first device then
-joins. The link's direct addresses are tried in its order - the public one
-first, when it has one - and the run goes on with the first that proves the
-key; an onion address in the link is reported and not tried, because this
-program has no Tor.
+one "noxd link" prints (the server's log says where the page is, never what a
+link is). It works on a fresh server - the first device creates the person -
+and on one that has a person already, whom the first device then joins. The
+link's direct addresses are tried in its order - the public one first, when it
+has one - and the run goes on with the first that proves the key; an onion
+address in the link is reported and not tried, because this program has no
+Tor.
 
 With -check it only opens the channel - TLS and the channel check, with a
 throwaway device key - and says whether the machine at that address is the one

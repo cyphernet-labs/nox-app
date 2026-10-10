@@ -744,9 +744,8 @@ void main() {
     });
 
     test('a pairing never completes over connections whose server key was refused (SC-003)', () async {
-      // Every machine dialled proves another key. The connection holds what it
-      // is given until the channel is verified, and a refused one never is -
-      // see socket_channel_factory_test for the hold itself.
+      // Every machine dialled proves another key: there is no connection for
+      // the pairing to complete on.
       factory.refuseEvery = ChannelFailure.wrongServer;
       await client.start(
         targets: ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws')]),
@@ -756,9 +755,6 @@ void main() {
       final stranger = factory.latest;
       stranger.refuseServerKey();
       await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
-      for (final socket in factory.created) {
-        expect(socket.commandNamed('pair'), isNull, reason: 'every connection dialled refused the key');
-      }
     }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('a stop while the path is being chosen dials nothing afterwards', () async {
