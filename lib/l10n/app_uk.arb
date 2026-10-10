@@ -209,5 +209,6 @@
   "connectUseTor": "Використовувати Tor",
   "connectUseTorCaption": "NOX використовує Tor, лише коли не може зв'язатися з сервером напряму.",
   "connectAction": "Під'єднатися",
-  "connectInvalidServerAddress": "Це неправильна адреса сервера."
+  "connectInvalidServerAddress": "Це неправильна адреса сервера.",
+  "settingsConnectionTitle": "Зв'язок"
 }

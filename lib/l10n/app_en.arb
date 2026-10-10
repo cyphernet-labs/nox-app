@@ -373,5 +373,9 @@
   "connectInvalidServerAddress": "This isn't a valid server address.",
   "@connectInvalidServerAddress": {
     "description": "Field error when the server address is not host:port (phase 045)."
+  },
+  "settingsConnectionTitle": "Connection",
+  "@settingsConnectionTitle": {
+    "description": "Settings section (7.1 row, menu item and title) with the server address, the onion address and Use Tor (phase 045)."
   }
 }

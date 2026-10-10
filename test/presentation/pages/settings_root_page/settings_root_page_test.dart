@@ -7,6 +7,8 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
+import 'package:nox_app/presentation/pages/connection_page/connection_body.dart';
+import 'package:nox_app/presentation/pages/connection_page/connection_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
@@ -47,6 +49,13 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, underTest(), settle: settle);
+    }
+
+    /// Log out is the last row, below the fold of a phone since the list
+    /// grew a Connection row (phase 045).
+    Future<void> scrollToLogout(WidgetTester tester) async {
+      await tester.scrollUntilVisible(find.widgetWithText(ListTile, l10nEn.logoutRow), 200, scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
     }
 
     testWidgets('shows the identity card, the settings rows and Log out', (tester) async {
@@ -115,6 +124,20 @@ void main() {
       expect(find.text(l10nEn.settingsDevicesTitle), findsWidgets);
     });
 
+    testWidgets('the Connection row, right under Devices, opens Connection (phase 045)', (tester) async {
+      await pumpMobile(tester);
+
+      final devices = tester.getTopLeft(find.widgetWithText(ListTile, l10nEn.settingsDevicesTitle));
+      final connection = tester.getTopLeft(find.widgetWithText(ListTile, l10nEn.settingsConnectionTitle));
+      expect(connection.dy, greaterThan(devices.dy));
+
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.settingsConnectionTitle));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectionPage), findsOneWidget);
+      expect(find.text(l10nEn.connectUseTor), findsOneWidget);
+    });
+
     testWidgets('the id is shown whole - there is nothing left to reveal', (tester) async {
       // The reveal existed because the string was a secret. A person is
       // recognised by a paired key now, so masking it would only pretend.
@@ -127,6 +150,7 @@ void main() {
     testWidgets('Log out opens a confirm dialog that Cancel dismisses', (tester) async {
       await pumpMobile(tester);
 
+      await scrollToLogout(tester);
       await tester.tap(find.widgetWithText(ListTile, l10nEn.logoutRow));
       await tester.pumpAndSettle();
       expect(find.text(l10nEn.logoutDialogTitle), findsOneWidget);
@@ -139,6 +163,7 @@ void main() {
     testWidgets('confirming Log out navigates to Splash (1.1)', (tester) async {
       await pumpMobile(tester);
 
+      await scrollToLogout(tester);
       await tester.tap(find.widgetWithText(ListTile, l10nEn.logoutRow));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(TextButton, l10nEn.logoutRow));
@@ -204,6 +229,18 @@ void main() {
       // No navigation push happened — still the same settings page.
       expect(find.byType(SettingsRootPage), findsOneWidget);
       expect(find.byType(NotificationsPage), findsNothing);
+    });
+
+    testWidgets('Connection fills the detail pane, titled, without a push (phase 045)', (tester) async {
+      await pumpDesktop(tester);
+
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.settingsConnectionTitle));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectionBody), findsOneWidget);
+      expect(find.byType(ConnectionPage), findsNothing);
+      expect(find.text(l10nEn.settingsConnectionTitle), findsNWidgets(2), reason: 'the menu item and the pane header');
+      expect(find.text('127.0.0.1:8080'), findsOneWidget, reason: 'the paired address stands in the field');
     });
 
     testWidgets('there is no reveal and no account QR - the id is public, and it is not an invite', (tester) async {
