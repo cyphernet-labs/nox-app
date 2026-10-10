@@ -398,6 +398,34 @@ void main() {
       verify(appState.fetchAppState(sessionExpired: false)).called(1);
     });
 
+    test('the local data and its key go last, after the revoke and the stores (phase 048)', () async {
+      final vault = _ScriptedVault(<LocalDataOpening>[], order: order);
+      getIt.registerSingleton<DeviceVault>(vault);
+
+      await repository.logout();
+
+      expect(order, ['revoke', 'clear', 'chats', 'forget']);
+    });
+
+    test('the joined echo wipes the local data once: one key forgotten (phase 048)', () async {
+      // Run apart, the echo's wipe would close and delete the database under
+      // the voluntary one's feet, and forget a key that one was still using.
+      final vault = _ScriptedVault(<LocalDataOpening>[]);
+      getIt.registerSingleton<DeviceVault>(vault);
+      final answer = Completer<void>();
+      devices.hold = answer.future;
+
+      final voluntary = repository.logout();
+      await pumpEventQueue();
+      final echo = repository.logout(forced: true);
+      answer.complete();
+      await voluntary;
+      await echo;
+
+      expect(vault.forgets, 1);
+      verify(session.clear()).called(1);
+    });
+
     test('once a logout is over, the next one is its own', () async {
       await repository.logout();
       await repository.logout(forced: true);
@@ -956,11 +984,14 @@ class _RecordingPrefetch implements AttachmentPrefetchService {
 /// A vault that answers what a test says, in order, and counts what it was
 /// asked.
 class _ScriptedVault extends DeviceVault {
-  _ScriptedVault(this.answers) : super(FakeSessionRepository());
+  _ScriptedVault(this.answers, {this.order}) : super(FakeSessionRepository());
 
   final List<LocalDataOpening> answers;
   int asked = 0;
   int forgets = 0;
+
+  /// Where a forget is recorded among the other steps of a logout, if given.
+  final List<String>? order;
 
   @override
   Future<LocalDataOpening> open() async {
@@ -969,7 +1000,10 @@ class _ScriptedVault extends DeviceVault {
   }
 
   @override
-  Future<void> forget() async => forgets++;
+  Future<void> forget() async {
+    forgets++;
+    order?.add('forget');
+  }
 }
 
 /// Records each revoke - the key, and when, among the other steps of a

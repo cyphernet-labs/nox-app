@@ -15,6 +15,7 @@ import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -161,6 +162,46 @@ void main() {
     expect(flaky.keyReads, 3, reason: 'two that failed, one that answered');
     expect(await chatNames(), contains('Trip to the sea'));
     expect((await sessionRepository.readSession()).data?.identifier, 'token');
+  });
+
+  group('a pairing that waited for approval when the app closed (phase 046)', () {
+    const pendingKey = 'session.pending_pairing';
+
+    /// A device that waits: no session yet, the server the link named, the
+    /// device key the request was opened with, and the wait itself - beside a
+    /// database sealed on the disk. The device key it waited with is returned.
+    Future<String> waitingForApproval() async {
+      expect((await authRepository.openLocalData()).data, isFalse);
+      await StoreRef<String, String>.main().record('opened').put(await getIt<AppDatabase>().db, 'before the pairing');
+      await getIt<AppDatabase>().close();
+      await sessionRepository.saveServer(address: '192.168.1.20:8443', serverKey: 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=');
+      final deviceKey = (await sessionRepository.deviceSecret()).data!;
+      await sessionRepository.savePendingPairing(PendingPairing(link: link, waitUntil: DateTime.now().add(const Duration(minutes: 5))));
+      return deviceKey;
+    }
+
+    test('goes with the data whose key is lost: the session goes whole, and 2.1 has nothing to resume (FR-011)', () async {
+      final deviceKey = await waitingForApproval();
+      await const FlutterSecureStorage().delete(key: storageKey);
+
+      await launch();
+      expect((await authRepository.openLocalData()).data, isTrue, reason: 'the data went');
+
+      expect(await const FlutterSecureStorage().read(key: pendingKey), isNull, reason: 'a link left in the store is a credential');
+      expect((await authRepository.pendingPairing()).data, isNull, reason: 'the login screen offers no wait to go back to');
+      expect((await sessionRepository.deviceSecret()).data, isNot(deviceKey), reason: 'the key the wait went on with is gone with it');
+    });
+
+    test('survives a store that does not answer: nothing is wiped, and the wait is there to resume', () async {
+      final deviceKey = await waitingForApproval();
+      final flaky = _FlakyStore(failures: 2);
+
+      await launch(store: flaky);
+      expect((await authRepository.openLocalData()).data, isFalse, reason: 'nothing went');
+
+      expect((await authRepository.pendingPairing()).data?.link, link);
+      expect((await sessionRepository.deviceSecret()).data, deviceKey, reason: 'the same key, so the same request');
+    });
   });
 
   test('a logout leaves nothing of NOX in the data folder or in the secure store (SC-005)', () async {

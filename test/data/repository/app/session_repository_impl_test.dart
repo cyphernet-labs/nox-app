@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/secure/secure_store_options.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
@@ -312,6 +313,25 @@ void main() {
       await repository.clear();
       expect((await repository.readPendingPairing()).data, isNull);
     });
+
+    test('is kept for this device only, like every record of the store (phase 048)', () async {
+      // The write names no options of its own, so the store's apply - and the
+      // store the app is built with keeps every record for this device only:
+      // out of every backup, on no other device. The link is a credential.
+      final storage = _RecordingWrites();
+      final prefs = await SharedPreferences.getInstance();
+
+      await SessionRepositoryImpl(storage, prefs).savePendingPairing(pending);
+
+      final write = storage.writes.singleWhere((w) => w.key == 'session.pending_pairing');
+      expect(write.ios, isNull);
+      expect(write.macOs, isNull);
+      addTearDown(getIt.reset);
+      await configureDependencies(Environment.test);
+      final store = getIt<FlutterSecureStorage>();
+      expect(store.iOptions, SecureStoreOptions.ios);
+      expect(store.mOptions, SecureStoreOptions.macOs);
+    });
   });
 
   group('updateLabel (feature 015)', () {
@@ -604,7 +624,6 @@ class _NoSweepStorage extends FlutterSecureStorage {
   }) async {}
 }
 
-/// A keychain that is still locked after a reboot: every read throws.
 /// Records every `deleteAll` and deletes nothing.
 class _RecordingStorage extends FlutterSecureStorage {
   _RecordingStorage();
@@ -622,6 +641,7 @@ class _RecordingStorage extends FlutterSecureStorage {
   }) async => deletedAll.add((ios: iOptions, macOs: mOptions));
 }
 
+/// A keychain that is still locked after a reboot: every read throws.
 class _LockedStorage extends FlutterSecureStorage {
   const _LockedStorage();
 
@@ -654,5 +674,27 @@ class _UndeletableIdentityStorage extends _NoSweepStorage {
   }) async {
     if (key == 'session.identifier') return;
     await super.delete(key: key);
+  }
+}
+
+/// Records the options each write names of its own, and writes to the mock.
+class _RecordingWrites extends FlutterSecureStorage {
+  _RecordingWrites();
+
+  final List<({String key, AppleOptions? ios, AppleOptions? macOs})> writes = <({String key, AppleOptions? ios, AppleOptions? macOs})>[];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    writes.add((key: key, ios: iOptions, macOs: mOptions));
+    return super.write(key: key, value: value);
   }
 }
