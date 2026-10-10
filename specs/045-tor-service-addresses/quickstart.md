@@ -17,12 +17,16 @@ tor — сборка Tor Project (`tor` 0.4.9+), отдельно от серв�
 cd client_backend && go build -o "$STAND/noxd" . && \
   "$STAND/noxd" -db "$STAND/nox.db" -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081
 
-# tor со своим onion-сервисом на порт сервера (torrc):
+# tor со своим onion-сервисом на порт сервера на loopback (torrc):
 #   SocksPort 0
 #   DataDirectory $STAND/tor-data
 #   HiddenServiceDir $STAND/hs
 #   HiddenServicePort 443 127.0.0.1:8443
 #   HiddenServicePoWDefensesEnabled 1
+#   HiddenServiceMaxStreams 16
+#   HiddenServiceMaxStreamsCloseCircuit 1
+# PoW удорожает только новые цепочки, а не потоки на построенной:
+# не больше 16 потоков на цепочку, и цепочка, попросившая больше, закрывается.
 tor -f "$STAND/torrc"
 # onion-адрес — в $STAND/hs/hostname
 ```

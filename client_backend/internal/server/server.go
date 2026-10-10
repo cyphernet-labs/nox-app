@@ -4,6 +4,7 @@
 package server
 
 import (
+	"container/list"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -48,6 +49,18 @@ const (
 	// readHeaderTimeout bounds the request headers that follow the channel
 	// check on the main port.
 	readHeaderTimeout = slowPathTimeout
+	// defaultIdleTimeout bounds how long a connection kept for its next HTTP
+	// request may wait for it. Only a paired device's connection is kept - a
+	// stranger's ends with its answer (limitStrangers) - but a device can be
+	// revoked while its connection sits idle, and without a limit that
+	// connection would stay for as long as its holder liked. Well above the
+	// 15 s after which dart:io's client lets an idle connection go by default,
+	// so the server never closes one the app still means to use.
+	defaultIdleTimeout = 2 * time.Minute
+	// defaultBodyTimeout bounds a request's body where nothing of ours reads
+	// it (boundRequestBody): the slow path's budget, like the headers before
+	// it.
+	defaultBodyTimeout = slowPathTimeout
 	// pageReadHeaderTimeout is the service page's: a browser on this same
 	// machine, never a path through Tor.
 	pageReadHeaderTimeout = 5 * time.Second
@@ -90,6 +103,16 @@ type Server struct {
 	// channelTimeout is the budget for TLS and the channel check together
 	// (044). A field so tests can scale it.
 	channelTimeout time.Duration
+	// idleTimeout is the main port's http.Server.IdleTimeout. A field so tests
+	// can scale it.
+	idleTimeout time.Duration
+	// bodyTimeout bounds a request's body where nothing of ours reads it
+	// (boundRequestBody). A field so tests can scale it.
+	bodyTimeout time.Duration
+	// maxUnpaired and unpairedTimeout bound the /ws connections of keys
+	// nobody paired (unpaired.go). Fields so tests can scale them.
+	maxUnpaired     int
+	unpairedTimeout time.Duration
 
 	// addrs is the current address snapshot. After startup only the watcher
 	// writes it; greetings read it.
@@ -136,8 +159,8 @@ type Server struct {
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns and transfers; wg tracks connection handlers so
-	// shutdown can wait for hijacked connections. Infrastructure-only
+	// mu guards conns, transfers and unpaired; wg tracks connection handlers
+	// so shutdown can wait for hijacked connections. Infrastructure-only
 	// synchronization (ws-rest-patterns §5); business state stays
 	// goroutine-owned.
 	mu    sync.Mutex
@@ -146,7 +169,16 @@ type Server struct {
 	// of its own since 044, which closing a device's socket does not touch, so
 	// a revocation walks this set beside conns (dropDevice).
 	transfers map[*transfer]struct{}
-	wg        sync.WaitGroup
+	// unpaired holds the connections in conns whose key no device row named
+	// when they connected - strangers, who may only pair - oldest first
+	// (unpaired.go). Under mu with conns: a newcomer's handler takes the
+	// oldest out to make room, and each one's deadline, on a timer's
+	// goroutine, takes it out if it is still there. unpairedCut and
+	// unpairedWarned space the warning about the ones taken out to make room.
+	unpaired       *list.List
+	unpairedCut    int
+	unpairedWarned time.Time
+	wg             sync.WaitGroup
 }
 
 // transfer is one /files request under way: the device key its connection
@@ -175,6 +207,10 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		pingInterval:     defaultPingInterval,
 		writeTimeout:     defaultWriteTimeout,
 		channelTimeout:   defaultChannelTimeout,
+		idleTimeout:      defaultIdleTimeout,
+		bodyTimeout:      defaultBodyTimeout,
+		maxUnpaired:      defaultMaxUnpaired,
+		unpairedTimeout:  defaultUnpairedTimeout,
 		addrKick:         make(chan struct{}, 1),
 		addressPoll:      defaultAddressPoll,
 		listIPs:          usableIPs,
@@ -185,6 +221,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
 		transfers:        make(map[*transfer]struct{}),
+		unpaired:         list.New(),
 	}
 }
 
@@ -258,12 +295,35 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 // the WebSocket and the file bytes, and nothing else. /health lives on the
 // service page's loopback listener (044): the main port answers nobody who has
 // not proved a key, and a probe that has not cannot ask it anything.
+//
+// Every request passes the door first (limitStrangers), unmatched ones
+// included: the 404 and 405 the mux writes end a stranger's connection like
+// any other answer.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
-	return s.logRequests(mux)
+	return s.logRequests(s.limitStrangers(mux))
+}
+
+// configureMain sets what the main port's http.Server holds a connection to
+// once it passed the channel: the connection - and the key it proved - in
+// every request's context; the slow path's 30 s for a request's headers, since
+// a connection from tor looks like any other (045), and bodyTimeout - the same
+// 30 s - for a body nothing of ours reads (boundRequestBody); and idleTimeout
+// between two requests. One place, so the test stack serves exactly what Run
+// serves.
+//
+// "OPTIONS *" goes to the handler like any other request. Answered by net/http
+// itself it would never reach the door, and a stranger could keep its
+// connection by asking it again within each idle timeout.
+func (s *Server) configureMain(hs *http.Server) {
+	hs.ConnContext = withChannelPeer
+	hs.ConnState = s.boundRequestBody
+	hs.ReadHeaderTimeout = readHeaderTimeout
+	hs.IdleTimeout = s.idleTimeout
+	hs.DisableGeneralOptionsHandler = true
 }
 
 // CloseConnections force-closes every live WebSocket with the going-away
@@ -472,9 +532,12 @@ func (s *Server) track(c *client) {
 	s.mu.Unlock()
 }
 
+// untrack takes c out of the registry, and out of the unpaired connections if
+// it was still one: a connection that is gone holds no place.
 func (s *Server) untrack(c *client) {
 	s.mu.Lock()
 	delete(s.conns, c)
+	s.forgetUnpairedLocked(c)
 	s.mu.Unlock()
 }
 
@@ -609,14 +672,13 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// like one from the next room and is held to the same rules - and to the
 	// same slow-path timeouts.
 	httpServer := &http.Server{
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: readHeaderTimeout,
-		ConnContext:       withChannelPeer,
+		Handler: srv.Handler(),
 		// net/http's own complaints - a handler's panic value above all - go
 		// through the same handler as every other line, scrubbed, instead of
 		// straight to stderr.
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+	srv.configureMain(httpServer)
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
 	// The first address snapshot is taken before any listener opens, so the

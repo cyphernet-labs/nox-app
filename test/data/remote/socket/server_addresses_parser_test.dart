@@ -59,4 +59,36 @@ void main() {
     }
     expect(ServerAddressesParser.parse({'direct': <String>[]})!.public, isNull, reason: 'absent when the server has none');
   });
+
+  test('an address on port 443 is kept - the default a Uri drops is still the port the server named', () {
+    final parsed = ServerAddressesParser.parse({
+      'direct': ['203.0.113.7:443', '[2001:db8::7]:443', 'nox.example.org:443'],
+      'public': 'nox.example.org:443',
+    })!;
+
+    expect(parsed.direct, ['203.0.113.7:443', '[2001:db8::7]:443', 'nox.example.org:443']);
+    expect(parsed.public, 'nox.example.org:443');
+    for (final public in ['203.0.113.7:443', '[2001:db8::7]:443']) {
+      expect(ServerAddressesParser.parse({'public': public})!.public, public);
+    }
+  });
+
+  test('a port is ASCII digits and nothing else', () {
+    final parsed = ServerAddressesParser.parse({
+      'direct': ['10.0.0.1:0x1bb', '10.0.0.2:+443', '10.0.0.3: 443', '10.0.0.4:000443', '10.0.0.5:-443', '10.0.0.6:443'],
+      'public': 'nox.example.org:0x1bb',
+    })!;
+
+    expect(parsed.direct, ['10.0.0.6:443']);
+    expect(parsed.public, isNull);
+  });
+
+  test('an onion name is never a direct address - it goes through Tor or nowhere', () {
+    expect(
+      ServerAddressesParser.parse({
+        'direct': [onion, '10.0.0.1:443'],
+      })!.direct,
+      ['10.0.0.1:443'],
+    );
+  });
 }

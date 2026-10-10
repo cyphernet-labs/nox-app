@@ -47,8 +47,9 @@ class FakeNetwork implements NetworkChangeService {
 /// A tor of the probe's own, run as the separate service the server expects
 /// since phase 045 - set up the way the install script sets it up: an onion
 /// service on port 443 pointed at the server's port, proof-of-work defences
-/// on, no SOCKS port. The server never starts it, never sees its keys, and
-/// learns its address only through `-onion-addr`.
+/// on, at most 16 streams at once on a circuit, no SOCKS port. The server
+/// never starts it, never sees its keys, and learns its address only through
+/// `-onion-addr`.
 ///
 /// Its directories live under `<work>`: the service's keys in `<work>/hs`, so
 /// a tor started again over the same work directory keeps the same onion
@@ -63,7 +64,9 @@ class LiveTor {
 
   /// Starts tor with an onion service that forwards to [target], the address
   /// `noxd` listens on - `127.0.0.1:<port>` for a server listening on all
-  /// interfaces, its LAN address for one bound to it, as the probes' are.
+  /// interfaces, its LAN address for one bound to it, as the probes' are. tor
+  /// then connects from that same address, and the server counts it as this
+  /// machine's, the way it counts loopback.
   static Future<LiveTor> start({required String tor, required String work, required String target, String log = 'tor.log'}) async {
     final torrc = File('$work/torrc')
       ..writeAsStringSync(
@@ -73,6 +76,11 @@ class LiveTor {
           'HiddenServiceDir $work/hs',
           'HiddenServicePort 443 $target',
           'HiddenServicePoWDefensesEnabled 1',
+          // Proof of work prices new circuits, not the streams on one already
+          // built: at most 16 at once on a circuit, and one that asks for more
+          // is closed whole.
+          'HiddenServiceMaxStreams 16',
+          'HiddenServiceMaxStreamsCloseCircuit 1',
           'Log notice file $work/$log',
         ].join('\n'),
       );

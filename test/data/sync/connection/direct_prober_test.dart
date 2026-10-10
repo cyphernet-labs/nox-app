@@ -126,4 +126,30 @@ void main() {
     expect((await probe(network, ['${'a' * 56}.onion:443'])).address, isNull);
     expect(network.opened, isEmpty);
   });
+
+  test('an address on port 443 is dialled on 443 - an IPv4 one, an IPv6 one and a name alike', () async {
+    // Keyed the way the channel sees its target: the host without brackets.
+    final network = _Network({'203.0.113.7:443': _Answer.home, '2001:db8::7:443': _Answer.home, 'nox.example.org:443': _Answer.home});
+
+    for (final (candidate, target) in [
+      ('203.0.113.7:443', const DirectTarget('203.0.113.7', 443)),
+      ('[2001:db8::7]:443', const DirectTarget('2001:db8::7', 443)),
+      ('nox.example.org:443', const DirectTarget('nox.example.org', 443)),
+    ]) {
+      final result = await probe(network, [candidate]);
+
+      expect(result.address, candidate);
+      expect(network.opened.last, target);
+    }
+    expect(network.opened, hasLength(3));
+  });
+
+  test('a candidate that is not host:port is never dialled', () async {
+    final network = _Network(const {});
+
+    for (final candidate in ['nox.example.org', '203.0.113.7:0x1bb', 'https://203.0.113.7:443', ' 203.0.113.7:443']) {
+      expect((await probe(network, [candidate])).address, isNull, reason: candidate);
+    }
+    expect(network.opened, isEmpty);
+  });
 }

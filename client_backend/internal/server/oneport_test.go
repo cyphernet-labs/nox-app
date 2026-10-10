@@ -51,19 +51,58 @@ func dialThroughOnion(t *testing.T, ts *httptest.Server, srv *Server, d *device,
 // times over.
 func TestEveryConnectionGetsTheSlowPathTimeouts(t *testing.T) {
 	srv := New(config.Config{}, nil, nil, nil, slog.New(slog.DiscardHandler))
+	// The main port's http.Server the way Run builds it.
+	main := &http.Server{}
+	srv.configureMain(main)
 	for name, got := range map[string]time.Duration{
 		"the frame write and pong wait":   srv.writeTimeout,
 		"TLS and the channel check":       srv.channelTimeout,
-		"the request headers on the port": readHeaderTimeout,
+		"the request headers on the port": main.ReadHeaderTimeout,
+		// Where nothing of ours reads it (boundRequestBody).
+		"a request body": srv.bodyTimeout,
 	} {
 		if got != 30*time.Second {
 			t.Errorf("%s: %v, want 30s", name, got)
 		}
 	}
+	if main.ConnState == nil {
+		t.Error("nothing bounds a body nothing of ours reads")
+	}
+	// Answered by net/http itself, "OPTIONS *" would never reach the door.
+	if !main.DisableGeneralOptionsHandler {
+		t.Error(`net/http answers "OPTIONS *" itself, past the door`)
+	}
 	// A ping goes out before its predecessor's budget runs out, or a quiet
 	// connection would be cut by its own keepalive.
 	if srv.pingInterval >= srv.writeTimeout {
 		t.Errorf("ping every %v with a %v wait for the pong", srv.pingInterval, srv.writeTimeout)
+	}
+	// Between two requests a connection waits two minutes at most - and no
+	// less, or the server would close connections the app still means to
+	// use (dart:io lets an idle one go after 15 s).
+	if main.IdleTimeout != 2*time.Minute {
+		t.Errorf("a connection between two requests: %v, want 2m", main.IdleTimeout)
+	}
+}
+
+// A connection kept for the next request waits for it for the idle timeout
+// and no longer. Only a paired device's connection is kept at all - a
+// stranger's ends with its answer (unpaired_test.go) - and without the timeout
+// one would stay for as long as its peer liked, a revoked device's among them.
+func TestAnIdleConnectionIsClosedAfterItsIdleTimeout(t *testing.T) {
+	const idle = 300 * time.Millisecond
+	ts, srv := newTestServerWith(t, func(s *Server) { s.idleTimeout = idle })
+	c := openRawChannel(t, ts, pairedDevice(t, ts, srv))
+
+	// One request - a paired device's with a token that is no token - and
+	// then nothing at all.
+	resp := c.ask("GET /files/not-a-token HTTP/1.1\r\nHost: nox\r\n\r\n")
+	if resp.StatusCode != http.StatusNotFound || resp.Close {
+		t.Fatalf("answer %d (close=%v), want a 404 that keeps the connection: anything else proves nothing here",
+			resp.StatusCode, resp.Close)
+	}
+	if took := c.closedWithin(5 * time.Second); took < idle/2 {
+		t.Fatalf("closed %v after the answer, well inside its idle timeout of %v", took, idle)
 	}
 }
 

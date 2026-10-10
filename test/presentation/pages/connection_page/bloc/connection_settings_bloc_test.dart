@@ -16,6 +16,7 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/pages/connection_page/bloc/connection_settings_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../utils/fake_session_repository.dart';
 import '../../../../utils/fixed_connection_status.dart';
 import '../../../../utils/fixed_session_phase.dart';
 
@@ -247,6 +248,104 @@ void main() {
       expect(bloc.state.problem, ConnectionProblem.otherServer);
     });
   });
+
+  group('leaving the section', () {
+    test('while the link\'s address is still being read subscribes to nothing afterwards', () async {
+      final read = Completer<void>();
+      getIt.registerSingleton<SessionRepository>(_HeldAddressRead(read.future));
+      final watched = _Watched(addresses);
+      getIt.registerSingleton<ServerAddressesRepository>(watched);
+      final counting = _CountingStatus();
+      getIt.registerSingleton<ConnectionStatusService>(counting);
+
+      final bloc = ConnectionSettingsBloc()..add(const ConnectionSettingsEvent.initialize());
+      await settle();
+      await bloc.close();
+      read.complete();
+      await settle();
+      // Both sources move on after the section is gone: a subscription made
+      // after close() would add() to the closed bloc and throw here.
+      counting.emit(FixedConnectionStatusService.tor);
+      await addresses.setUseTor(true);
+      await settle();
+
+      expect(watched.listens, 0);
+      expect(counting.listens, 0);
+    });
+  });
+}
+
+/// The secure-storage read of the link's address, held until [_released] -
+/// how a test leaves the section while it is still under way.
+class _HeldAddressRead extends FakeSessionRepository {
+  _HeldAddressRead(this._released);
+
+  final Future<void> _released;
+
+  @override
+  Future<RepositoryResult<String?>> serverAddress() async {
+    await _released;
+    return const RepositoryResult<String?>.success(data: _link);
+  }
+}
+
+/// The real store, counting who starts watching it.
+class _Watched implements ServerAddressesRepository {
+  _Watched(this._real);
+
+  final ServerAddressesRepository _real;
+  int listens = 0;
+
+  @override
+  Stream<ServerAddresses> watch() async* {
+    listens++;
+    yield* _real.watch();
+  }
+
+  @override
+  Future<RepositoryResult<ServerAddresses>> read() => _real.read();
+
+  @override
+  Future<RepositoryResult<bool>> saveManual({required String? manualAddress, required String? manualOnion}) =>
+      _real.saveManual(manualAddress: manualAddress, manualOnion: manualOnion);
+
+  @override
+  Future<RepositoryResult<bool>> setUseTor(bool useTor) => _real.setUseTor(useTor);
+
+  @override
+  Future<RepositoryResult<bool>> saveFromServer({required List<String> direct, String? public, String? onion}) =>
+      _real.saveFromServer(direct: direct, public: public, onion: onion);
+
+  @override
+  Future<RepositoryResult<bool>> saveFromLink({
+    required List<String> direct,
+    String? onion,
+    String? manualAddress,
+    String? manualOnion,
+    required bool useTor,
+  }) => _real.saveFromLink(direct: direct, onion: onion, manualAddress: manualAddress, manualOnion: manualOnion, useTor: useTor);
+
+  @override
+  Future<RepositoryResult<bool>> recordLastGood(String address) => _real.recordLastGood(address);
+
+  @override
+  Future<RepositoryResult<bool>> recordGreetedViaTor() => _real.recordGreetedViaTor();
+
+  @override
+  Future<RepositoryResult<bool>> clear() => _real.clear();
+}
+
+/// A status service counting who starts watching it.
+class _CountingStatus extends FixedConnectionStatusService {
+  _CountingStatus() : super(FixedConnectionStatusService.direct);
+
+  int listens = 0;
+
+  @override
+  Stream<ConnectionStatus> watchStatus() async* {
+    listens++;
+    yield* super.watchStatus();
+  }
 }
 
 /// Reads like the real repository and refuses every write.

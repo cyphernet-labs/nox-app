@@ -63,6 +63,12 @@ class ConnectionSettingsBloc extends BaseBloc<ConnectionSettingsEvent, Connectio
 
   Future<void> _onInitialize(ConnectionSettingsInitialize event, Emitter<ConnectionSettingsState> emit) async {
     _linkAddress = (await sessionRepository.serverAddress()).data ?? '';
+    // The section can be left while the read above is under way. close() then
+    // has already cancelled the subscriptions that existed - none - and one
+    // made now would outlive the bloc: it holds the bloc and both streams for
+    // the rest of the process, and its next value is an add() on a closed
+    // bloc, which throws into the zone rather than anywhere it is handled.
+    if (isClosed) return;
     // The watch hands over what is stored on listen, and every change after.
     _storedSub ??= _addresses.watch().listen((stored) => add(ConnectionSettingsEvent.storedChanged(stored)), onError: (Object _) {});
     _statusSub ??= getIt<ConnectionStatusService>().watchStatus().listen(

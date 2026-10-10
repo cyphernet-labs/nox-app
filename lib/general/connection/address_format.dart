@@ -1,11 +1,17 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-/// The format checks of the addresses a person types (phase 045): the server
-/// address and the onion address of the connection screen and of Settings >
-/// Connection. Format only - whether the machine at an address is this
-/// person's server is decided by the channel's check of the server key on
-/// every connection, which is what makes a hand edit safe.
+/// A server address read into its parts: `host` the way a connection dials it
+/// (an IPv6 literal without its brackets, a name in lower case) and `port`.
+typedef ServerAddressParts = ({String host, int port});
+
+/// The format checks of server addresses (phase 045): the ones a person types
+/// on the connection screen and in Settings > Connection, the ones the server
+/// states about itself, and every one the app tries directly - one reading for
+/// all of them, so no address passes one check and fails the next. Format
+/// only - whether the machine at an address is this person's server is decided
+/// by the channel's check of the server key on every connection, which is what
+/// makes a hand edit safe.
 abstract final class AddressFormat {
   const AddressFormat._();
 
@@ -16,30 +22,48 @@ abstract final class AddressFormat {
   static const int _maxLabelLength = 63;
   static final RegExp _label = RegExp(r'^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$');
   static final RegExp _onionHost = RegExp(r'^[a-z2-7]{56}\.onion$');
+  static final RegExp _forbidden = RegExp(r'[\s/@?#\\]');
+  static final RegExp _port = RegExp(r'^[0-9]{1,5}$');
   static const String _base32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
   /// `host:port`: an IPv4 literal, an IPv6 literal in brackets, or a DNS name
   /// (labels of letters, digits and hyphens, up to 63 each and 253 in all),
   /// and a port from 1 to 65535. Never an onion name - that has a field of its
-  /// own and goes through Tor or nowhere.
-  static bool isServerAddress(String value) {
-    final text = value.trim();
-    if (text.isEmpty || text.contains(RegExp(r'[\s/@?#\\]'))) return false;
+  /// own and goes through Tor or nowhere. Spaces around it are what a field
+  /// holds, and do not count.
+  static bool isServerAddress(String value) => parseServerAddress(value.trim()) != null;
+
+  /// [text] read as a server address (see [isServerAddress]) exactly as it is
+  /// written - nothing trimmed, which is what a stored address must be - or
+  /// null when it is not one.
+  ///
+  /// The port is read off the text itself, never through `Uri`: a `Uri` drops
+  /// its scheme's default port, so `host:443` read as `https://host:443`
+  /// reports no port at all, and every address on 443 - the port a public
+  /// address is the most likely to have - would be refused as portless and
+  /// never tried. Digits only: `int.tryParse` alone would also take `0x1bb`,
+  /// `+443` and spaces.
+  static ServerAddressParts? parseServerAddress(String text) {
+    if (text.isEmpty || text.contains(_forbidden)) return null;
     final colon = text.lastIndexOf(':');
-    if (colon <= 0 || colon == text.length - 1) return false;
+    if (colon <= 0) return null;
+    final digits = text.substring(colon + 1);
+    if (!_port.hasMatch(digits)) return null;
+    final port = int.parse(digits);
+    if (port < 1 || port > 65535) return null;
     final hostPart = text.substring(0, colon);
-    final port = int.tryParse(text.substring(colon + 1));
-    if (port == null || port < 1 || port > 65535 || text.substring(colon + 1).startsWith('+')) return false;
     if (hostPart.startsWith('[') || hostPart.endsWith(']')) {
-      if (!hostPart.startsWith('[') || !hostPart.endsWith(']')) return false;
-      final literal = InternetAddress.tryParse(hostPart.substring(1, hostPart.length - 1));
-      return literal != null && literal.type == InternetAddressType.IPv6;
+      if (!hostPart.startsWith('[') || !hostPart.endsWith(']')) return null;
+      final literal = hostPart.substring(1, hostPart.length - 1);
+      final ip = InternetAddress.tryParse(literal);
+      return ip != null && ip.type == InternetAddressType.IPv6 ? (host: literal.toLowerCase(), port: port) : null;
     }
     // An IPv6 literal without brackets cannot be told from its own port.
-    if (hostPart.contains(':')) return false;
+    if (hostPart.contains(':')) return null;
     final ip = InternetAddress.tryParse(hostPart);
-    if (ip != null) return ip.type == InternetAddressType.IPv4;
-    return _isDnsName(hostPart) && !hostPart.toLowerCase().endsWith('.onion');
+    if (ip != null) return ip.type == InternetAddressType.IPv4 ? (host: hostPart, port: port) : null;
+    final name = hostPart.toLowerCase();
+    return _isDnsName(name) && !name.endsWith('.onion') ? (host: name, port: port) : null;
   }
 
   /// The onion address as it is stored, `<56>.onion:443`, or null when

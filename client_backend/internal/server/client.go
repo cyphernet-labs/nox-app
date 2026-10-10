@@ -1,6 +1,7 @@
 package server
 
 import (
+	"container/list"
 	"context"
 	"log/slog"
 	"sync"
@@ -53,6 +54,12 @@ type client struct {
 	// goroutine's own, and it is set BEFORE the reply.
 	greeted     bool
 	addrVersion uint64
+	// unpaired is this connection's place among the connections of keys
+	// nobody paired (Server.unpaired), also under Server.mu: set when its key
+	// was unknown as it connected, and nil for a paired device's - or once
+	// this one paired or greeted, ran out of time, was taken out to make
+	// room, or left.
+	unpaired *list.Element
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. Written and read through Server.setIdentity /
 	// Server.currentIdentity: other connections' goroutines touch it -

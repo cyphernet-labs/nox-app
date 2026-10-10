@@ -305,9 +305,15 @@ func (c *client) handleChatFiles(cmd protocol.Command) {
 // 401 for a stranger, and still 404 for a bad token from a paired device: the
 // 404 is how a client of 043 knows to ask for a new pass, and that must not
 // change. A store that cannot answer is a 500 - the device did nothing wrong.
+//
+// A 401 ends the connection (endWithAnswer). The door has ended a stranger's
+// already; a 401 that is still to be decided here is a device revoked between
+// the door's question and this one, whose connection would otherwise be kept
+// for its next request.
 func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) (done func(), ok bool) {
 	conn, ok := channelConnFrom(r.Context())
 	if !ok {
+		endWithAnswer(w, r)
 		http.Error(w, "the connection proved no device key", http.StatusUnauthorized)
 		return nil, false
 	}
@@ -322,6 +328,7 @@ func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) (done fun
 	}
 	if !paired {
 		done()
+		endWithAnswer(w, r)
 		http.Error(w, "the connection's device is not paired", http.StatusUnauthorized)
 		return nil, false
 	}

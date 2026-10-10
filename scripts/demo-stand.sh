@@ -127,6 +127,10 @@ DataDirectory $STAND/tor
 HiddenServiceDir $STAND/hs
 HiddenServicePort 443 127.0.0.1:$PORT
 HiddenServicePoWDefensesEnabled 1
+# PoW prices new circuits, not the streams on one already built: at most 16 at
+# once on a circuit, and one that asks for more is closed whole.
+HiddenServiceMaxStreams 16
+HiddenServiceMaxStreamsCloseCircuit 1
 Log notice file $STAND/tor.log
 TORRC
     # tor writes the hostname from the service key on every start; removed

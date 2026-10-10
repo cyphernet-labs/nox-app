@@ -39,12 +39,22 @@ const (
 	// the oldest of the eight, and a device of the house, through in well
 	// under a second, is almost never the one that has waited longest.
 	maxPendingPerSource = 8
-	// firstByteTimeout is how long a connection from anywhere but loopback may
-	// say nothing at all. TLS opens with the client's hello, sent right behind
-	// the TCP handshake, so a device's first byte is there at once; a peer
-	// still silent after this is only holding a place. Loopback - tor - has
-	// the whole budget: a Tor client's hello crosses its circuit only after
-	// tor has connected here.
+	// maxPendingLocal is the share of this machine (sourceOf), which is where
+	// tor connects from - so every device away from home counts against it.
+	// Larger than a source's because a handshake through a circuit takes
+	// seconds, where one from the next room is over in milliseconds. Bounded
+	// all the same: since 045 the onion service is open to anybody who knows
+	// its address, and tor caps only how many streams a circuit has open at
+	// once (contract §1), not how many it opens one after another. A flood
+	// through tor then cuts its own oldest handshakes and never another
+	// source's, and never holds more than a quarter of the entry.
+	maxPendingLocal = 64
+	// firstByteTimeout is how long a connection from anywhere but this
+	// machine may say nothing at all. TLS opens with the client's hello, sent
+	// right behind the TCP handshake, so a device's first byte is there at
+	// once; a peer still silent after this is only holding a place. This
+	// machine - tor - has the whole budget: a Tor client's hello crosses its
+	// circuit only after tor has connected here.
 	firstByteTimeout = 5 * time.Second
 	// shedLogInterval spaces the warnings about the handshakes an entry cut: a
 	// flood must not flood the log as well.
@@ -101,8 +111,8 @@ func channelConnFrom(ctx context.Context) (*channelConn, bool) {
 // runs in, and the device key it proved there.
 type channelConn struct {
 	net.Conn
-	// raw is the connection under TLS: the TCP socket, or tor's stream on the
-	// onion entry. cut closes it.
+	// raw is the connection under TLS: the TCP socket, a device's own or the
+	// one tor opened for it. cut closes it.
 	raw  net.Conn
 	peer channelPeer
 }
@@ -135,7 +145,9 @@ func (c *channelConn) cut() {
 //     under a second, so the one cut is nearly always a peer that is saying
 //     nothing - and a flood from one source competes only with itself, never
 //     pushing another source's handshake out of the entry;
-//   - a connection from anywhere but loopback that sends nothing within
+//   - this machine is one source with a share of its own, maxPendingLocal,
+//     held the same way;
+//   - a connection from anywhere but this machine that sends nothing within
 //     firstByteTimeout is cut, long before its budget would cut it;
 //   - past maxPendingChannels in all, the connection that has waited longest
 //     is cut to make room, for the same reason as within a source.
@@ -147,10 +159,13 @@ func (c *channelConn) cut() {
 // holds all eight - and every device of the house would stay out for as long
 // as it kept at it.
 //
-// Loopback is held to neither of the first two. tor runs on this machine and
-// every connection that comes through it - every device away from home -
-// arrives from there, so a share for loopback would be one share for all of
-// them, and a first-byte limit would cut hellos still crossing a circuit.
+// This machine is where tor connects from, and every connection that comes
+// through it - every device away from home, and since 045 anybody else who
+// knows the onion address - arrives from there. Its share is sized for
+// handshakes that take seconds through a circuit, and bounded so that a flood
+// through the onion service pushes out only its own handshakes, never a
+// device's at home. It has no first-byte limit, which would cut hellos still
+// crossing a circuit.
 //
 // Closing it ends every handshake still under way and closes its connection,
 // and a connection that passed but was never taken is closed too.
@@ -179,11 +194,13 @@ type channelListener struct {
 	mu           sync.Mutex
 	maxPending   int
 	maxPerSource int
+	maxLocal     int
 	firstByte    time.Duration
 	shedEvery    time.Duration
 	// pending holds the handshakes under way, oldest first; bySource counts
-	// them per source, loopback left out, and is what says a source is at its
-	// share - pending then says which of its handshakes is the oldest.
+	// them per source, this machine included under localSource, and is what
+	// says a source is at its share - pending then says which of its
+	// handshakes is the oldest.
 	pending  *list.List
 	bySource map[string]int
 	// shed is what was cut since the last warning, which went out at
@@ -198,10 +215,11 @@ type pendingChannel struct {
 	conn     net.Conn
 	accepted time.Time
 	source   string
-	// loopback is tor's: held to no share and to no first-byte limit.
-	loopback bool
+	// local is a connection from this machine - tor's: held to this
+	// machine's share and to no first-byte limit.
+	local bool
 	// firstByteBy is when a connection that has sent nothing is cut; zero
-	// for loopback.
+	// for one from this machine.
 	firstByteBy time.Time
 	// elem is its place among the handshakes under way, nil once it has
 	// left - or was cut to make room.
@@ -209,10 +227,13 @@ type pendingChannel struct {
 }
 
 // shedCounts is what an entry cut between two warnings: inSource handshakes
-// cut for a newer connection from their own source, which was at its share,
-// and evicted ones cut because every place in the entry was taken.
+// cut for a newer connection from their own source, which was at its share;
+// local the same within this machine's share, which is where a flood through
+// the onion service shows; and evicted ones cut because every place in the
+// entry was taken.
 type shedCounts struct {
 	inSource int
+	local    int
 	evicted  int
 }
 
@@ -231,6 +252,7 @@ func (s *Server) newChannelListener(raw net.Listener, cfg *tls.Config, key ed255
 		closed:       make(chan struct{}),
 		maxPending:   maxPendingChannels,
 		maxPerSource: maxPendingPerSource,
+		maxLocal:     maxPendingLocal,
 		firstByte:    firstByteTimeout,
 		shedEvery:    shedLogInterval,
 		pending:      list.New(),
@@ -331,16 +353,21 @@ func (l *channelListener) acceptLoop(ctx context.Context) {
 //
 // Within the source first, so that one source's flood never reaches the
 // entry-wide cut, which would push out other sources' handshakes; a source
-// that made room for itself has freed the place it takes.
+// that made room for itself has freed the place it takes. This machine is a
+// source like any other here, with a share of its own size.
 func (l *channelListener) admit(conn net.Conn, accepted time.Time) (*pendingChannel, []net.Conn) {
-	source, loopback := sourceOf(conn.RemoteAddr())
+	source, local := sourceOf(conn.RemoteAddr(), conn.LocalAddr())
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	share := l.maxPerSource
+	if local {
+		share = l.maxLocal
+	}
 	var cut []net.Conn
 	var shed shedCounts
 	// A loop rather than one cut, like the entry-wide one below: a limit
 	// shrunk while handshakes were held (see mu) still comes out at the limit.
-	for !loopback && l.bySource[source] > 0 && l.bySource[source] >= l.maxPerSource {
+	for l.bySource[source] > 0 && l.bySource[source] >= share {
 		oldest := l.oldestFromLocked(source)
 		if oldest == nil {
 			// Unreachable while the count matches pending; never loop on it.
@@ -348,7 +375,11 @@ func (l *channelListener) admit(conn net.Conn, accepted time.Time) (*pendingChan
 		}
 		l.forgetLocked(oldest)
 		cut = append(cut, oldest.conn)
-		shed.inSource++
+		if local {
+			shed.local++
+		} else {
+			shed.inSource++
+		}
 	}
 	for l.pending.Len() > 0 && l.pending.Len() >= l.maxPending {
 		oldest := l.pending.Front().Value.(*pendingChannel)
@@ -359,11 +390,11 @@ func (l *channelListener) admit(conn net.Conn, accepted time.Time) (*pendingChan
 	if shed != (shedCounts{}) {
 		l.shedLocked(shed)
 	}
-	p := &pendingChannel{conn: conn, accepted: accepted, source: source, loopback: loopback}
-	if !loopback {
+	p := &pendingChannel{conn: conn, accepted: accepted, source: source, local: local}
+	if !local {
 		p.firstByteBy = accepted.Add(min(l.firstByte, l.budget))
-		l.bySource[source]++
 	}
+	l.bySource[source]++
 	p.elem = l.pending.PushBack(p)
 	return p, cut
 }
@@ -374,7 +405,7 @@ func (l *channelListener) admit(conn net.Conn, accepted time.Time) (*pendingChan
 // must be held.
 func (l *channelListener) oldestFromLocked(source string) *pendingChannel {
 	for e := l.pending.Front(); e != nil; e = e.Next() {
-		if p := e.Value.(*pendingChannel); !p.loopback && p.source == source {
+		if p := e.Value.(*pendingChannel); p.source == source {
 			return p
 		}
 	}
@@ -400,24 +431,51 @@ func (l *channelListener) leave(p *pendingChannel) bool {
 func (l *channelListener) forgetLocked(p *pendingChannel) {
 	l.pending.Remove(p.elem)
 	p.elem = nil
-	if p.loopback {
-		return
-	}
 	l.bySource[p.source]--
 	if l.bySource[p.source] <= 0 {
 		delete(l.bySource, p.source)
 	}
 }
 
+// localSource is the one source every connection from this machine counts
+// against. It is not an address, so nothing from elsewhere can ever share it.
+const localSource = "local"
+
 // sourceOf names the source a connection counts against, and reports whether
-// it came from loopback, which counts against none.
+// it came from this machine.
 //
-// An IPv4 address is a source of its own, in its IPv4-mapped IPv6 form too,
-// which is how a dual-stack socket reports it. IPv6 counts by its /64: one
-// host is routinely handed a whole /64 and may speak from any address in it.
-// An address that is not IP at all is one source shared by all of its kind,
-// and held to a share like any other: only loopback is known to be tor.
-func sourceOf(addr net.Addr) (source string, loopback bool) {
+// A connection from this machine is one from loopback, or one whose remote
+// address is the very address it was accepted on (local). Asked for a
+// connection to one of its own addresses, the kernel speaks from that same
+// address - so that is how tor connects when its onion service points at the
+// address noxd is bound to rather than at loopback. Nobody else can come from
+// there: the answer to a SYN that carries the server's own address as its
+// source goes to the server itself, so whoever forged it never completes the
+// TCP handshake. All of this machine is ONE source, whichever address tor
+// uses: it is the same tor, carrying every device away from home.
+//
+// Elsewhere, an IPv4 address is a source of its own, in its IPv4-mapped IPv6
+// form too, which is how a dual-stack socket reports it. IPv6 counts by its
+// /64: one host is routinely handed a whole /64 and may speak from any address
+// in it. An address that is not IP at all is one source shared by all of its
+// kind, and held to a share like any other.
+func sourceOf(remote, local net.Addr) (source string, fromHere bool) {
+	ip := ipOf(remote)
+	switch {
+	case !ip.IsValid():
+		return "", false
+	case ip.IsLoopback(), ip == ipOf(local):
+		return localSource, true
+	case ip.Is4():
+		return ip.String(), false
+	default:
+		return netip.PrefixFrom(ip, 64).Masked().String(), false
+	}
+}
+
+// ipOf is the IP of addr, unmapped and without a zone, or the zero Addr when
+// it carries none.
+func ipOf(addr net.Addr) netip.Addr {
 	var ip netip.Addr
 	switch a := addr.(type) {
 	case nil:
@@ -428,17 +486,7 @@ func sourceOf(addr net.Addr) (source string, loopback bool) {
 			ip = ap.Addr()
 		}
 	}
-	ip = ip.Unmap().WithZone("")
-	switch {
-	case !ip.IsValid():
-		return "", false
-	case ip.IsLoopback():
-		return ip.String(), true
-	case ip.Is4():
-		return ip.String(), false
-	default:
-		return netip.PrefixFrom(ip, 64).Masked().String(), false
-	}
+	return ip.Unmap().WithZone("")
 }
 
 // handshake takes one connection through both layers and, if it passes,
@@ -449,9 +497,10 @@ func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 	hctx, cancel := context.WithDeadline(ctx, budget)
 	defer cancel()
 	conn := p.conn
-	if !p.loopback {
-		// Off loopback the first byte has a shorter deadline of its own, and
-		// TLS runs over the wrapper that lifts it once that byte is in.
+	if !p.local {
+		// From anywhere but this machine the first byte has a shorter
+		// deadline of its own, and TLS runs over the wrapper that lifts it
+		// once that byte is in.
 		_ = conn.SetReadDeadline(p.firstByteBy)
 		conn = &firstByteConn{Conn: conn, budget: budget}
 	}
@@ -475,10 +524,10 @@ func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 	}
 }
 
-// firstByteConn is a connection from anywhere but loopback that has not said
-// anything yet. handshake holds its reads to the first-byte deadline, and the
-// first byte to arrive moves that out to the whole budget; from then on it is
-// the socket and nothing more. Deadlines set from above - the check binding
+// firstByteConn is a connection from anywhere but this machine that has not
+// said anything yet. handshake holds its reads to the first-byte deadline, and
+// the first byte to arrive moves that out to the whole budget; from then on it
+// is the socket and nothing more. Deadlines set from above - the check binding
 // its own, the channel clearing them once passed, the HTTP server after it -
 // go straight through.
 //
@@ -553,6 +602,7 @@ func (l *channelListener) refused(err error) {
 // the one before. mu must be held.
 func (l *channelListener) shedLocked(c shedCounts) {
 	l.shed.inSource += c.inSource
+	l.shed.local += c.local
 	l.shed.evicted += c.evicted
 	if l.shedFlush == nil {
 		l.shedFlush = time.AfterFunc(time.Until(l.shedLogged.Add(l.shedEvery)), l.warnShed)
@@ -561,7 +611,8 @@ func (l *channelListener) shedLocked(c shedCounts) {
 
 // warnShed writes the warning shedLocked asked for. Like every other line
 // here it carries no address: the counts say how hard the door is pushed, and
-// that is what an operator can act on.
+// that is what an operator can act on - evicted_local, for one, says the push
+// comes through tor, whose settings (contract §1) are where it is answered.
 func (l *channelListener) warnShed() {
 	l.mu.Lock()
 	c := l.shed
@@ -573,5 +624,5 @@ func (l *channelListener) warnShed() {
 		return
 	}
 	l.logger.Warn("channel entry shedding connections",
-		"evicted_in_source", c.inSource, "evicted", c.evicted)
+		"evicted_in_source", c.inSource, "evicted", c.evicted, "evicted_local", c.local)
 }

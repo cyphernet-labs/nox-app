@@ -254,11 +254,10 @@ func TestTheBudgetCoversTLSAndTheCheckTogether(t *testing.T) {
 }
 
 // The handshakes under way are bounded, and a full entry still never keeps a
-// device out. maxPendingChannels silent sockets from loopback - held to no
-// share there, so they fill the entry by themselves - with more arriving all
-// the while: a device dialling meanwhile is through at once, because every
-// newcomer cuts the handshake that has waited longest, and that is a silent
-// one.
+// device out. maxPendingChannels silent sockets from loopback, with more
+// arriving all the while: a device dialling meanwhile is through at once,
+// because every newcomer cuts the handshake that has waited longest, and that
+// is a silent one.
 func TestAFullEntryCutsItsOldestHandshakeToLetADeviceIn(t *testing.T) {
 	buf := &syncBuffer{}
 	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "full.db"), slog.New(slog.NewTextHandler(buf, nil)))
@@ -267,6 +266,13 @@ func TestAFullEntryCutsItsOldestHandshakeToLetADeviceIn(t *testing.T) {
 	if !ok {
 		t.Fatalf("the test server's listener is %T", ts.Listener)
 	}
+	// Loopback is the only place real sockets can come from here, and it is
+	// one source with a share of its own. That share is raised past the whole
+	// entry, so that silent sockets from loopback fill the entry by themselves
+	// and only the entry-wide cut can make room.
+	listener.mu.Lock()
+	listener.maxLocal = listener.maxPending + 1
+	listener.mu.Unlock()
 	addr := ts.Listener.Addr().String()
 	var silent []net.Conn
 	t.Cleanup(func() {
@@ -458,7 +464,7 @@ func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 			// may stop; this is its body without the report.
 			client, server := net.Pipe()
 			select {
-			case pipes.conns <- &fromConn{Conn: server, remote: &net.TCPAddr{IP: net.ParseIP(home), Port: 50000}}:
+			case pipes.conns <- pipes.from(server, home):
 				ends = append(ends, client)
 				flooded.Add(1)
 			case <-stop:
@@ -598,10 +604,95 @@ func TestAHandshakeCutToMakeRoomTakesItsCountWithIt(t *testing.T) {
 	}
 }
 
-// Off loopback, a connection has firstByteTimeout to say anything at all.
-// Silent, it is cut long before its budget; once a byte is in, it has the
-// whole budget; and a device, which speaks at once, is left with no deadline
-// at all once it is through the check. Loopback - tor - is held to none of it.
+// This machine - tor, and with it every device away from home and, since 045,
+// anybody who knows the onion address - is one source with a share of its
+// own. A flood through the onion service cuts its own oldest handshakes and
+// never another source's, even with every other place in the entry taken;
+// loopback and the address the connection reached count as one; and the cuts
+// reach the log as a count of their own, with no address.
+func TestThisMachineHoldsOnlyItsOwnShareOfTheEntry(t *testing.T) {
+	buf := &syncBuffer{}
+	srv, _ := stackWith(t, slog.New(slog.NewTextHandler(buf, nil)))
+	const share = 4
+	neighbours := []string{"203.0.113.7", "198.51.100.9", "2001:db8:1:2::1"}
+	l, pipes := pipeChannel(t, srv, time.Hour, func(l *channelListener) {
+		l.maxLocal = share
+		// The neighbours and this machine's share fill the entry exactly, so
+		// a cut past the share could only come out of another source.
+		l.maxPending = len(neighbours) + share
+		// Nothing but the shares may cut the silent ones here.
+		l.firstByte = time.Hour
+	})
+
+	var theirs []net.Conn
+	for _, host := range neighbours {
+		theirs = append(theirs, pipes.dial(t, host))
+	}
+	// tor connects from loopback when its onion service points there, and
+	// from the address the server is bound to when it points at that: half
+	// and half here, and one share between them.
+	var ours []net.Conn
+	for i := range share {
+		host := "127.0.0.1"
+		if i%2 == 1 {
+			host = pipeListenerHost
+		}
+		ours = append(ours, pipes.dial(t, host))
+	}
+	eventually(t, "this machine holds its share", func() bool { return heldBy(l, "127.0.0.1") == share })
+	if n := underWay(l); n != len(neighbours)+share {
+		t.Fatalf("%d handshakes under way, want a full entry of %d", n, len(neighbours)+share)
+	}
+
+	// A flood through the onion service: every newcomer is taken, and each
+	// cuts this machine's oldest.
+	const flood = 3 * share
+	var latest []net.Conn
+	for range flood {
+		latest = append(latest, pipes.dial(t, "127.0.0.1"))
+	}
+	for _, conn := range ours {
+		if got := silentAfter(t, conn); len(got) != 0 {
+			t.Fatalf("a handshake cut to make room was sent %d bytes", len(got))
+		}
+	}
+	for _, conn := range latest[flood-share:] {
+		stillOpen(t, conn, 50*time.Millisecond)
+	}
+	for i, conn := range theirs {
+		stillOpen(t, conn, 50*time.Millisecond)
+		if n := heldBy(l, neighbours[i]); n != 1 {
+			t.Fatalf("%s holds %d handshakes after the flood, want its one", neighbours[i], n)
+		}
+	}
+	if n := heldBy(l, "127.0.0.1"); n != share {
+		t.Fatalf("this machine holds %d handshakes after the flood, want its share of %d", n, share)
+	}
+
+	// The first cut is logged at once and the rest when Close sends the
+	// minute's line early - or by the first one's timer, if it is still on
+	// its way.
+	_ = l.Close()
+	eventually(t, "every cut is logged", func() bool {
+		total := shedTotal(buf.String())
+		return total.inSource+total.local+total.evicted >= flood
+	})
+	if total := shedTotal(buf.String()); total != (shedCounts{local: flood}) {
+		t.Fatalf("cuts logged = %+v, want %d from this machine's share and none from anywhere else", total, flood)
+	}
+	log := buf.String()
+	for _, host := range append([]string{"127.0.0.1", pipeListenerHost}, neighbours...) {
+		if strings.Contains(log, host) {
+			t.Fatalf("an address reached the log:\n%s", log)
+		}
+	}
+}
+
+// From anywhere but this machine, a connection has firstByteTimeout to say
+// anything at all. Silent, it is cut long before its budget; once a byte is
+// in, it has the whole budget; and a device, which speaks at once, is left
+// with no deadline at all once it is through the check. This machine - tor -
+// is held to none of it, whichever of its addresses tor connects from.
 func TestAPeerThatSaysNothingIsCutAtItsFirstByteDeadline(t *testing.T) {
 	_, srv := newTestServer(t)
 	const firstByte, budget = 300 * time.Millisecond, 2 * time.Second
@@ -643,6 +734,14 @@ func TestAPeerThatSaysNothingIsCutAtItsFirstByteDeadline(t *testing.T) {
 	t.Run("silent on loopback", func(t *testing.T) {
 		t.Parallel()
 		stillOpen(t, pipes.dial(t, "127.0.0.1"), 2*firstByte)
+	})
+
+	t.Run("silent from the address it reached", func(t *testing.T) {
+		t.Parallel()
+		// tor with its onion service pointed at the address the server is
+		// bound to rather than at loopback: asked for a connection to its own
+		// address, the kernel speaks from that same address.
+		stillOpen(t, pipes.dial(t, pipeListenerHost), 2*firstByte)
 	})
 
 	t.Run("a device", func(t *testing.T) {
@@ -692,34 +791,54 @@ func TestAPeerThatSaysNothingIsCutAtItsFirstByteDeadline(t *testing.T) {
 	})
 }
 
-// A source is an IPv4 address or an IPv6 /64, and loopback counts as none.
-func TestASourceIsAnAddressOrAnIPv6Slash64(t *testing.T) {
-	tcp := func(ip net.IP) net.Addr { return &net.TCPAddr{IP: ip, Port: 443} }
+// A source is an IPv4 address or an IPv6 /64 - or this machine, which is one
+// source whichever of its addresses a connection comes from: loopback, or the
+// very address the connection reached, which is where the kernel speaks from
+// when a process here dials one of the machine's own addresses.
+func TestASourceIsAnAddressAnIPv6Slash64OrThisMachine(t *testing.T) {
+	tcp := func(ip string) net.Addr { return &net.TCPAddr{IP: net.ParseIP(ip), Port: 443} }
+	// Where the connections in the table arrive, unless a row says otherwise:
+	// an address of this machine's network, the way a server bound to it or
+	// to every interface sees a connection from elsewhere.
+	at := tcp("192.0.2.1")
 	for _, tc := range []struct {
-		name     string
-		addr     net.Addr
-		source   string
-		loopback bool
+		name   string
+		remote net.Addr
+		local  net.Addr
+		source string
+		here   bool
 	}{
-		{"an IPv4 address", tcp(net.IPv4(203, 0, 113, 7).To4()), "203.0.113.7", false},
-		{"the same address the way a dual-stack socket reports it", tcp(net.ParseIP("::ffff:203.0.113.7")), "203.0.113.7", false},
-		{"the address next to it", tcp(net.ParseIP("203.0.113.8")), "203.0.113.8", false},
-		{"an IPv6 address counts by its /64", tcp(net.ParseIP("2001:db8:1:2::1")), "2001:db8:1:2::/64", false},
-		{"anywhere in that /64", tcp(net.ParseIP("2001:db8:1:2:ffff:ffff:ffff:fffe")), "2001:db8:1:2::/64", false},
-		{"the next /64", tcp(net.ParseIP("2001:db8:1:3::1")), "2001:db8:1:3::/64", false},
-		{"a zone changes nothing", &net.TCPAddr{IP: net.ParseIP("fe80::1"), Port: 443, Zone: "en0"}, "fe80::/64", false},
-		{"IPv4 loopback", tcp(net.ParseIP("127.0.0.1")), "127.0.0.1", true},
-		{"anywhere in 127.0.0.0/8", tcp(net.ParseIP("127.1.2.3")), "127.1.2.3", true},
-		{"IPv6 loopback", tcp(net.IPv6loopback), "::1", true},
-		{"loopback the way a dual-stack socket reports it", tcp(net.ParseIP("::ffff:127.0.0.1")), "127.0.0.1", true},
-		{"an address of another type, read from its string", textAddr("198.51.100.9:443"), "198.51.100.9", false},
-		{"no IP at all: one shared source, still held to a share", &net.UnixAddr{Name: "/run/nox.sock", Net: "unix"}, "", false},
-		{"no address", nil, "", false},
+		{"an IPv4 address", &net.TCPAddr{IP: net.IPv4(203, 0, 113, 7).To4(), Port: 50000}, at, "203.0.113.7", false},
+		{"the same address the way a dual-stack socket reports it", tcp("::ffff:203.0.113.7"), at, "203.0.113.7", false},
+		{"the address next to it", tcp("203.0.113.8"), at, "203.0.113.8", false},
+		{"an IPv6 address counts by its /64", tcp("2001:db8:1:2::1"), at, "2001:db8:1:2::/64", false},
+		{"anywhere in that /64", tcp("2001:db8:1:2:ffff:ffff:ffff:fffe"), at, "2001:db8:1:2::/64", false},
+		{"the next /64", tcp("2001:db8:1:3::1"), at, "2001:db8:1:3::/64", false},
+		{"a zone changes nothing", &net.TCPAddr{IP: net.ParseIP("fe80::1"), Port: 443, Zone: "en0"}, at, "fe80::/64", false},
+		{"IPv4 loopback", tcp("127.0.0.1"), tcp("127.0.0.1"), localSource, true},
+		{"anywhere in 127.0.0.0/8", tcp("127.1.2.3"), tcp("127.0.0.1"), localSource, true},
+		{"IPv6 loopback", &net.TCPAddr{IP: net.IPv6loopback, Port: 50000}, tcp("::1"), localSource, true},
+		{"loopback the way a dual-stack socket reports it", tcp("::ffff:127.0.0.1"), tcp("::ffff:127.0.0.1"), localSource, true},
+		{"the address the connection reached", &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 50000}, at, localSource, true},
+		{"the same, the way a dual-stack socket reports both ends", tcp("::ffff:192.0.2.1"), tcp("::ffff:192.0.2.1"), localSource, true},
+		{"one end mapped, the other not", tcp("::ffff:192.0.2.1"), at, localSource, true},
+		{"an IPv6 address of this machine", tcp("2001:db8:1:2::20"), tcp("2001:db8:1:2::20"), localSource, true},
+		{"a link-local address of this machine, zone and all", &net.TCPAddr{IP: net.ParseIP("fe80::1"), Port: 50000, Zone: "en0"},
+			&net.TCPAddr{IP: net.ParseIP("fe80::1"), Port: 443, Zone: "en0"}, localSource, true},
+		{"a neighbour in the same /64 is not this machine", tcp("2001:db8:1:2::21"), tcp("2001:db8:1:2::20"), "2001:db8:1:2::/64", false},
+		{"the address next to this machine's is a neighbour", tcp("192.0.2.2"), at, "192.0.2.2", false},
+		{"an address of another type, read from its string", textAddr("198.51.100.9:443"), at, "198.51.100.9", false},
+		{"this machine's address read from its string", textAddr("192.0.2.1:50000"), textAddr("192.0.2.1:443"), localSource, true},
+		{"no IP at all: one shared source, still held to a share", &net.UnixAddr{Name: "/run/nox.sock", Net: "unix"},
+			&net.UnixAddr{Name: "/run/nox.sock", Net: "unix"}, "", false},
+		{"no address", nil, at, "", false},
+		{"no address on either end", nil, nil, "", false},
+		{"no local address: only loopback is this machine", tcp("203.0.113.7"), nil, "203.0.113.7", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source, loopback := sourceOf(tc.addr)
-			if source != tc.source || loopback != tc.loopback {
-				t.Fatalf("sourceOf(%v) = %q, %v; want %q, %v", tc.addr, source, loopback, tc.source, tc.loopback)
+			source, here := sourceOf(tc.remote, tc.local)
+			if source != tc.source || here != tc.here {
+				t.Fatalf("sourceOf(%v, %v) = %q, %v; want %q, %v", tc.remote, tc.local, source, here, tc.source, tc.here)
 			}
 		})
 	}
@@ -779,8 +898,13 @@ func (l *pipeListener) Close() error {
 	return nil
 }
 
+// pipeListenerHost is the address a pipeListener is bound to: every connection
+// it hands out arrives there, and one that comes FROM there comes from this
+// machine.
+const pipeListenerHost = "192.0.2.1"
+
 func (l *pipeListener) Addr() net.Addr {
-	return &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 443}
+	return &net.TCPAddr{IP: net.ParseIP(pipeListenerHost), Port: 443}
 }
 
 // dial opens a connection from host and returns its client end once the
@@ -790,9 +914,8 @@ func (l *pipeListener) dial(t *testing.T, host string) net.Conn {
 	t.Helper()
 	client, server := net.Pipe()
 	t.Cleanup(func() { _ = client.Close() })
-	from := &fromConn{Conn: server, remote: &net.TCPAddr{IP: net.ParseIP(host), Port: 50000}}
 	select {
-	case l.conns <- from:
+	case l.conns <- l.from(server, host):
 	case <-time.After(5 * time.Second):
 		_ = server.Close()
 		t.Fatal("the listener did not take the connection")
@@ -800,13 +923,23 @@ func (l *pipeListener) dial(t *testing.T, host string) net.Conn {
 	return client
 }
 
-// fromConn is a connection that says it comes from remote.
+// from dresses the server end of a pipe as a connection from host that
+// arrived at the listener's own address, the way an accepted socket reports
+// both of its ends.
+func (l *pipeListener) from(server net.Conn, host string) *fromConn {
+	return &fromConn{Conn: server, remote: &net.TCPAddr{IP: net.ParseIP(host), Port: 50000}, local: l.Addr()}
+}
+
+// fromConn is a connection that says it comes from remote, and arrived at
+// local.
 type fromConn struct {
 	net.Conn
 	remote net.Addr
+	local  net.Addr
 }
 
 func (c *fromConn) RemoteAddr() net.Addr { return c.remote }
+func (c *fromConn) LocalAddr() net.Addr  { return c.local }
 
 // pipeChannel puts a channel listener of srv's with the given budget in front
 // of a pipeListener, and lets tune shrink its limits before anything arrives.
@@ -872,9 +1005,10 @@ func underWay(l *channelListener) int {
 	return l.pending.Len()
 }
 
-// heldBy counts the handshakes the source at host has under way on l.
+// heldBy counts the handshakes the source at host has under way on l; any
+// loopback host names this machine.
 func heldBy(l *channelListener, host string) int {
-	source, _ := sourceOf(&net.TCPAddr{IP: net.ParseIP(host)})
+	source, _ := sourceOf(&net.TCPAddr{IP: net.ParseIP(host)}, nil)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.bySource[source]
@@ -892,7 +1026,8 @@ func countedSources(l *channelListener) []string {
 }
 
 // shedLine is one warning about shed connections in a text log.
-var shedLine = regexp.MustCompile(`level=WARN msg="channel entry shedding connections".* evicted_in_source=(\d+) evicted=(\d+)`)
+var shedLine = regexp.MustCompile(
+	`level=WARN msg="channel entry shedding connections".* evicted_in_source=(\d+) evicted=(\d+) evicted_local=(\d+)`)
 
 // shedLines reads the counts of every shedding warning out of a text log.
 func shedLines(log string) []shedCounts {
@@ -900,9 +1035,21 @@ func shedLines(log string) []shedCounts {
 	for _, m := range shedLine.FindAllStringSubmatch(log, -1) {
 		inSource, _ := strconv.Atoi(m[1])
 		evicted, _ := strconv.Atoi(m[2])
-		lines = append(lines, shedCounts{inSource: inSource, evicted: evicted})
+		local, _ := strconv.Atoi(m[3])
+		lines = append(lines, shedCounts{inSource: inSource, local: local, evicted: evicted})
 	}
 	return lines
+}
+
+// shedTotal adds up every shedding warning in a text log.
+func shedTotal(log string) shedCounts {
+	var total shedCounts
+	for _, line := range shedLines(log) {
+		total.inSource += line.inSource
+		total.local += line.local
+		total.evicted += line.evicted
+	}
+	return total
 }
 
 // textAddr is an address of a type sourceOf does not know, read only through

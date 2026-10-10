@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_addresses_parser.dart';
 import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
@@ -235,6 +236,23 @@ void main() {
       await selector.nextTarget();
 
       expect(prober.rounds.single, ['192.168.1.20:8080', '10.8.0.2:8443', '203.0.113.7:8443', _link]);
+    });
+
+    test('addresses on port 443, as the server states them, are tried and dialled on 443 (phase 045)', () async {
+      // Read the way a greeting's `addresses` are: 443 is the scheme default
+      // a Uri drops, and that once made these read as portless and vanish.
+      final stated = ServerAddressesParser.parse({
+        'direct': ['[fd12:3456::20]:443'],
+        'public': 'nox.example.org:443',
+      })!;
+      await addresses.saveFromServer(direct: stated.direct, public: stated.public, onion: stated.onion);
+      prober.home = {'nox.example.org:443'};
+
+      final target = await selector.nextTarget();
+
+      expect(prober.rounds.single, ['nox.example.org:443', '[fd12:3456::20]:443', _link]);
+      expect(target, Uri.parse('wss://nox.example.org:443/ws'));
+      expect(target!.port, 443);
     });
 
     test('no direct answer, and Tor brings up the onion address - no key opens it (phase 045)', () async {
