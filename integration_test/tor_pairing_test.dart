@@ -58,21 +58,27 @@ class _AwayProber implements DirectProber {
 /// Manual, like the live probes: it needs a running `noxd` whose onion
 /// service a separate tor publishes, and a fresh machine link for every run -
 /// `test/live/tor_live_probe.dart` leaves the server and its tor behind, with
-/// the service page's address in `<work>/page.txt`:
-///   fvm flutter test integration_test/tor_pairing_test.dart -d DEVICE \
-///     --dart-define=link="$(/tmp/noxd link -status-addr "$(cat /tmp/nox_e2e/page.txt)" | head -1)"
+/// the service page's address in `<work>/page.txt`. `noxd link` prints the
+/// link on its first line, and on a failure only why, on stderr - so the run
+/// starts only once it answered:
+///   LINK=$(/tmp/noxd link -status-addr "$(cat /tmp/nox_e2e/page.txt)") &&
+///     fvm flutter test integration_test/tor_pairing_test.dart -d DEVICE --dart-define=link="$(printf '%s\n' "$LINK" | head -1)"
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   const link = String.fromEnvironment('link');
+  // Passed empty is not "not passed": it is a `noxd link` that failed - a
+  // locked server, or none - and a skip there would read as a pass.
+  const linkGiven = bool.hasEnvironment('link');
 
   testWidgets(
     'away from home, an invite pairs through Tor with Use Tor on once its device allows it, and the device talks through Tor',
     (tester) async {
-      if (link.isEmpty) {
+      if (!linkGiven) {
         debugPrint('SKIP: pass --dart-define=link=<a machine link: noxd\'s service page, or `noxd link`>');
         return;
       }
+      if (link.isEmpty) fail('link= was passed empty - did `noxd link` fail?');
       await configureDependencies(Environment.dev);
       await getIt.allReady();
       await getIt<AppConfigRepository>().initialize(flavorType: AppFlavorType.stage);

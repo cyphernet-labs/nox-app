@@ -34,13 +34,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// by any mock: are the bytes that come back the bytes that went up. So this
 /// compares them byte for byte.
 ///
-/// Named without the `_test` suffix so the suite never collects it. Run by hand,
-/// with the server up and unlocked - it starts locked (phase 047), and a fresh
-/// one takes its first password twice, at the terminal or piped:
+/// Named without the `_test` suffix so the suite never collects it. Run by hand
+/// from the repository root, with the server built first, then started, and
+/// unlocked once its service page - up before anything else - answers. It
+/// starts locked (phase 047), and a fresh one takes its first password twice,
+/// at the terminal or piped. The probe runs only once `noxd link` answered: on
+/// a failure it prints only why, on stderr.
 ///
-///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db &
+///   (cd client_backend && go build -o /tmp/noxd .)
+///   /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db &
+///   curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
 ///   /tmp/noxd unlock
-///   fvm flutter test test/live/live_files_probe.dart --dart-define=link="$(/tmp/noxd link | head -1)"
+///   LINK=$(/tmp/noxd link) &&
+///     fvm flutter test test/live/live_files_probe.dart --dart-define=link="$(printf '%s\n' "$LINK" | head -1)"
 ///
 /// These three probes pair a device key of their own first, with the link's
 /// token (phase 044): the server knows a device only by the key its channel

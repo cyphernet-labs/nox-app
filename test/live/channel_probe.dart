@@ -41,9 +41,11 @@ import 'live_target.dart';
 /// Manual, outside the gates - it needs the server and the new module. The
 /// server starts locked (phase 047): only its page listens until the password
 /// is in - a fresh one takes it twice, at the terminal or piped - and only
-/// then does the page show the machine link:
+/// then does the page show the machine link. The password goes in once the
+/// page answers:
 ///   (cd client_backend && go build -o /tmp/nox044/noxd .)
 ///   /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081 &
+///   curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
 ///   /tmp/nox044/noxd unlock -status-addr 127.0.0.1:8081
 ///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the machine link on http://127.0.0.1:8081, or the first line of `noxd link`
 void main() {

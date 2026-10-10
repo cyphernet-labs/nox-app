@@ -38,21 +38,27 @@ import 'live_target.dart';
 /// 046), so the probe brings that device itself ([WireDevice]): paired at home
 /// by a machine link, it issues the invite and answers the request. Every run
 /// takes a fresh machine link; `tor_live_probe.dart` leaves the server, its
-/// tor and the service page's address behind:
-///   fvm flutter test test/live/tor_pairing_probe.dart \
-///     --dart-define=link="$(/tmp/noxd link -status-addr "$(cat /tmp/nox_e2e/page.txt)" | head -1)"
+/// tor and the service page's address behind. `noxd link` prints the link on
+/// its first line, and on a failure only why, on stderr - so the probe runs
+/// only once it answered:
+///   LINK=$(/tmp/noxd link -status-addr "$(cat /tmp/nox_e2e/page.txt)") &&
+///     fvm flutter test test/live/tor_pairing_probe.dart --dart-define=link="$(printf '%s\n' "$LINK" | head -1)"
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const link = String.fromEnvironment('link');
+  // Passed empty is not "not passed": it is a `noxd link` that failed - a
+  // locked server, or none - and a skip there would read as a pass.
+  const linkGiven = bool.hasEnvironment('link');
 
   test(
     'away from home, an invite pairs through Tor with Use Tor on once its device allows it, and the device talks through Tor',
     () async {
-      if (link.isEmpty) {
+      if (!linkGiven) {
         stdout.writeln('SKIP: pass --dart-define=link=<a machine link: noxd\'s service page, or `noxd link`>');
         return;
       }
+      if (link.isEmpty) fail('link= was passed empty - did `noxd link` fail?');
       LiveTarget.letTheNetworkThrough();
       expect(PairingLink.parse(link).onionServiceKey, isNotNull, reason: 'a link from a server with an onion address carries it');
       FlutterSecureStorage.setMockInitialValues({});

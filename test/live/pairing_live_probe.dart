@@ -37,23 +37,31 @@ import 'live_target.dart';
 /// same socket and channel classes the app uses.
 ///
 /// Run manually, not in the gate: it needs a server, and the native module
-/// built from this tree (every connection is a channel of it, phase 044). The
-/// server starts locked (phase 047), and its page hands out no link until the
-/// password is in - a fresh one takes it twice, at the terminal or piped:
-///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081 &
-///   2. /tmp/noxd unlock -status-addr 127.0.0.1:8081
-///   3. fvm flutter test test/live/pairing_live_probe.dart --dart-define=status=127.0.0.1:8081
+/// built from this tree (every connection is a channel of it, phase 044). From
+/// the repository root: the server is built first, then started. It starts
+/// locked (phase 047), and its page - up before anything else - hands out no
+/// link until the password is in; a fresh one takes it twice, at the terminal
+/// or piped:
+///   1. (cd client_backend && go build -o /tmp/noxd .)
+///   2. /tmp/noxd -db /tmp/t.db -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081 &
+///   3. curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
+///   4. /tmp/noxd unlock -status-addr 127.0.0.1:8081
+///   5. fvm flutter test test/live/pairing_live_probe.dart --dart-define=status=127.0.0.1:8081
 ///
 /// With `status` every test asks the running server for a machine link of its
 /// own, the way `noxd link` does (`POST /control/link`), so the three run in
 /// one go - each new link voids the one before it. Without it, the first test
-/// alone runs on `--dart-define=link=<machine link>` from the service page.
+/// alone runs on `--dart-define=link=<machine link>` from the service page; a
+/// link passed empty fails it rather than skipping it.
 /// `--dart-define=expiry=true` adds a fourth that waits out an invite's ten
 /// minutes, so it is off unless asked for.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const link = String.fromEnvironment('link');
+  // Passed empty is not "not passed": it is a `noxd link` that failed - a
+  // locked server, or none - and a skip there would read as a pass.
+  const linkGiven = bool.hasEnvironment('link');
   const status = String.fromEnvironment('status');
   const expiry = bool.fromEnvironment('expiry');
 
@@ -66,6 +74,7 @@ void main() {
   });
 
   test('a machine link pairs, names the person, lists the device and revokes it', () async {
+    if (linkGiven && link.isEmpty) fail('link= was passed empty - did `noxd link` fail?');
     final machine = link.isNotEmpty ? link : (status.isEmpty ? null : await _machineLink(status));
     if (machine == null) {
       stdout.writeln('SKIP: pass --dart-define=status=<service page address>, or --dart-define=link=<machine link>');
