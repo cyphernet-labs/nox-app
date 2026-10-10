@@ -296,7 +296,7 @@ func TestLoadLink(t *testing.T) {
 		{name: "the code as well", args: []string{"-qr"}, getenv: noEnv, want: LinkConfig{StatusAddr: "127.0.0.1:8081", QR: true}},
 		{name: "an address on a network", args: []string{"-status-addr", "192.168.1.10:8081"}, getenv: noEnv, wantErr: "loopback"},
 		{name: "every interface", args: []string{"-status-addr", "0.0.0.0:8081"}, getenv: noEnv, wantErr: "loopback"},
-		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "no way to hand out a link"},
+		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "must name"},
 		{name: "a stray word", args: []string{"now"}, getenv: noEnv, wantErr: `"now"`},
 		{name: "a server flag", args: []string{"-db", "x.db"}, getenv: noEnv, wantErr: "flag provided but not defined"},
 	} {

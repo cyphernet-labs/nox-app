@@ -197,12 +197,8 @@ type LinkConfig struct {
 // environment without being told, and it is held to loopback the same way: the
 // command asks for a link, and the answer must not come from anywhere else.
 func LoadLink(args []string, getenv func(string) string) (LinkConfig, error) {
-	defStatus := getenv("NOX_STATUS_ADDR")
-	if defStatus == "" {
-		defStatus = "127.0.0.1:8081"
-	}
 	fs := flag.NewFlagSet("noxd link", flag.ContinueOnError)
-	statusAddr := fs.String("status-addr", defStatus, "the running server's service page address (loopback)")
+	statusAddr := statusAddrFlag(fs, getenv)
 	qr := fs.Bool("qr", false, "draw the link as a QR code in the terminal as well")
 	if err := fs.Parse(args); err != nil {
 		return LinkConfig{}, fmt.Errorf("parse flags: %w", err)
@@ -210,11 +206,10 @@ func LoadLink(args []string, getenv func(string) string) (LinkConfig, error) {
 	if fs.NArg() > 0 {
 		return LinkConfig{}, fmt.Errorf("unexpected argument %q (noxd link takes only -status-addr and -qr)", fs.Arg(0))
 	}
-	if *statusAddr == "" {
-		return LinkConfig{}, errors.New("-status-addr must name the running server's service page: " +
-			"a server started with it empty has no page, and no way to hand out a link")
-	}
-	if err := checkStatusAddr(*statusAddr); err != nil {
+	// Every server has a page since 047 - its password is entered there - so
+	// an empty address names nothing to ask, whatever the server was started
+	// with.
+	if err := commandStatusAddr(*statusAddr); err != nil {
 		return LinkConfig{}, err
 	}
 	return LinkConfig{StatusAddr: *statusAddr, QR: *qr}, nil
