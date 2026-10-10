@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -117,18 +118,39 @@ void main() {
     expect(question(l10nEn.devicePlatformIos), findsOneWidget);
   });
 
-  testWidgets('the question cannot be put aside unanswered: back does nothing', (tester) async {
+  // The SAME route has to stay up: AppRoot asks again about a request whose
+  // dialog something else closed, so "a dialog is there" would hold even if
+  // back closed it and it came straight back.
+  ModalRoute<Object?> dialogRoute(WidgetTester tester) => ModalRoute.of(tester.element(find.byType(AppPairRequestDialogWidget)))!;
+
+  testWidgets('the question cannot be put aside unanswered: back and the scrim do nothing', (tester) async {
     await signedIn();
     await open(tester, const Size(420, 900));
     requests.ask(windows);
     await tester.pumpAndSettle();
+    final route = dialogRoute(tester);
 
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
+    expect(identical(dialogRoute(tester), route), isTrue, reason: 'back closed the question, and it was asked again');
+    expect(route.isCurrent, isTrue);
+
     await tester.tapAt(const Offset(4, 4));
     await tester.pumpAndSettle();
+    expect(identical(dialogRoute(tester), route), isTrue, reason: 'the scrim closed the question');
+  });
 
-    expect(find.byType(AppPairRequestDialogWidget), findsOneWidget);
+  testWidgets('on a desktop Escape does nothing either', (tester) async {
+    await signedIn();
+    await open(tester, const Size(1280, 800));
+    requests.ask(windows);
+    await tester.pumpAndSettle();
+    final route = dialogRoute(tester);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(identical(dialogRoute(tester), route), isTrue, reason: 'Escape closed the question');
   });
 
   testWidgets('an answer that did not get through says so, and both buttons stay', (tester) async {
