@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The NOX server. Written by deploy/install-macos.sh and written again on every
+  run of it: change the port or the addresses with the script, not here.
+
+  The server starts locked after every start and waits for its password: on
+  the service page (http://127.0.0.1:@STATUS_PORT@ on this machine) or with
+  `noxd unlock`. tor is a job of its own; the server does not wait for it.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@NOXD@</string>
+		<string>-addr</string>
+		<string>0.0.0.0:@PORT@</string>
+		<string>-db</string>
+		<string>@DB@</string>
+		<string>-status-addr</string>
+		<string>127.0.0.1:@STATUS_PORT@</string>
+@ADDRESS_ARGS@	</array>
+	<key>UserName</key>
+	<string>@USER@</string>
+	<key>GroupName</key>
+	<string>@GROUP@</string>
+	<key>WorkingDirectory</key>
+	<string>@DATA_DIR@</string>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>@LOG@</string>
+	<key>StandardErrorPath</key>
+	<string>@LOG@</string>
+</dict>
+</plist>
