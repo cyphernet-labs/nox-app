@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:nox_tor/vault.dart';
 import 'package:sembast/sembast.dart';
@@ -31,16 +32,21 @@ class VaultCodec extends Codec<Object?, String> {
   Converter<String, Object?> get decoder => const _Open();
 }
 
+/// JSON straight to and from UTF-8 bytes, with no string in between: the
+/// database opens every one of its lines at the start (SC-003).
+final Converter<Object?, List<int>> _toJsonBytes = JsonUtf8Encoder();
+final Converter<List<int>, Object?> _fromJsonBytes = utf8.decoder.fuse(json.decoder);
+
 class _Seal extends Converter<Object?, String> {
   const _Seal();
 
   @override
-  String convert(Object? input) => base64.encode(NoxVault.seal(utf8.encode(json.encode(input))));
+  String convert(Object? input) => base64.encode(NoxVault.seal(Uint8List.fromList(_toJsonBytes.convert(input))));
 }
 
 class _Open extends Converter<String, Object?> {
   const _Open();
 
   @override
-  Object? convert(String input) => json.decode(utf8.decode(NoxVault.open(base64.decode(input))));
+  Object? convert(String input) => _fromJsonBytes.convert(NoxVault.open(base64.decode(input)));
 }
