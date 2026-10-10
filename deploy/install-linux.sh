@@ -311,27 +311,38 @@ rpm_keys() {
 	rpm -qa --qf '%{NAME}-%{VERSION}-%{RELEASE}\n' 'gpg-pubkey*' 2>/dev/null || true
 }
 
-# rpm_import_key FILE gives rpm the key in FILE. What takes it out again is
-# recorded first, with the keys rpm holds now: it removes whatever key is
-# there then and was not before, so an import cut short is taken back too.
+# rpm_key_packages FPR lists the keys rpm holds that are the key FPR, one
+# package name per line: rpm names a key gpg-pubkey-<version>-<release>, and
+# the version ends in the key's id, the last eight digits of its fingerprint.
+rpm_key_packages() {
+	local id k v
+	id=$(printf '%s' "${1: -8}" | tr 'A-F' 'a-f')
+	for k in $(rpm_keys); do
+		v=${k#gpg-pubkey-}
+		v=${v%-*}
+		case $v in
+		*"$id") printf '%s\n' "$k" ;;
+		esac
+	done
+}
+
+# rpm_import_key FILE FPR gives rpm the key FPR, which FILE holds. What takes
+# it out again is recorded first, unless rpm holds that key already, so an
+# import cut short is taken back too - and it names that key alone: the
+# record on disk may be taken back by a later run, and a key imported in
+# between, by hand or for another repository, is not this run's to remove.
 rpm_import_key() {
-	undo_push "rpm_forget_keys_since $(q "$(rpm_keys)")"
+	if [ -z "$(rpm_key_packages "$2")" ]; then
+		undo_push "rpm_forget_key $(q "$2")"
+	fi
 	rpm --import "$1"
 }
 
-# rpm_forget_keys_since KEYS removes from rpm every key it holds that is not
-# among KEYS, one package name per line.
-rpm_forget_keys_since() {
+# rpm_forget_key FPR removes the key FPR from rpm.
+rpm_forget_key() {
 	local k status=0
-	for k in $(rpm_keys); do
-		case "
-$1
-" in
-		*"
-$k
-"*) ;;
-		*) rpm -e "$k" >/dev/null 2>&1 || status=1 ;;
-		esac
+	for k in $(rpm_key_packages "$1"); do
+		rpm -e "$k" >/dev/null 2>&1 || status=1
 	done
 	return "$status"
 }
@@ -424,7 +435,7 @@ dnf_tor() {
 	if command -v restorecon >/dev/null 2>&1; then
 		restorecon "$TOR_RPM_KEY_FILE" 2>/dev/null || true
 	fi
-	rpm_import_key "$TOR_RPM_KEY_FILE" || tor_fail "rpm did not take the repository key" || return 1
+	rpm_import_key "$TOR_RPM_KEY_FILE" "$TOR_RPM_KEY" || tor_fail "rpm did not take the repository key" || return 1
 	cat >"$WORK/tor.repo" <<EOF
 [tor]
 name=Tor Project packages
