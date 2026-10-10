@@ -32,11 +32,11 @@ DevicesState _state() => DevicesState(
   ],
 );
 
-/// A version-3 link as the server issues one: the address it listens on, then
-/// its onion address, kept for after the pairing.
+/// A version-3 link with one direct address and nothing else - the contract's
+/// `minimal` vector: neither an onion nor a public address, so it works only
+/// on the home network (phase 045).
 const DeviceInvite _homeOnlyInvite = DeviceInvite(
-  link:
-      'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7BCAXy3n7K0Eg8rHsZeQZjW4Iso6BP-sB5KQAg5uF4YCAzg',
+  link: 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7',
   onion: false,
 );
 
@@ -50,10 +50,9 @@ void main() {
   goldenTest('devices_page_action_error', () => DevicesPage(initialState: _state().copyWith(actionFailedKey: 'k-desktop')));
   goldenTestDesktop('devices_page_action_error', () => DevicesPage(initialState: _state().copyWith(actionFailedKey: 'k-desktop')));
 
-  // An invite that pairs only at home (040, FR-019) - every invite until phase
-  // 045, since the onion service opens only for a paired device's key (044,
-  // FR-019): the card says the link works only on the home network. Pinned on
-  // both widths because the card sits above the list and the extra line moves
+  // An invite whose link carries neither an onion nor a public address (phase
+  // 045): the card says it works only on the home network. Pinned on both
+  // widths because the card sits above the list and the extra line moves
   // everything under it.
   goldenTest('devices_page_invite_home_only', () => DevicesPage(initialState: _state().copyWith(invite: _homeOnlyInvite)));
   goldenTestDesktop('devices_page_invite_home_only', () => DevicesPage(initialState: _state().copyWith(invite: _homeOnlyInvite)));

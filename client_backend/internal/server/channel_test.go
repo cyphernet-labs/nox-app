@@ -849,13 +849,13 @@ func TestASourceIsAnAddressAnIPv6Slash64OrThisMachine(t *testing.T) {
 // either way the row that comes into being is the connection's own key.
 func TestPairPairsTheKeyTheChannelProved(t *testing.T) {
 	ts, srv := newTestServer(t)
-	token := mustClaimToken(t, srv)
+	token := mustMachineLink(t, srv)
 	proved := newDevice(t)
 	named := newDevice(t)
 
 	c := dialAs(t, ts, srv, proved)
 	c.expectGreeting()
-	c.send(`{"id":1,"cmd":"pair","data":{"token":"` + token + `","device_key":"` + named.pub + `","platform":"test"}}`)
+	c.send(`{"id":1,"cmd":"pair","data":{"token":"` + token + `","device_key":"` + named.pub + `","platform":"linux"}}`)
 	c.expectOK(1)
 
 	if _, found, err := srv.store.DeviceOwner(t.Context(), proved.pub); err != nil || !found {

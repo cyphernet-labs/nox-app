@@ -19,14 +19,15 @@ import (
 )
 
 // The whole log of a server's life, read for what it must never carry (045,
-// FR-022): a start with both address parameters, the service page's Set as a
-// browser sends it - and refused as a forgery - a claim, an invite and a second
-// device paired by it, an upgrade through the onion service refused, and a
-// second start with a broken parameter. Run itself, on real sockets, with the
-// logger a test hands it: the scrubbing is Run's, not the test's.
+// FR-022; 046, FR-005): a start with both address parameters, the service
+// page's Set as a browser sends it - and refused as a forgery - a first device
+// paired by the machine link, an invite and a second device asking with it and
+// allowed, an upgrade through the onion service refused, and a second start
+// with a broken parameter. Run itself, on real sockets, with the logger a test
+// hands it: the scrubbing is Run's, not the test's.
 
 // pageForm is what a browser takes off the service page before a Set: the
-// form token and the claim link.
+// form token and the machine link the page shows while no device is paired.
 func pageForm(t *testing.T, statusAddr string) (token, link string) {
 	t.Helper()
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + statusAddr + "/")
@@ -70,10 +71,10 @@ func postSet(t *testing.T, statusAddr, origin string, form url.Values) int {
 	return resp.StatusCode
 }
 
-// dialRun opens a WebSocket to a server started by Run, as d, through the
+// dialRunVia opens a WebSocket to a server started by Run, as d, through the
 // channel - with the Host and headers a device going through the onion service
 // would send, when given.
-func dialRun(t *testing.T, addr string, key ed25519.PublicKey, d *device, host string, header http.Header) (*wsClient, error) {
+func dialRunVia(t *testing.T, addr string, key ed25519.PublicKey, d *device, host string, header http.Header) (*wsClient, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -90,16 +91,16 @@ func dialRun(t *testing.T, addr string, key ed25519.PublicKey, d *device, host s
 	return &wsClient{t: t, conn: conn, ctx: ctx, dev: d}, nil
 }
 
-// pairOverRun presents token as d and returns once the server answered.
+// pairOverRun presents a machine link's token as d and returns once the
+// device is paired.
 func pairOverRun(t *testing.T, addr string, key ed25519.PublicKey, d *device, token string) {
 	t.Helper()
-	c, err := dialRun(t, addr, key, d, "", nil)
-	if err != nil {
-		t.Fatalf("dial to pair: %v", err)
-	}
+	c := dialRun(t, addr, key, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
-	c.expectOK(1)
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
+	if _, paired := c.expectOK(1)["identity"]; !paired {
+		t.Fatal("the machine link did not pair the device")
+	}
 	_ = c.conn.Close(websocket.StatusNormalClosure, "")
 }
 
@@ -119,9 +120,9 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 	page := "http://" + cfg.StatusAddr
 
 	// --- The service page, as a browser on this machine uses it. ---
-	formToken, claimLink := pageForm(t, cfg.StatusAddr)
-	if claimLink == "" {
-		t.Fatal("no claim link on the page of an unclaimed server")
+	formToken, machineLink := pageForm(t, cfg.StatusAddr)
+	if machineLink == "" {
+		t.Fatal("no machine link on the page of a machine no device can reach")
 	}
 	set := func(kind, value, token string) url.Values {
 		return url.Values{"kind": {kind}, "value": {value}, "token": {token}}
@@ -142,19 +143,19 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 			t.Fatalf("Set, %s: %d, want %d", step.name, got, step.want)
 		}
 	}
-	_, claimLink = pageForm(t, cfg.StatusAddr)
-	claim := readLink(t, claimLink)
-	if claim.Onion == nil {
-		t.Fatalf("the claim link names no onion service after the Set: %+v", claim)
+	// The page still shows the link it minted - a reload never mints - rebuilt
+	// with the addresses the Set left.
+	_, machineLink = pageForm(t, cfg.StatusAddr)
+	machine := readLink(t, machineLink)
+	if machine.Onion == nil {
+		t.Fatalf("the machine link names no onion service after the Set: %+v", machine)
 	}
 
-	// --- A claim, an invite, and a second device paired by it. ---
-	owner := newDevice(t)
-	pairOverRun(t, cfg.Addr, key, owner, claim.Token)
-	c, err := dialRun(t, cfg.Addr, key, owner, "", nil)
-	if err != nil {
-		t.Fatalf("dial as the owner: %v", err)
-	}
+	// --- A first device by the machine link, an invite, and a second device
+	// asking with it and allowed. ---
+	first := newDevice(t)
+	pairOverRun(t, cfg.Addr, key, first, machine.Token)
+	c := dialRun(t, cfg.Addr, key, first)
 	c.expectGreeting()
 	c.hello(1, "")
 	inviteLink, onion, _ := inviteOver(t, c, 2, `{}`)
@@ -163,11 +164,19 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 	}
 	invite := readLink(t, inviteLink)
 	second := newDevice(t)
-	pairOverRun(t, cfg.Addr, key, second, invite.Token)
+	asking := dialRun(t, cfg.Addr, key, second)
+	asking.expectGreeting()
+	asking.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"android"}}`, invite.Token))
+	var pending pendingReply
+	mustUnmarshal(t, mustRaw(t, asking.expectOK(1)), &pending)
+	expectNamedEvent(t, c, "device.pairRequested")
+	c.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":true}}`, pending.RequestID))
+	expectNamedEvent(t, asking, "pair.resolved")
+	_ = asking.conn.Close(websocket.StatusNormalClosure, "")
 
 	// --- An upgrade through the onion service, refused: the library's error
 	// quotes the Host it carried, which is the onion name. ---
-	if _, err := dialRun(t, cfg.Addr, key, second, contractOnion+":443", http.Header{"Origin": {"http://evil.example"}}); err == nil {
+	if _, err := dialRunVia(t, cfg.Addr, key, second, contractOnion+":443", http.Header{"Origin": {"http://evil.example"}}); err == nil {
 		t.Fatal("a cross-origin upgrade was accepted")
 	}
 	eventually(t, "the refused upgrade is logged", func() bool { return strings.Contains(logs.String(), "websocket accept failed") })
@@ -194,7 +203,10 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 	}
 
 	out := logs.String() + again.String()
-	for _, step := range []string{"address set on the service page", "start parameter not applied", "websocket accept failed", "command handled"} {
+	for _, step := range []string{
+		"address set on the service page", "start parameter not applied", "websocket accept failed", "command handled",
+		"pairing request closed",
+	} {
 		if !strings.Contains(out, step) {
 			t.Fatalf("the log has no %q, so this test proves less than it says:\n%s", step, out)
 		}
@@ -210,16 +222,16 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 		}
 	}
 	for what, secret := range map[string]string{
-		"a pairing link":            "nox://pair/",
-		"the claim token":           claim.Token,
-		"the invite token":          invite.Token,
-		"the form token":            formToken,
-		"the server's private key":  seed,
-		"the owner's device key":    base64.StdEncoding.EncodeToString(owner.priv),
-		"the second device's key":   base64.StdEncoding.EncodeToString(second.priv),
-		"the onion service's key":   base64.RawURLEncoding.EncodeToString(claim.Onion),
-		"the claim link's payload":  strings.TrimPrefix(claimLink, "nox://pair/")[:40],
-		"the invite link's payload": strings.TrimPrefix(inviteLink, "nox://pair/")[:40],
+		"a pairing link":             "nox://pair/",
+		"the machine link's token":   machine.Token,
+		"the invite token":           invite.Token,
+		"the form token":             formToken,
+		"the server's private key":   seed,
+		"the first device's key":     base64.StdEncoding.EncodeToString(first.priv),
+		"the second device's key":    base64.StdEncoding.EncodeToString(second.priv),
+		"the onion service's key":    base64.RawURLEncoding.EncodeToString(machine.Onion),
+		"the machine link's payload": strings.TrimPrefix(machineLink, "nox://pair/")[:40],
+		"the invite link's payload":  strings.TrimPrefix(inviteLink, "nox://pair/")[:40],
 	} {
 		if strings.Contains(out, secret) {
 			t.Errorf("%s reached the log", what)

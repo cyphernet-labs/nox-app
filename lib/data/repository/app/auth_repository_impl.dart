@@ -1,5 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:rxdart/rxdart.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -12,10 +13,14 @@ import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -27,6 +32,7 @@ import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
@@ -50,6 +56,36 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final SyncRepository _syncRepository;
   final OutboxRepository _outboxRepository;
   final FileRepository _fileRepository;
+
+  /// Whether a sign-in waits for approval on another device (phase 046).
+  final BehaviorSubject<bool> _awaitingApproval = BehaviorSubject<bool>.seeded(false);
+
+  @override
+  Stream<bool> watchAwaitingApproval() => _awaitingApproval.stream;
+
+  @override
+  Future<void> cancelPairing() async => liveIdentityHandshake?.cancelPairing();
+
+  @override
+  Future<RepositoryResult<PendingPairing?>> pendingPairing() {
+    return execute<PendingPairing?>(() async {
+      final stored = await _sessionRepository.readPendingPairing();
+      // A keychain that cannot be read right now resumes nothing - and undoes
+      // nothing either.
+      if (!stored.hasData) return RepositoryResult<PendingPairing?>.error(exception: stored.exception!);
+      final pending = stored.data;
+      if (pending == null) return const RepositoryResult<PendingPairing?>.success(data: null);
+      if (!DateTime.now().isBefore(pending.waitUntil)) {
+        // Its time ran out while the app was closed. Undone like any sign-in
+        // that did not land: the channel it brought up at launch towards the
+        // server it named stops, and the server's key and addresses go.
+        logRepository.debug(target: this, message: 'sign-in: the wait for approval ran out while the app was closed');
+        await _rollBackSignIn();
+        return const RepositoryResult<PendingPairing?>.success(data: null);
+      }
+      return RepositoryResult<PendingPairing?>.success(data: pending);
+    });
+  }
 
   /// Signs in by presenting a pairing link, and lets the SERVER decide whether
   /// onboarding is due.
@@ -121,7 +157,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       }
 
       try {
-        final greeting = await handshake.pair(link: link, platform: PlatformUtils.family);
+        final greeting = await _pair(handshake, link: link, identifier: identifier, connection: connection);
         if (!greeting.outcomeStated) {
           await _rollBackSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
@@ -139,7 +175,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           return stored;
         }
         // The identity comes from the pair reply, not from the fact that THIS
-        // device presented a claim link: the server is the only one who knows,
+        // device presented a machine link: the server is the only one who knows,
         // and a device that inferred it would be right until the day it was
         // not. Stored now so the name is on screen without waiting for the
         // greeting that follows.
@@ -152,7 +188,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         } else {
           final adopted = await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label);
           if (!adopted.hasData) {
-            // NOT fatal, and deliberately not a rollback: the claim token is
+            // NOT fatal, and deliberately not a rollback: the pairing token is
             // already spent, so discarding here would leave the device unable
             // to pair again - the brick this path was rewritten to avoid.
             logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
@@ -175,17 +211,23 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // sent looking for an invite they already have.
         await _rollBackSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
+      } on PairingCancelled {
+        // The person withdrew the request (phase 046). Rolled back like any
+        // attempt that did not land; the screen has nothing to explain.
+        await _rollBackSignIn();
+        return const RepositoryResult<bool>.error(exception: PairingException.cancelled);
       } on PairingRefused catch (e) {
         await _rollBackSignIn();
-        // Two refusals, two answers. Both are about the LINK, because a link
-        // is all there is to refuse now: nobody waits on a human being for
-        // permission to pair a device with their own machine.
-        return RepositoryResult<bool>.error(
-          exception: switch (e.reason) {
-            PairRefusal.expired => RepositoryException.notFound,
-            PairRefusal.notUsable => RepositoryException.authentication,
-          },
-        );
+        // Three refusals, three answers. Each ends in "ask for a new link",
+        // and each says why: the link - or the request an invite opened,
+        // which lives exactly as long - expired; the link is spent; or the
+        // device that issued the invite said no (phase 046).
+        final BaseRepositoryException exception = switch (e.reason) {
+          PairRefusal.expired => RepositoryException.notFound,
+          PairRefusal.notUsable => RepositoryException.authentication,
+          PairRefusal.declined => PairingException.declined,
+        };
+        return RepositoryResult<bool>.error(exception: exception);
       } on Object catch (e, st) {
         // The TYPE only. A FormatException from a base64 decode carries the
         // offending source in its message, which here would be the link or the
@@ -196,6 +238,43 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
+  }
+
+  /// Presents the link, and waits with it when it is an invite whose request
+  /// waits for approval (phase 046).
+  ///
+  /// The wait is remembered while it lasts - the link, what was set on the
+  /// connection screen and this device's deadline - so a restart within its
+  /// time goes on waiting for the same request (FR-011); the same link
+  /// remembered from before keeps its first deadline. Forgotten when the wait
+  /// ends, whichever way: a link left in storage is a credential nobody needs.
+  Future<IdentityHandshake> _pair(
+    LiveIdentityHandshake handshake, {
+    required PairingLink link,
+    required String identifier,
+    ConnectionSettings? connection,
+  }) async {
+    final remembered = (await _sessionRepository.readPendingPairing()).data;
+    final resumeUntil = remembered != null && PairingLink.tryParse(remembered.link)?.token == link.token ? remembered.waitUntil : null;
+    Future<void>? remembering;
+    try {
+      return await handshake.pair(
+        link: link,
+        platform: PlatformUtils.family,
+        waitUntil: resumeUntil,
+        onPending: (pending) {
+          _awaitingApproval.add(true);
+          remembering = _sessionRepository.savePendingPairing(
+            PendingPairing(link: identifier, waitUntil: pending.waitUntil, connection: connection),
+          );
+        },
+      );
+    } finally {
+      _awaitingApproval.add(false);
+      // After the write that remembered it, or the record would outlive this.
+      await remembering;
+      await _sessionRepository.clearPendingPairing();
+    }
   }
 
   /// Undoes a sign-in that did not land: the channel it brought up towards the
@@ -248,9 +327,21 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// Revokes this device's own key before the local wipe, when there is a
   /// channel to say it on. Never blocks the logout: a person who chose to sign
   /// out must sign out.
+  ///
+  /// "A channel" is a greeted one, now (contract §8A: with a live connection
+  /// the revoke goes out before the wipe; without one the wipe is
+  /// unconditional). A command sent without one would wait for a connection
+  /// that may be minutes away through Tor - the person staring at the logout
+  /// for the bound below to buy nothing, since the orphaned key is revoked
+  /// from another device either way.
   Future<void> _revokeOwnKey() async {
     final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
     if (devices == null) return;
+    final phase = getIt.isRegistered<SessionPhaseService>() ? getIt<SessionPhaseService>().phase : null;
+    if (phase != SessionPhase.live && phase != SessionPhase.catchingUp) {
+      logRepository.debug(target: this, message: 'logout: not connected, the key is revoked from another device');
+      return;
+    }
     try {
       final seed = await _sessionRepository.deviceSecret();
       if (!seed.hasData) return;
@@ -308,8 +399,32 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: landed ? label : null));
   }
 
+  /// The logout under way, if one is.
+  Future<RepositoryResult<bool>>? _loggingOut;
+
+  /// One logout at a time, and a second one joins the first.
+  ///
+  /// The case this exists for is a voluntary logout's own echo. It revokes
+  /// this device's key first, and the server answers that by telling every
+  /// connection of the key - this one included - `device.revoked`, which is
+  /// the forced logout's trigger. The guard against acting on it reads the
+  /// session, and the wipe that empties it is a few storage calls behind the
+  /// revoke's reply: the event can win that race, and a second, forced wipe
+  /// then tells the person their session expired when they signed out.
+  /// Joined, the forced one IS the voluntary one - same wipe, same outcome,
+  /// no expiry notice.
   @override
   Future<RepositoryResult<bool>> logout({bool forced = false}) {
+    final running = _loggingOut;
+    if (running != null) return running;
+    final run = _logout(forced: forced);
+    _loggingOut = run;
+    return run.whenComplete(() {
+      if (identical(_loggingOut, run)) _loggingOut = null;
+    });
+  }
+
+  Future<RepositoryResult<bool>> _logout({required bool forced}) {
     // Gate the re-derive on a successful wipe: a failed clear() (e.g. a secure-storage
     // PlatformException) must NOT report success while the identifier survives —
     // otherwise the user silently stays authorized (Constitution I: logout fully wipes).

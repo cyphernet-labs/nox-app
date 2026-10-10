@@ -106,12 +106,12 @@ func TestAnIdleConnectionIsClosedAfterItsIdleTimeout(t *testing.T) {
 	}
 }
 
-// A claim through the onion service is a claim like any other (045, FR-008):
-// the very first device may pair through Tor, from anywhere, and then greet
-// the same way.
-func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
+// A machine link presented through the onion service pairs like any other
+// (045, FR-008; 046): the very first device may pair through Tor, from
+// anywhere, and then greet the same way.
+func TestAMachineLinkThroughTheOnionServicePairsLikeAnyOther(t *testing.T) {
 	ts, srv := newTestServer(t)
-	token := mustClaimToken(t, srv)
+	token := mustMachineLink(t, srv)
 	d := newDevice(t)
 
 	c, err := dialThroughOnion(t, ts, srv, d)
@@ -119,12 +119,12 @@ func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
 		t.Fatalf("dial through the onion service: %v", err)
 	}
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	data := c.expectOK(1)
 	var id identity
 	mustUnmarshal(t, data["identity"], &id)
 	if !id.Created {
-		t.Fatalf("the claim did not create the person: %+v", id)
+		t.Fatalf("the first pairing did not create the person: %+v", id)
 	}
 
 	again, err := dialThroughOnion(t, ts, srv, d)
@@ -141,11 +141,11 @@ func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
 // unknown command like any other.
 func TestAccessKeysAreGoneFromTheWire(t *testing.T) {
 	ts, srv := newTestServer(t)
-	token := mustClaimToken(t, srv)
+	token := mustMachineLink(t, srv)
 	d := newDevice(t)
 	c := dialAs(t, ts, srv, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test","access_key":"not even base64!"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux","access_key":"not even base64!"}}`, token))
 	c.expectOK(1)
 
 	g := dialAs(t, ts, srv, d)

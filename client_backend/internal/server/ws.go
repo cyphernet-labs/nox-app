@@ -42,7 +42,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
 	defer c.cleanup()
-	// A stranger's connection is held to a deadline and a cap (unpaired.go).
+	// A stranger's connection is held to a deadline and a cap (unpaired.go) -
+	// or, while an invite it presented waits for Allow, to that request's own
+	// deadline alone (awaitAnswer). The returned release lets go of either.
 	// Asked AFTER the connection joined the registry, the way a transfer asks
 	// (files.go): a revocation from here on finds it and drops it, so a
 	// "paired" read here cannot outlive the device, and a "not paired" one
@@ -95,11 +97,12 @@ func (c *client) readLoop() {
 }
 
 func (c *client) dispatch(cmd protocol.Command) {
-	// pair is the ONE exception to "hello first", and not for convenience: an
-	// unpaired device proved a key the server does not know, and its greeting
-	// would be refused, so requiring one first would make pairing impossible
-	// rather than awkward.
-	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello && cmd.Cmd != protocol.CmdPair {
+	// pair and pair.cancel are the exceptions to "hello first", and not for
+	// convenience: an unpaired device proved a key the server does not know,
+	// and its greeting would be refused, so requiring one first would make
+	// pairing impossible rather than awkward - and a device waiting for Allow
+	// could not withdraw its request.
+	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello && cmd.Cmd != protocol.CmdPair && cmd.Cmd != protocol.CmdPairCancel {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello must be the first command"))
 		return
 	}
@@ -109,6 +112,10 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleSessionHello(cmd)
 	case protocol.CmdPair:
 		c.handlePair(cmd)
+	case protocol.CmdPairCancel:
+		c.handlePairCancel(cmd)
+	case protocol.CmdDeviceApprove:
+		c.handleDeviceApprove(cmd)
 	case protocol.CmdDeviceList:
 		c.handleDeviceList(cmd)
 	case protocol.CmdDeviceRevoke:

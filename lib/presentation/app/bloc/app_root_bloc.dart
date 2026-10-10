@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
+import 'package:nox_app/domain/service/pair_request_service.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'app_root_event.dart';
@@ -19,15 +22,25 @@ part 'app_root_bloc.freezed.dart';
 /// becomes [UpdateAppState]. Two-phase apply: the first resolved state lands in
 /// `lastAppState` but is NOT applied — the splash animation dispatches
 /// [ApplyAppState] when it finishes; every later change applies immediately.
+///
+/// It also carries the one question the app asks over any screen (phase 046):
+/// a new device that presented an invite this device issued waits for
+/// `Allow` or `Deny` here, and [PairRequestService] says which requests wait.
 class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
   AppRootBloc() : super(AppRootState.initial()) {
     on<Initialize>(_onInitialize);
     on<SetTheme>(_onSetTheme);
     on<UpdateAppState>(_onUpdateAppState);
     on<ApplyAppState>(_onApplyAppState);
+    on<PairRequestsChanged>(_onPairRequestsChanged);
+    on<PairRequestAnswered>(_onPairRequestAnswered);
   }
 
   StreamSubscription<RepositoryResult<AppStateModel>>? _appStateSubscription;
+  StreamSubscription<List<PairRequest>>? _pairRequestsSubscription;
+
+  /// Only where there is a live channel to be asked over.
+  PairRequestService? get _pairRequests => getIt.isRegistered<PairRequestService>() ? getIt<PairRequestService>() : null;
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<AppRootState> emit) async {
     // Apply the persisted theme before wiring the app-state stream (defaults to
@@ -38,6 +51,38 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
       onError: (_) {},
     );
     _appStateSubscription ??= appStateRepository.watchAppState().listen((result) => add(AppRootEvent.updateAppState(result: result)));
+    _pairRequestsSubscription ??= _pairRequests?.watchRequests().listen((requests) {
+      if (!isClosed) add(AppRootEvent.pairRequestsChanged(requests));
+    });
+  }
+
+  /// The oldest waiting request is the one asked about; the next one waits
+  /// its turn. A new question starts clean: what was said about the last one
+  /// - an answer on its way, one that failed - is over with it.
+  void _onPairRequestsChanged(PairRequestsChanged event, Emitter<AppRootState> emit) {
+    final head = event.requests.firstOrNull;
+    if (head?.requestId == state.pairRequest?.requestId) {
+      if (head != state.pairRequest) emit(state.copyWith(pairRequest: head));
+      return;
+    }
+    emit(state.copyWith(pairRequest: head, pairAnswering: null, pairAnswerFailed: false));
+  }
+
+  /// Sends the answer. One at a time, and only to the request on screen: a
+  /// second press, or a press on a dialog whose request has just closed,
+  /// sends nothing. A success needs nothing here - the service drops the
+  /// request, and the dialog goes with it.
+  Future<void> _onPairRequestAnswered(PairRequestAnswered event, Emitter<AppRootState> emit) async {
+    final service = _pairRequests;
+    if (service == null || state.pairRequest?.requestId != event.requestId || state.pairAnswering != null) return;
+    emit(state.copyWith(pairAnswering: event.allow, pairAnswerFailed: false));
+    final result = await service.answer(requestId: event.requestId, allow: event.allow);
+    // The question may be another one by now: this answer closed its own.
+    if (state.pairRequest?.requestId != event.requestId) return;
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(pairAnswering: null)),
+      onError: (_) => emit(state.copyWith(pairAnswering: null, pairAnswerFailed: true)),
+    );
   }
 
   FutureOr<void> _onSetTheme(SetTheme event, Emitter<AppRootState> emit) async {
@@ -84,6 +129,8 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
   Future<void> close() {
     _appStateSubscription?.cancel();
     _appStateSubscription = null;
+    _pairRequestsSubscription?.cancel();
+    _pairRequestsSubscription = null;
     return super.close();
   }
 }

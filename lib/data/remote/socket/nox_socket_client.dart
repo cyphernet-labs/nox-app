@@ -180,6 +180,15 @@ class NoxSocketClient {
   SessionPhase get currentPhase => _phase.value;
   Stream<ServerEvent> get events => _events.stream;
 
+  /// One event per connection this client opens, before its channel is
+  /// verified.
+  ///
+  /// A pairing waiting for approval presents its token again on each (phase
+  /// 046): the event that carries the outcome reaches only the connections
+  /// open when the request closed, and the repeat is how a device that was
+  /// away for that moment still learns it.
+  Stream<void> get connectionOpened => _opened.stream;
+
   /// Opens the connection and keeps it open until [stop]. Safe to call twice.
   ///
   /// [targets] is asked for an address before every attempt; [url] is the
@@ -264,10 +273,10 @@ class NoxSocketClient {
     }
   }
 
-  /// Presents a pairing token, which is the ONE command allowed before the
-  /// greeting: the server does not know this device's key yet, so a greeting
-  /// would be refused, and waiting for one would make pairing impossible
-  /// rather than awkward. The key itself is not in the command - the server
+  /// Presents a pairing token - with [cancelPairing], one of the two commands
+  /// allowed before the greeting: the server does not know this device's key
+  /// yet, so a greeting would be refused, and waiting for one would make
+  /// pairing impossible rather than awkward. The key itself is not in the command - the server
   /// takes it from the connection, whose Eidolon check this device has just
   /// passed with it (phase 044). And nothing goes out before the channel has
   /// verified the server's key: a machine with another key never sees the
@@ -288,8 +297,27 @@ class NoxSocketClient {
   /// identity (contract §8A) - and it is what keeps a dial that ran out its
   /// time through Tor, or a network change mid-pairing, from sending the
   /// person off to try again by hand.
-  Future<CommandReply> pair({required String token, required String platform}) async {
-    final data = <String, dynamic>{'token': token, 'platform': platform};
+  ///
+  /// The reply is the identity this device now speaks as, or - for an invite
+  /// since phase 046 - a request that waits for the device that issued it,
+  /// or the outcome that request closed with. Reading it is the caller's.
+  Future<CommandReply> pair({required String token, required String platform}) =>
+      _beforeGreeting('pair', <String, dynamic>{'token': token, 'platform': platform});
+
+  /// Withdraws the request this device opened with an invite and still waits
+  /// on (contract §8A, phase 046): the token is spent, and the device that
+  /// issued the invite stops being asked. The other command allowed before a
+  /// greeting, and for the same reason as [pair]: the device asking is not
+  /// paired - being paired is what it was waiting for.
+  ///
+  /// The reply is `{}` whether or not a request was left to withdraw, so a
+  /// repeat after a lost reply is as good as the first.
+  Future<CommandReply> cancelPairing({required String token}) => _beforeGreeting('pair.cancel', <String, dynamic>{'token': token});
+
+  /// Sends one of the commands allowed before a greeting, presenting it again
+  /// on the next connection when the one carrying it goes away - within ONE
+  /// budget for the whole attempt (see [pair]).
+  Future<CommandReply> _beforeGreeting(String cmd, Map<String, dynamic> data) async {
     final waited = Stopwatch()..start();
     var slow = false;
     // The slow budget from the moment the slow path shows, and kept: between
@@ -302,13 +330,13 @@ class NoxSocketClient {
     while (true) {
       final connection = await _awaitConnection(left: left);
       try {
-        return await _sendOnce(isGreeting: true, via: connection, 'pair', data, left: left);
+        return await _sendOnce(isGreeting: true, via: connection, cmd, data, left: left);
       } on SocketUnavailableException {
         // A refusal for good - another server behind the onion address - is
         // not a loss to wait out: no connection comes after it until the
         // channel is started again (phase 045).
         if (!_started || left() <= Duration.zero || _phase.value.isTerminal) rethrow;
-        logRepository.debug(target: this, message: 'socket: the connection carrying pair went away, presenting it again');
+        logRepository.debug(target: this, message: 'socket: the connection carrying $cmd went away, presenting it again');
       }
     }
   }
@@ -623,10 +651,10 @@ class NoxSocketClient {
         return;
       }
       if (credentials.unpaired) {
-        // Held open, NOT torn down: this is the window `pair` runs in, and it
-        // is the one command allowed before a greeting. Nothing else can be
-        // sent - every other command waits on the greeting that will not come
-        // until pairing has happened. A greeting now would be refused as
+        // Held open, NOT torn down: this is the window `pair` runs in - and,
+        // while a request waits for approval (phase 046), `pair.cancel` and
+        // the outcome event. Nothing else can be sent - every other command
+        // waits on the greeting that will not come until pairing has happened. A greeting now would be refused as
         // `unauthenticated`: the server does not know this device's key yet.
         logRepository.debug(target: this, message: 'socket: not paired yet, holding the connection open for pairing');
         return;

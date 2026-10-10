@@ -14,4 +14,8 @@ sealed class LoginEvent with _$LoginEvent {
 
   /// The page consumed a terminal `nav*` status (navigated away) → reset to idle.
   const factory LoginEvent.navigationHandled() = NavigationHandled;
+
+  /// The screen opened: a wait for approval the app was closed in, still
+  /// within its time, goes on (phase 046, FR-011).
+  const factory LoginEvent.resumeChecked() = ResumeChecked;
 }

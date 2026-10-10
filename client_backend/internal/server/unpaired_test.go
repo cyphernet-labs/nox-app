@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,7 +66,7 @@ func TestAConnectionThatPairsInTimeOrIsPairedStaysOpen(t *testing.T) {
 		d := newDevice(t)
 		c := dialAs(t, ts, srv, d)
 		c.expectGreeting()
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, mustClaimToken(t, srv)))
+		c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, mustMachineLink(t, srv)))
 		c.expectOK(1)
 		pastIt()
 		c.send(`{"id":2,"cmd":"session.hello","data":{"schema":1}}`)
@@ -129,13 +130,9 @@ func TestUnpairedConnectionsAreCappedAndTheOldestMakesRoom(t *testing.T) {
 		t.Fatalf("%d connections held as unpaired after the newcomer, want the cap of %d", n, most)
 	}
 
-	// The newcomer pairs - with an invite the person's device issued - and
+	// The newcomer pairs - with a machine link, which pairs at once - and
 	// leaves the count; the others are untouched.
-	invite, err := srv.store.IssueDeviceInvite(context.Background(), home.pub, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	newcomer.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, invite))
+	newcomer.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, mustMachineLink(t, srv)))
 	newcomer.expectOK(1)
 	if n := unpairedHeld(srv); n != most-1 {
 		t.Fatalf("%d connections held as unpaired after one paired, want %d", n, most-1)
@@ -359,5 +356,324 @@ func TestAPairedDevicesLongDownloadLeavesItsConnectionUsable(t *testing.T) {
 
 	if next := raw.ask("GET /files/not-a-token HTTP/1.1\r\nHost: nox\r\n\r\n"); next.StatusCode != http.StatusNotFound || next.Close {
 		t.Fatalf("the next request on the connection: %d (close=%v), want a 404 that keeps it", next.StatusCode, next.Close)
+	}
+}
+
+// --- a pairing that waits for Allow (046) ---
+
+// waitsHeld counts the connections srv holds as waiting on a pairing request.
+func waitsHeld(srv *Server) int {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	return len(srv.waits)
+}
+
+// presentAgain presents token once more on c and returns the answer: the
+// request it waits on, for as long as it does.
+func presentAgain(t *testing.T, c *wsClient, id int, token string) pendingReply {
+	t.Helper()
+	var got pendingReply
+	data := c.expectOKAfter(id, fmt.Sprintf(`{"id":%d,"cmd":"pair","data":{"token":%q,"platform":"windows"}}`, id, token))
+	mustUnmarshal(t, mustRaw(t, data), &got)
+	return got
+}
+
+// holdBeforeWait stops every `pair` that found its request waiting before the
+// connection's wait on it takes hold, until let is called: the window a close
+// lands in with nobody waiting on the request yet.
+func holdBeforeWait(t *testing.T) (tweak func(*Server), reached <-chan string, let func()) {
+	t.Helper()
+	at := make(chan string, 1)
+	release := make(chan struct{})
+	let = sync.OnceFunc(func() { close(release) })
+	// Released before the stack closes, or a held command would hold its
+	// shutdown too.
+	t.Cleanup(let)
+	return func(s *Server) {
+		s.beforeWait = func(requestID string) {
+			at <- requestID
+			<-release
+		}
+	}, at, let
+}
+
+// An approval can take the invite's whole ten minutes, and a device waits for
+// it on the connection it presented the invite on - a stranger's connection,
+// whose key nobody paired yet. While the request waits, a stranger's deadline
+// does not apply to it: here the wait runs four deadlines long, eight minutes
+// at the real scale, and the device is then allowed, greets on that same
+// connection and stays. Beside it, a stranger with no request, and one whose
+// pairing was refused at once, are still closed at the deadline.
+func TestAPairingThatWaitsForAllowOutlivesAStrangersDeadline(t *testing.T) {
+	const deadline = 300 * time.Millisecond
+	ts, srv := newTestServerWith(t, func(s *Server) { s.unpairedTimeout = deadline })
+	_, issuer, token := issuerSetup(t, ts, srv)
+
+	waiting, pending := presentInvite(t, ts, srv, newDevice(t), token)
+	expectNamedEvent(t, issuer, protocol.EventDevicePairRequested)
+	idle := dialWS(t, ts, srv)
+	idle.expectGreeting()
+	refused := dialWS(t, ts, srv)
+	refused.expectGreeting()
+	refused.send(`{"id":1,"cmd":"pair","data":{"token":"not-a-token","platform":"linux"}}`)
+	refused.expectErr(1, protocol.ErrInvalidToken)
+	if w := waitsHeld(srv); w != 1 {
+		t.Fatalf("%d connections held as waiting, want the device that presented the invite", w)
+	}
+
+	time.Sleep(4 * deadline)
+	waitClosed(t, idle, websocket.StatusPolicyViolation)
+	waitClosed(t, refused, websocket.StatusPolicyViolation)
+	if again := presentAgain(t, waiting, 2, token); again != pending {
+		t.Fatalf("four deadlines on, the waiting device's repeat = %+v, want the same request %+v", again, pending)
+	}
+
+	issuer.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":true}}`, pending.RequestID))
+	data := expectNamedEvent(t, waiting, protocol.EventPairResolved)
+	if string(data["outcome"]) != `"allowed"` {
+		t.Fatalf("pair.resolved = %v, want allowed", data)
+	}
+	waiting.hello(3, "")
+	if n, w := unpairedHeld(srv), waitsHeld(srv); n != 0 || w != 0 {
+		t.Fatalf("%d held as strangers and %d as waiting after the Allow, want none", n, w)
+	}
+	// A paired device's connection now: no deadline left to close it.
+	time.Sleep(2 * deadline)
+	waiting.expectOKAfter(4, `{"id":4,"cmd":"device.list","data":{}}`)
+}
+
+// The cap on strangers takes the oldest out for a newcomer, and the device
+// waiting for Allow connected before every stranger here - held to the cap, it
+// would be the first one out. A wait holds no place: a flood of newcomers
+// pushes out only its own, and the waiting device is then allowed.
+func TestTheCapNeverPushesOutAPairingThatWaits(t *testing.T) {
+	const most = 2
+	ts, srv := newTestServerWith(t, func(s *Server) { s.maxUnpaired = most })
+	_, issuer, token := issuerSetup(t, ts, srv)
+	waiting, pending := presentInvite(t, ts, srv, newDevice(t), token)
+	expectNamedEvent(t, issuer, protocol.EventDevicePairRequested)
+
+	var flood []*wsClient
+	for range 3 * most {
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		flood = append(flood, c)
+	}
+	for _, c := range flood[:2*most] {
+		waitClosed(t, c, websocket.StatusTryAgainLater)
+	}
+	if n, w := unpairedHeld(srv), waitsHeld(srv); n != most || w != 1 {
+		t.Fatalf("%d held as strangers and %d as waiting, want the cap of %d and the waiting device", n, w, most)
+	}
+	if again := presentAgain(t, waiting, 2, token); again != pending {
+		t.Fatalf("after the flood the waiting device's repeat = %+v, want the same request %+v", again, pending)
+	}
+
+	issuer.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":true}}`, pending.RequestID))
+	expectNamedEvent(t, waiting, protocol.EventPairResolved)
+	waiting.hello(3, "")
+}
+
+// A request that closes without a pairing leaves its connection with nothing
+// that says it will pair any more: it is a stranger again, with two minutes of
+// its own from the close, counted afresh. Each way a request ends without
+// Allow: Deny on the issuing device, Cancel on the new one, and its time
+// running out with nobody acting - where the sweep must get to the request
+// before the wait's own bound, its deadline plus one sweep and a stranger's
+// time, and half a second of the latter leaves room for a slow sweep.
+func TestAWaitThatEndsWithoutAPairingIsAStrangersAgain(t *testing.T) {
+	const deadline = 500 * time.Millisecond
+	for _, tc := range []struct {
+		name    string
+		outcome string
+		// end ends the request: by the issuer's answer, or the new device's
+		// cancel. Nil leaves it to its deadline.
+		end func(t *testing.T, issuer, waiting *wsClient, token string, pending pendingReply)
+		// almostGone issues the invite with two seconds of its time left.
+		almostGone bool
+	}{
+		{"denied", "denied", func(t *testing.T, issuer, _ *wsClient, _ string, pending pendingReply) {
+			issuer.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":false}}`, pending.RequestID))
+		}, false},
+		{"cancelled", "cancelled", func(t *testing.T, _, waiting *wsClient, token string, _ pendingReply) {
+			waiting.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"pair.cancel","data":{"token":%q}}`, token))
+		}, false},
+		{"expired", "expired", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, srv := newTestServerWith(t, func(s *Server) {
+				s.unpairedTimeout = deadline
+				s.requestSweep = 50 * time.Millisecond
+			})
+			issuerKey, issuer, token := issuerSetup(t, ts, srv)
+			if tc.almostGone {
+				// Issued almost ten minutes ago: two seconds are left.
+				var err error
+				token, err = srv.store.IssueDeviceInvite(context.Background(), issuerKey.pub, time.Now().Unix()-598)
+				if err != nil {
+					t.Fatalf("IssueDeviceInvite: %v", err)
+				}
+			}
+			waiting, pending := presentInvite(t, ts, srv, newDevice(t), token)
+			// When the request ends at the earliest: its deadline, or the
+			// moment before the answer or the cancel goes out.
+			ends := time.Unix(pending.ExpiresAt, 0)
+			if tc.end != nil {
+				// Past the deadline first: the wait, not the clock, is what
+				// keeps the connection until the request ends.
+				time.Sleep(2 * deadline)
+				ends = time.Now()
+				tc.end(t, issuer, waiting, token, pending)
+			}
+			data := expectNamedEvent(t, waiting, protocol.EventPairResolved)
+			if string(data["outcome"]) != `"`+tc.outcome+`"` {
+				t.Fatalf("pair.resolved = %v, want %s", data, tc.outcome)
+			}
+			// Whoever closed the request ended the wait before either side was
+			// told (announcePairClosed). For an expired request that is the
+			// sweep - and only this tells it from the wait's own bound, which
+			// would close the connection the same way a moment later.
+			if w := waitsHeld(srv); w != 0 {
+				t.Fatalf("%d connections still held as waiting once pair.resolved arrived, want none", w)
+			}
+			waitClosed(t, waiting, websocket.StatusPolicyViolation)
+			if took := time.Since(ends); took < deadline/2 {
+				t.Fatalf("closed %v after the request ended, well inside a fresh deadline of %v", took, deadline)
+			}
+			eventually(t, "the connection holds no place and no wait", func() bool {
+				return unpairedHeld(srv) == 0 && waitsHeld(srv) == 0
+			})
+		})
+	}
+}
+
+// One connection holds each request's wait: the one that presented it last.
+// The app presents its invite again on every new connection, and the one it
+// left behind - dead, as a rule, though the server may not know it yet - is
+// closed at once, not left to a deadline; the newest waits on, and is
+// allowed. So the connections a key nobody paired holds this way are no more
+// than the requests that wait.
+func TestTheConnectionThatPresentedTheInviteLastHoldsTheWait(t *testing.T) {
+	const deadline = 300 * time.Millisecond
+	ts, srv := newTestServerWith(t, func(s *Server) { s.unpairedTimeout = deadline })
+	_, issuer, token := issuerSetup(t, ts, srv)
+	newcomer := newDevice(t)
+	first, pending := presentInvite(t, ts, srv, newcomer, token)
+	expectNamedEvent(t, issuer, protocol.EventDevicePairRequested)
+
+	second, again := presentInvite(t, ts, srv, newcomer, token)
+	if again != pending {
+		t.Fatalf("the second connection's answer = %+v, want the same request %+v", again, pending)
+	}
+	waitClosed(t, first, websocket.StatusTryAgainLater)
+	if n, w := unpairedHeld(srv), waitsHeld(srv); n != 0 || w != 1 {
+		t.Fatalf("%d held as strangers and %d as waiting, want only the second connection's wait", n, w)
+	}
+	time.Sleep(3 * deadline)
+	if still := presentAgain(t, second, 2, token); still != pending {
+		t.Fatalf("the second connection's repeat = %+v, want the same request %+v", still, pending)
+	}
+
+	issuer.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":true}}`, pending.RequestID))
+	expectNamedEvent(t, second, protocol.EventPairResolved)
+	second.hello(3, "")
+}
+
+// A wait moves to the connection that presented the invite last, and the one
+// it leaves is closed - never put back among the strangers. Put back as the
+// newest, it would move behind every stranger that dialled after it: a key
+// whose request waits - a leaked invite, presented first - could reorder the
+// places with `pair` frames alone, presenting on its spare connections one by
+// one until a device that dialled later was the oldest, and then push that
+// device out with ONE new connection instead of a whole cap's worth.
+func TestPresentingAnInviteAgainCannotReorderTheStrangers(t *testing.T) {
+	const most = 4
+	ts, srv := newTestServerWith(t, func(s *Server) { s.maxUnpaired = most })
+	_, issuer, token := issuerSetup(t, ts, srv)
+	leaked := newDevice(t)
+	holder, pending := presentInvite(t, ts, srv, leaked, token)
+	expectNamedEvent(t, issuer, protocol.EventDevicePairRequested)
+	var spares []*wsClient
+	for range most - 1 {
+		c := dialAs(t, ts, srv, leaked)
+		c.expectGreeting()
+		spares = append(spares, c)
+	}
+	// A device that dials after all of them, to pair with a link of its own:
+	// the places are full now, and it is the newest.
+	late := dialWS(t, ts, srv)
+	late.expectGreeting()
+
+	for _, c := range spares {
+		if again := presentAgain(t, c, 1, token); again != pending {
+			t.Fatalf("a spare connection's repeat = %+v, want the same request %+v", again, pending)
+		}
+	}
+	// One new connection of the same key. Had the repeats moved the
+	// connections they left behind the late device, it would be the oldest
+	// now, and this would push it out.
+	extra := dialAs(t, ts, srv, leaked)
+	extra.expectGreeting()
+
+	late.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, mustMachineLink(t, srv)))
+	if _, paired := late.expectOK(1)["identity"]; !paired {
+		t.Fatal("the late device did not pair through its machine link")
+	}
+	// Each repeat closed the connection the wait left, and the last spare
+	// waits; the new connection is the only stranger left in a place.
+	for _, left := range append([]*wsClient{holder}, spares[:len(spares)-1]...) {
+		waitClosed(t, left, websocket.StatusTryAgainLater)
+	}
+	if n, w := unpairedHeld(srv), waitsHeld(srv); n != 1 || w != 1 {
+		t.Fatalf("%d held as strangers and %d as waiting, want the new connection and the last spare's wait", n, w)
+	}
+	if still := presentAgain(t, spares[len(spares)-1], 2, token); still != pending {
+		t.Fatalf("the last spare's repeat = %+v, want the same request %+v", still, pending)
+	}
+}
+
+// A request can close between the store's "pending" and the wait taking hold -
+// here the issuer answers in exactly that window - and whoever closed it found
+// nobody waiting on it. The wait reads the request again once it holds, so a
+// Deny puts the connection back under a stranger's deadline at once, and an
+// Allow lets it go as a paired device's: neither is left exempt for the rest
+// of the request's ten minutes. The deadline is a second here: the stranger's
+// own runs while the command is held in the window, and must not end it there.
+func TestARequestThatClosesBeforeItsWaitTakesHoldEndsTheWait(t *testing.T) {
+	const deadline = time.Second
+	for _, allow := range []bool{false, true} {
+		t.Run(map[bool]string{false: "denied", true: "allowed"}[allow], func(t *testing.T) {
+			hold, reached, let := holdBeforeWait(t)
+			ts, srv := newTestServerWith(t, func(s *Server) { s.unpairedTimeout = deadline }, hold)
+			_, issuer, token := issuerSetup(t, ts, srv)
+
+			waiting := dialAs(t, ts, srv, newDevice(t))
+			waiting.expectGreeting()
+			waiting.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"windows"}}`, token))
+			var requestID string
+			select {
+			case requestID = <-reached:
+			case <-time.After(5 * time.Second):
+				t.Fatal("pair never found its request waiting")
+			}
+			issuer.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":%t}}`, requestID, allow))
+			let()
+
+			var answer pendingReply
+			mustUnmarshal(t, mustRaw(t, waiting.expectOK(1)), &answer)
+			if answer.Status != "pending" || answer.RequestID != requestID {
+				t.Fatalf("pair = %+v, want the pending request %s the store answered before the close", answer, requestID)
+			}
+			eventually(t, "the wait has ended", func() bool { return waitsHeld(srv) == 0 })
+			if !allow {
+				waitClosed(t, waiting, websocket.StatusPolicyViolation)
+				return
+			}
+			if n := unpairedHeld(srv); n != 0 {
+				t.Fatalf("%d held as strangers after the Allow, want none", n)
+			}
+			time.Sleep(deadline + deadline/2)
+			waiting.hello(2, "")
+		})
 	}
 }

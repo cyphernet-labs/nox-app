@@ -21,10 +21,12 @@ Title bar (NOX — Sign in) + centered OnboardCard (440): logo + wordmark + bran
 - Same field rules as mobile 2.1 (mono, multiline, paste), re-laid into a centered card.
 - Empty → Sign in disabled. Sign in reads the link on the device; nothing is dialled here and there is no spinner. A link that will not parse: inline errorText “This isn't a pairing link”. A link whose version is above 3: inline errorText “This link needs a newer version of NOX. Update the app and try again.” — the next action is to update the app, not to scan again.
 - A readable link opens Connect (03) at once; the server's answer, the path and any refusal of the token are said there. Coming back from Connect keeps the link in the field.
+- A wait for approval the app was closed in (feature 046) goes on: as this screen opens it hands that link to Connect with the settings it was set up with, and Connect presents it again at once. A wait whose time ran out is not offered.
 - “Scan QR” exists only where the camera scanner does (macOS). On Windows and Linux “Use a QR image” stands in: pick an image, and a pairing link read from it takes exactly the path of a pasted one. An image with no pairing link in it → snackbar “Couldn't read a pairing link from that image.”, and nothing is submitted.
 
 ## Navigation
 - Readable link → Connect (03).
+- A wait the app was closed in, still within its time → Connect (03) at once, as it opens.
 - Scan QR → QR scan (03) (macOS).
 - Use a QR image → the system file picker (Windows, Linux).
 

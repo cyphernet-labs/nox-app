@@ -38,9 +38,10 @@ nox-desktop-screens/
 ## Screens
 01 Chats (list-detail) · 02 Settings (list-detail, with the Devices and Connection panes) · 03 Onboarding
 (Splash · Login · QR scan · Connect · Set username) · 04 Flows & dialogs (Create chat · File view · Chat info /
-Files) · 05 Error. Connect (`screens/11-connect.md`), Devices (`screens/09-devices.md`) and Connection
-(`screens/12-connection.md`) have a behaviour spec only and no live design in `index.html`: their desktop
-goldens in the app's test suite are what pins how they look.
+Files · Pair request) · 05 Error. Connect (`screens/11-connect.md`), Devices (`screens/09-devices.md`),
+Connection (`screens/12-connection.md`) and Pair request (`screens/13-pair-request.md`) have a behaviour spec
+only and no live design in `index.html`: their desktop goldens in the app's test suite are what pins how they
+look.
 Recoverable states (offline / loading / empty / search / snackbar) are shown as **states** of Chats
 and Settings rather than separate screens — switch them with the chips.
 

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -18,37 +20,65 @@ import (
 	"nox.app/client-backend/internal/store"
 )
 
-func TestPairClaimCreatesThePersonAndRefusesASecondClaim(t *testing.T) {
+// FR-004 over the wire: the machine link creates the person when there is
+// nobody, joins them - no naming step - when there is, and a spent link answers
+// nobody else.
+func TestTheMachineLinkCreatesThePersonThenJoinsThem(t *testing.T) {
 	ts, srv := newTestServer(t)
 
-	dev, data := claimDevice(t, ts, srv)
-	var id identity
-	mustUnmarshal(t, data["identity"], &id)
-	if !id.Created || id.ID == "" {
-		t.Fatalf("identity = %+v, want a created person", id)
+	first := mustMachineLink(t, srv)
+	_, data := pairDevice(t, ts, first)
+	var created identity
+	mustUnmarshal(t, data["identity"], &created)
+	if !created.Created || created.ID == "" {
+		t.Fatalf("identity = %+v, want a created person", created)
 	}
 
-	// A brand-new claim token on an owned server is refused just the same:
-	// ownership is not something a later token may hand over again.
-	token, err := srv.store.IssueClaimToken(context.Background(), time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+	_, joined := pairDevice(t, ts, mustMachineLink(t, srv))
+	var second identity
+	mustUnmarshal(t, joined["identity"], &second)
+	if second.ID != created.ID || second.Created {
+		t.Fatalf("second device = %+v, want the same person %q and created=false", second, created.ID)
 	}
-	other := newDevice(t)
-	second := dialAs(t, ts, srv, other)
-	second.expectGreeting()
-	second.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
-	if code := expectErrCode(t, second, 1); code != protocol.ErrInvalidToken {
-		t.Fatalf("second claim code = %q, want %q", code, protocol.ErrInvalidToken)
+
+	// The spent first link presented by a key that never used it.
+	other := dialWS(t, ts, srv)
+	other.expectGreeting()
+	other.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, first))
+	if code := expectErrCode(t, other, 1); code != protocol.ErrInvalidToken {
+		t.Fatalf("a spent link = %q, want %q", code, protocol.ErrInvalidToken)
 	}
-	_ = dev
+}
+
+// A device names itself by its OS family and nothing else: the name lands in
+// the Allow dialog of the device that issued the invite, so free text there is
+// a stolen invite's chance to pass itself off as anything. Refused before the
+// token is looked at, so the refusal spends nothing.
+func TestPairTakesOnlyAKnownPlatform(t *testing.T) {
+	ts, srv := newTestServer(t)
+	token := mustMachineLink(t, srv)
+	for _, platform := range []string{"test", "iPhone of a friend", "IOS", "ios ios"} {
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":%q}}`, token, platform))
+		if code := expectErrCode(t, c, 1); code != protocol.ErrInvalidRequest {
+			t.Fatalf("platform %q = %q, want %q", platform, code, protocol.ErrInvalidRequest)
+		}
+	}
+	// The link is still whole: a refused name took nothing from it.
+	_, data := pairDevice(t, ts, token)
+	var created identity
+	mustUnmarshal(t, data["identity"], &created)
+	if !created.Created {
+		t.Fatalf("identity = %+v, want the person the unspent link creates", created)
+	}
 }
 
 // The whole point of the phase, at its narrowest: a connection whose key
 // nobody paired does not get in, whatever its greeting says.
 func TestAGreetingFromAKeyNobodyPairedIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	t.Run("a key the server does not know", func(t *testing.T) {
 		// Revoked, or a rebuilt store. The device cannot tell them apart and
@@ -92,7 +122,7 @@ func TestAGreetingFromAKeyNobodyPairedIsRefused(t *testing.T) {
 // signature. The channel already said who it is.
 func TestAPairedDeviceGreetsWithoutAKeyOrASignature(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, claimed := claimDevice(t, ts, srv)
+	dev, claimed := firstDevice(t, ts, srv)
 	var owner identity
 	mustUnmarshal(t, claimed["identity"], &owner)
 
@@ -102,15 +132,16 @@ func TestAPairedDeviceGreetsWithoutAKeyOrASignature(t *testing.T) {
 	var greeted identity
 	mustUnmarshal(t, c.expectOK(1)["identity"], &greeted)
 	if greeted.ID != owner.ID {
-		t.Fatalf("greeted as %q, want the person the claim made, %q", greeted.ID, owner.ID)
+		t.Fatalf("greeted as %q, want the person the pairing made, %q", greeted.ID, owner.ID)
 	}
 }
 
-func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
+// The invite is the link a person carries to their second device, built from
+// this machine's key and the token the reply names - and the token remembers
+// which device issued it, the one that will be asked to allow it.
+func TestAnInviteCarriesThisMachinesKeyAndItsToken(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, claimed := claimDevice(t, ts, srv)
-	var owner identity
-	mustUnmarshal(t, claimed["identity"], &owner)
+	dev, _ := firstDevice(t, ts, srv)
 
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
@@ -124,10 +155,9 @@ func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
 	if reply.Token == "" || reply.Link == "" {
 		t.Fatalf("invite reply = %+v, want a token and a link to show", reply)
 	}
-	// The invite is the link a person carries to their second device, and the
-	// second device accepts only the channel that proves the key it finds in
-	// it. A link built from anything but this machine's key refuses the very
-	// server that issued it.
+	// The second device accepts only the channel that proves the key it finds
+	// in the link. A link built from anything but this machine's key refuses
+	// the very server that issued it.
 	link, err := ParsePairingLink(reply.Link)
 	if err != nil {
 		t.Fatalf("the invite does not read back: %v", err)
@@ -138,31 +168,24 @@ func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
 	if link.Token != reply.Token {
 		t.Fatalf("the link carries token %q, the reply %q", link.Token, reply.Token)
 	}
-
-	_, added := pairDevice(t, ts, reply.Token)
-	var second identity
-	mustUnmarshal(t, added["identity"], &second)
-	if second.ID != owner.ID {
-		t.Fatalf("invited device belongs to %q, want %q", second.ID, owner.ID)
+	var issuer string
+	if err := readDB(t, srv).QueryRowContext(context.Background(),
+		"SELECT issuer_key FROM pair_tokens WHERE token = ?", reply.Token).Scan(&issuer); err != nil {
+		t.Fatalf("read the invite: %v", err)
 	}
-	if second.Created {
-		t.Fatal("adding a device must not report having created a person")
+	if issuer != dev.pub {
+		t.Fatalf("the invite remembers issuer %q, want the device that asked", issuer)
 	}
 }
 
 func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
 	owner.hello(1, "")
-	invite := owner.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
-	var reply struct {
-		Token string `json:"token"`
-	}
-	mustUnmarshal(t, mustRaw(t, invite), &reply)
-	second, _ := pairDevice(t, ts, reply.Token)
+	second, _ := pairDevice(t, ts, mustMachineLink(t, srv))
 
 	// The device being revoked is live and idle, exactly like a sold tablet
 	// left switched on.
@@ -190,7 +213,7 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 
 func TestRevokingSomebodyElsesDeviceIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
@@ -212,7 +235,7 @@ func TestRevokingSomebodyElsesDeviceIsRefused(t *testing.T) {
 
 func TestDeviceListShowsWhatDistinguishesADevice(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
@@ -238,7 +261,7 @@ func TestDeviceListShowsWhatDistinguishesADevice(t *testing.T) {
 
 func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
@@ -269,17 +292,12 @@ func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 // history, which freezes the name at send time.
 func TestARenameReachesTheOtherDeviceOfTheSamePerson(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	first := dialAs(t, ts, srv, dev)
 	first.expectGreeting()
 	first.hello(1, "")
-	invite := first.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
-	var reply struct {
-		Token string `json:"token"`
-	}
-	mustUnmarshal(t, mustRaw(t, invite), &reply)
-	secondKey, _ := pairDevice(t, ts, reply.Token)
+	secondKey, _ := pairDevice(t, ts, mustMachineLink(t, srv))
 
 	second := dialAs(t, ts, srv, secondKey)
 	second.expectGreeting()
@@ -327,12 +345,13 @@ func mustRaw(t *testing.T, data map[string]json.RawMessage) json.RawMessage {
 
 var _ = websocket.StatusNormalClosure
 
-// The machine never names its owner on the wire. It has no reason to: there is
-// one person here, so "who owns this" answers nothing a device could act on -
-// and a field carrying an id would have to be explained, and honoured, later.
-func TestTheOwnersIdentifierNeverReachesTheWire(t *testing.T) {
+// The machine never names an owner on the wire (FR-017). It has no reason to:
+// there is one person here, so "who owns this" answers nothing a device could
+// act on - and a field carrying an id would have to be explained, and
+// honoured, later.
+func TestNoOwnerReachesTheWire(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, claimed := claimDevice(t, ts, srv)
+	dev, claimed := firstDevice(t, ts, srv)
 
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
@@ -349,85 +368,80 @@ func TestTheOwnersIdentifierNeverReachesTheWire(t *testing.T) {
 	}
 }
 
-// US3 end to end: the machine outlives its devices and gives the same person
-// back the SAME identity - the same id, and no naming step, because they
-// existed before the claim. The path is rare and irreversible: getting it wrong
-// costs either the machine or the history.
-func TestReClaimAfterLosingEveryDeviceReturnsTheSamePerson(t *testing.T) {
+// US3 / SC-003 end to end: every device gone, the page offers a machine link
+// at once, and it pairs a new device to the SAME person - the same id, no
+// naming step, and the whole conversation.
+func TestAMachineLinkBringsTheWholeConversationBackAfterEveryDeviceIsGone(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, claimed := claimDevice(t, ts, srv)
+	dev, paired := firstDevice(t, ts, srv)
 	var before identity
-	mustUnmarshal(t, claimed["identity"], &before)
+	mustUnmarshal(t, paired["identity"], &before)
 
-	// Revoking the last device is what logout does.
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
 	c.hello(1, "")
-	c.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
+	chatID := seedChat(t, c, "kept")
+	sendText(t, c, 3, chatID, "m-1", "the boiler is leaking")
+	// Signing out of the only device is revoking its own key.
+	c.expectOKAfter(4, fmt.Sprintf(`{"id":4,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
 
-	token, err := srv.store.IssueClaimToken(context.Background(), time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	_, reclaimed := pairDevice(t, ts, token)
+	back, reclaimed := pairDevice(t, ts, linkTokenOnPage(t, srv))
 	var after identity
 	mustUnmarshal(t, reclaimed["identity"], &after)
-
-	if after.ID != before.ID {
-		t.Fatalf("came back as %q, want the same person %q", after.ID, before.ID)
+	if after.ID != before.ID || after.Created {
+		t.Fatalf("came back as %+v, want %q with no naming step", after, before.ID)
 	}
-	if after.Created {
-		t.Fatal("re-claim reported creating a person who already existed")
+
+	nc := dialAs(t, ts, srv, back)
+	nc.expectGreeting()
+	nc.hello(1, "")
+	page := nc.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"messages.list","data":{"chat_id":%q,"limit":10}}`, chatID))
+	var listed []protocol.Message
+	mustUnmarshal(t, page["messages"], &listed)
+	if len(listed) != 1 || listed[0].AuthorID != before.ID {
+		t.Fatalf("history after coming back = %+v, want the message, as the person's own", listed)
 	}
 }
 
-// Principle I: the flag is a role, and a role logged next to the person it
-// belongs to is a record of who runs the machine. The count is what an
-// operator needs; the identifier is not.
-func TestOwnershipIsNeverLoggedBesideTheIdentifier(t *testing.T) {
-	// A plain bytes.Buffer would be read here while connection goroutines are
-	// still writing to it - the race detector is right about that, and the log
-	// sink has to be safe rather than the assertion carefully timed.
-	buf := &syncBuffer{}
-	logger := slog.New(slog.NewJSONHandler(buf, nil))
+// T012: while devices exist the page hands out no link until `Add a device`;
+// the device that pairs with it joins the same person without any Allow; and
+// from it the person revokes the device they lost - whose connection is cut at
+// once, not when it next tries.
+func TestAddADeviceJoinsWithoutAllowAndTheLostOneIsCutOff(t *testing.T) {
+	ts, srv := newTestServer(t)
+	lost, paired := firstDevice(t, ts, srv)
+	var person identity
+	mustUnmarshal(t, paired["identity"], &person)
 
-	ts, srv := newTestServerLogging(t, logger)
-	dev, claimed := claimDevice(t, ts, srv)
-	var id identity
-	mustUnmarshal(t, claimed["identity"], &id)
+	thief := dialAs(t, ts, srv, lost)
+	thief.expectGreeting()
+	thief.hello(1, "")
 
-	c := dialAs(t, ts, srv, dev)
-	c.expectGreeting()
-	c.hello(1, "")
-
-	// Per RECORD, not per buffer. Two whole-buffer substring checks ANDed
-	// together are satisfied by an empty log and by two unrelated lines alike -
-	// the test would have been green without ever exercising the property.
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		t.Fatal("no log records at all: the assertion below would pass vacuously")
+	if body := statusBody(t, srv); strings.Contains(body, "nox://pair/") || !strings.Contains(body, "Add a device") {
+		t.Fatalf("with a device paired the page shows a link before anybody asked: %s", body)
 	}
-	for _, line := range lines {
-		var record map[string]any
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("log line is not JSON: %v (%s)", err, line)
-		}
-		var namesPerson, statesOwnership bool
-		for k, v := range record {
-			if s, ok := v.(string); ok && s == id.ID {
-				namesPerson = true
-			}
-			if strings.Contains(strings.ToLower(k), "owner") {
-				statesOwnership = true
-			}
-			if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "owner") {
-				statesOwnership = true
-			}
-		}
-		if namesPerson && statesOwnership {
-			t.Fatalf("one record carries both the person and their ownership: %s", line)
-		}
+	if rec := postLink(t, srv, pageHost, pageOrigin, url.Values{"token": {srv.formToken}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("Add a device = %d", rec.Code)
 	}
+	fresh, joined := pairDevice(t, ts, linkTokenOnPage(t, srv))
+	var got identity
+	mustUnmarshal(t, joined["identity"], &got)
+	if got.ID != person.ID || got.Created {
+		t.Fatalf("the new device = %+v, want the same person and no naming step", got)
+	}
+	// The lost device hears about the new one - then that it is revoked.
+	if _, name, _ := thief.expectEvent(); name != protocol.EventDevicePaired {
+		t.Fatalf("the lost device got %s, want %s", name, protocol.EventDevicePaired)
+	}
+
+	nc := dialAs(t, ts, srv, fresh)
+	nc.expectGreeting()
+	nc.hello(1, "")
+	nc.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, lost.pub))
+	if _, name, _ := thief.expectEvent(); name != protocol.EventDeviceRevoked {
+		t.Fatalf("the lost device got %s, want %s", name, protocol.EventDeviceRevoked)
+	}
+	waitClosed(t, thief, websocket.StatusNormalClosure)
 }
 
 // syncBuffer is a log sink that survives being read while the server is still
@@ -471,19 +485,19 @@ func inviteFrom(t *testing.T, owner *wsClient, id int) string {
 // that simply tells everyone would pass the positive half alone.
 func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
 	owner.hello(1, "")
-	token := inviteFrom(t, owner, 2)
+	token := mustMachineLink(t, srv)
 
 	// Kept open, unlike pairDevice's connection: what this one does NOT receive
 	// is half the assertion.
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 
 	// Raw frames, not expectReply: that helper SKIPS events, which is exactly
 	// the mistake being looked for here. The reply comes first (the fan-out
@@ -515,12 +529,12 @@ func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
 // a fan-out to EVERYONE except the sender passes every other test in this file.
 func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
 	owner.hello(1, "")
-	token := inviteFrom(t, owner, 2)
+	token := mustMachineLink(t, srv)
 
 	// Dialled, greeted BY the server, and silent ever since: identity.UserID is
 	// empty, so it belongs to nobody and must hear nothing.
@@ -530,7 +544,7 @@ func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	c.expectOK(1)
 
 	// The owner first: it proves the fan-out ran at all, so the silence below
@@ -552,12 +566,12 @@ func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
 // client times out on work the server has committed.
 func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
 	owner.hello(1, "")
-	token := inviteFrom(t, owner, 2)
+	token := mustMachineLink(t, srv)
 
 	wedged := stubClient(t, srv, personOn(t, srv), 1)
 	wedged.out <- []byte("{}") // full from here on
@@ -565,7 +579,7 @@ func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	// Fails by timing out rather than by comparing anything: with the fan-out
 	// first, this reply is behind a queue nobody is draining.
 	c.expectOK(1)
@@ -576,7 +590,7 @@ func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing
 // devices BEFORE answering the one that asked.
 func TestTheRenamingDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
@@ -598,17 +612,17 @@ func TestTheRenamingDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testin
 // OK for a revocation the store has already applied never leaves.
 func TestTheRevokingDeviceIsAnsweredEvenWhileTheRevokedOneIsWedged(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
 	owner.hello(1, "")
-	token := inviteFrom(t, owner, 2)
+	token := mustMachineLink(t, srv)
 
 	joiner := newDevice(t)
 	pairing := dialAs(t, ts, srv, joiner)
 	pairing.expectGreeting()
-	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	pairing.expectOK(1)
 	// The owner is told about the pairing; read it so the assertion below is
 	// about the revoke and nothing else.
@@ -707,17 +721,17 @@ func personOn(t *testing.T, srv *Server) string {
 // token that was just spent or the key of the device that joined.
 func TestThePairedEventCarriesNoCredentialAndNoKey(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
 	owner.hello(1, "")
-	token := inviteFrom(t, owner, 2)
+	token := mustMachineLink(t, srv)
 
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	c.expectOK(1)
 
 	seq, name, data := owner.expectEvent()
@@ -738,21 +752,15 @@ func TestThePairedEventCarriesNoCredentialAndNoKey(t *testing.T) {
 	}
 }
 
-// The claim is the one pairing with nobody to tell: it is only allowed while no
-// device exists, so there is no live connection of this person to find.
-func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
+// The first device is the one pairing with nobody to tell: no device of the
+// person exists, so there is no connection of theirs to find - and a stranger's
+// connection that merely dialled in hears nothing either.
+func TestTheFirstDeviceAnnouncesToNobody(t *testing.T) {
 	ts, srv := newTestServer(t)
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
+	token := mustMachineLink(t, srv)
 
 	// A second connection that is simply there. Without it this test watches
-	// only the claiming connection, which every version of the fan-out excludes
+	// only the pairing connection, which every version of the fan-out excludes
 	// anyway - so it would assert nothing at all.
 	bystander := dialWS(t, ts, srv)
 	bystander.expectGreeting()
@@ -760,11 +768,11 @@ func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
 	first := newDevice(t)
 	c := dialAs(t, ts, srv, first)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 
 	frame := c.read()
 	if _, isEvent := frame["event"]; isEvent {
-		t.Fatalf("claiming an empty server produced an event: %v", frame)
+		t.Fatalf("pairing the first device produced an event: %v", frame)
 	}
 	bystander.expectNoFrame(300 * time.Millisecond)
 }

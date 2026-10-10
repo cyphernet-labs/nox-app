@@ -21,7 +21,7 @@ import (
 //	version (1) ‖ server key (32) ‖ token (16) ‖ addresses
 //	address = type (1) ‖ length of the value (1) ‖ value
 //
-// One shape for every case - claim and invite alike - so there is one builder,
+// One shape for every case - machine link and invite alike - so there is one builder,
 // one parser and one set of shared vectors (testdata/link-vectors.json, a
 // copy of the contract's). The server KEY travels whole, not a fingerprint: it
 // is Ed25519's thirty-two bytes, and it is what the device checks the channel
@@ -232,10 +232,10 @@ type linkCarries struct {
 	Onion  bool
 }
 
-// buildLink is the link every issuer hands out (044, 045) - the claim in the
-// terminal and on the service page, and the device invite alike: the public
-// address first when one is set, then the one direct address, then the onion
-// service when one is set.
+// buildLink is the link every issuer hands out (044, 045, 046) - the machine
+// link on the service page and from `noxd link`, and the device invite alike:
+// the public address first when one is set, then the one direct address, then
+// the onion service when one is set.
 //
 // The public address leads because it is what the app shows in its "server
 // address" field - the first direct address of the link - and the one that
@@ -244,9 +244,9 @@ type linkCarries struct {
 // rest of the machine's addresses reach a device after pairing, in the
 // greeting (§3).
 //
-// Pairing through the onion address works - the first device's claim
-// included (FR-008): the connection from tor arrives on the same port as any
-// other and proves itself the same way.
+// Pairing through the onion address works - the first device included
+// (FR-008): the connection from tor arrives on the same port as any other and
+// proves itself the same way.
 func buildLink(serverKey ed25519.PublicKey, token, direct string, conf configuredAddresses) (string, linkCarries, error) {
 	addrs := make([]string, 0, 2)
 	if conf.Public != "" {
@@ -277,9 +277,9 @@ func (s *Server) pairingLink(ctx context.Context, id store.ServerIdentity, direc
 // listenAddress turns a bind address into one a device can actually reach.
 //
 // A wildcard bind has no single right answer, so it falls back to loopback:
-// right for the claim link, which is printed on the machine itself and dialled
-// from it or read by whoever is sitting there. An INVITE link is a different
-// case and must not use this - see inviteAddress.
+// right for a machine link with no dialable address, which is handed out on the
+// machine itself and pasted into the app running there. An INVITE link is a
+// different case and must not use this - see inviteAddress.
 func listenAddress(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

@@ -634,7 +634,7 @@ func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
 		t.Fatalf("a paired device with a bad token = %d, want 404", resp.StatusCode)
 	}
 
-	if err := srv.store.RevokeDevice(t.Context(), anna.dev.pub); err != nil {
+	if _, err := srv.store.RevokeDevice(t.Context(), anna.dev.pub, time.Now().Unix()); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 	var reused bool

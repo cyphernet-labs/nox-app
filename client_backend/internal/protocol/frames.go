@@ -83,13 +83,16 @@ const (
 	CmdFileUploadBegin   = "file.uploadBegin"
 	CmdFileDownloadBegin = "file.downloadBegin"
 
-	// Pairing (§8A). CmdPair is the ONLY command accepted before the greeting:
-	// an unpaired device's key is one the server does not know, and a greeting
-	// from it is refused.
+	// Pairing (§8A). CmdPair and CmdPairCancel are the ONLY commands accepted
+	// before the greeting: an unpaired device's key is one the server does not
+	// know, and a greeting from it is refused - so a device waiting for Allow
+	// has to be able to withdraw its request without greeting too.
 	CmdPair             = "pair"
+	CmdPairCancel       = "pair.cancel"
 	CmdDeviceList       = "device.list"
 	CmdDeviceRevoke     = "device.revoke"
 	CmdDeviceInvite     = "device.invite"
+	CmdDeviceApprove    = "device.approve"
 	CmdIdentitySetLabel = "identity.setLabel"
 	// device.setAccessKey is gone with the onion access keys (045): the onion
 	// address is open to whoever knows it, and the server answers the command
@@ -117,6 +120,24 @@ const EventIdentityUpdated = "identity.updated"
 // the server when the screen opens - unlike a revocation, nothing breaks from
 // having missed it.
 const EventDevicePaired = "device.paired"
+
+// The three events of pairing with approval (046). Off-journal like the ones
+// above - seq 0, no cursor, never replayed - because who may join the machine
+// is not the shared world the journal records. Each has a reliable half that
+// survives a disconnect: a repeat of `pair` answers with the recorded outcome,
+// and a greeting re-sends every request still waiting for an answer.
+const (
+	// EventPairResolved tells the NEW device, waiting on its connection, how
+	// its request ended: allowed (with the identity it now speaks as),
+	// denied, expired or cancelled.
+	EventPairResolved = "pair.resolved"
+	// EventDevicePairRequested asks the device that issued an invite to answer
+	// a request: the new device's OS family and the deadline, nothing else.
+	EventDevicePairRequested = "device.pairRequested"
+	// EventDevicePairResolved tells the issuing device a request no longer
+	// waits for its answer, whichever way it closed.
+	EventDevicePairResolved = "device.pairResolved"
+)
 
 // EventServerAddresses tells greeted connections where this machine can be
 // reached now - the addresses it finds on its networks and, when they are

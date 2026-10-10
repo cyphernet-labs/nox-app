@@ -229,9 +229,11 @@ func TestTheOldTorFlagStopsTheStartWithAHint(t *testing.T) {
 }
 
 // The address parameters end to end (045): a good one lands in the database
-// before anything listens - the claim link on the page already names it - and a
-// bad one leaves the server running with a warning on the page. Neither the
-// onion address nor the link that carries it reaches the log (FR-022).
+// before anything listens - the first link the page shows already names it -
+// and a bad one leaves the server running with a warning on the page. Neither
+// the onion address nor a link that carries it reaches the log (FR-022): the
+// startup line says where the link for a first device is, never what it is
+// (046, FR-005).
 func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	cfg := testRunConfig(t)
 	cfg.OnionAddr = testOnionAddr + ":443"
@@ -262,17 +264,17 @@ func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	if !strings.Contains(out, "-public-addr") || !strings.Contains(out, "start parameter not applied") {
 		t.Fatalf("the refused parameter is not named in the log:\n%s", out)
 	}
-	// The claim link is on the page, and names the onion service already; the
-	// log says where it is and carries none.
+	// The link is on the page, not in the log - not even masked, since no line
+	// is ever handed one - and the page's first link names the onion service
+	// already.
 	if strings.Contains(out, "nox://pair/") || strings.Contains(out, "[link]") {
-		t.Fatalf("a link reached the log:\n%s", out)
+		t.Fatalf("a link reached the startup log:\n%s", out)
 	}
-	m := regexp.MustCompile(`nox://pair/[A-Za-z0-9_-]+`).FindString(string(page))
-	if m == "" {
-		t.Fatalf("no claim link on the page: %s", page)
+	if !strings.Contains(out, "no device can reach this server yet") {
+		t.Fatalf("the startup log does not say where the link for a first device is:\n%s", out)
 	}
-	if got := readLink(t, m); got.Onion == nil {
-		t.Fatalf("the claim link on the page names no onion service: %+v", got)
+	if got := readLink(t, linkOf(t, string(page))); got.Onion == nil {
+		t.Fatalf("the page's first link names no onion service: %+v", got)
 	}
 
 	dbs, err := db.Open(cfg.DBPath)

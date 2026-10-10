@@ -74,4 +74,17 @@ void main() {
   final failed = _prefilled.copyWith(status: ConnectStatus.failed, problem: ConnectionProblem.turnOnTor);
   goldenTest('connect_page_reason', () => ConnectPage(link: _link, initialState: failed));
   goldenTestDesktop('connect_page_reason', () => ConnectPage(link: _link, initialState: failed));
+
+  // An invite whose request waits for the device that issued it (phase 046):
+  // the fields give way to the wait, with Cancel the one thing to press. The
+  // spinner never settles, so the frame is taken as it is - the logo on the
+  // desktop card precached first.
+  final waiting = _prefilled.copyWith(status: ConnectStatus.waiting);
+  goldenTest('connect_page_waiting', () => ConnectPage(link: _link, initialState: waiting), settle: false, brandLogo: true);
+  goldenTestDesktop('connect_page_waiting', () => ConnectPage(link: _link, initialState: waiting), settle: false, brandLogo: true);
+
+  // The other device answered Deny: said under Connect, the fields back.
+  final declined = _prefilled.copyWith(status: ConnectStatus.declined);
+  goldenTest('connect_page_declined', () => ConnectPage(link: _link, initialState: declined));
+  goldenTestDesktop('connect_page_declined', () => ConnectPage(link: _link, initialState: declined));
 }

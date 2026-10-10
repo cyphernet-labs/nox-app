@@ -120,6 +120,9 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	// address list must not depend on the network of whoever runs the suite.
 	srv.listIPs = func() []net.IP { return nil }
 	srv.pingInterval = 50 * time.Millisecond
+	// The request sweep at test speed: a request whose time ran out closes
+	// within a few tens of milliseconds rather than seconds.
+	srv.requestSweep = 20 * time.Millisecond
 	// The write timeout stays the slow path's 30 s: slow-consumer tests rely
 	// on it, because the overflow drop (policy violation) must win over a
 	// ping or write timeout.
@@ -139,6 +142,13 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	go func() {
 		defer close(watchDone)
 		srv.runAddressWatcher(watchCtx)
+	}()
+	// And the request sweeper, which Run starts beside the watcher (046).
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		srv.runRequestSweeper(sweepCtx)
 	}()
 
 	dispDone := make(chan struct{})
@@ -161,6 +171,8 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		ts.Close()
 		stopWatch()
 		<-watchDone
+		stopSweep()
+		<-sweepDone
 		stopHub()
 		<-hubDone
 		<-dispDone
@@ -381,154 +393,58 @@ func readWriteDB(t *testing.T, srv *Server) *sql.DB {
 	return d.Write
 }
 
-// announceConfig is the configuration startup hands to announceClaim: a bind
-// address for the link it builds, and the service page that shows the link.
-var announceConfig = config.Config{Addr: "127.0.0.1:8080", StatusAddr: "127.0.0.1:8081"}
-
-// The startup line says where the claim link is and never what it is: the link
-// carries the claim token and, packed, the onion service's key, and a log is
-// copied to places neither may go (045, FR-022). With the page turned off it
-// says how to turn it on, because nothing else shows the link.
-func TestTheStartupLinePointsAtThePageAndNeverCarriesTheLink(t *testing.T) {
+// The startup line says where a link for a first device is and never what it
+// is (046, FR-005; 045, FR-022): the link is a way in, from anywhere since a
+// device can pair through the onion service, and a log is copied to places it
+// may not go. With the page turned off the line is an error naming the flag,
+// because then nothing at all can hand out a link; once a device can reach the
+// machine there is nothing to say.
+func TestTheStartupLineSaysWhereTheLinkIsAndNeverCarriesOne(t *testing.T) {
 	st := startStore(t)
 	ctx := context.Background()
-	stored := setAddressParams(t, st, testOnionAddr)
-
-	logs := &syncBuffer{}
-	token, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configured(stored),
-		slog.New(ScrubLogs(slog.NewTextHandler(logs, nil))))
-	if err != nil {
-		t.Fatalf("announceClaim: %v", err)
-	}
-	out := logs.String()
-	if token == "" || strings.Contains(out, token) || strings.Contains(out, "nox://pair/") || strings.Contains(out, "[link]") {
-		t.Fatalf("the line carries the link or its token (%q):\n%s", token, out)
-	}
-	if !strings.Contains(out, "service page") || !strings.Contains(out, "http://127.0.0.1:8081") {
-		t.Fatalf("the line does not say where the link is:\n%s", out)
-	}
-
-	off := &syncBuffer{}
-	cfg := announceConfig
-	cfg.StatusAddr = ""
-	if _, err := announceClaim(ctx, st, cfg, mustOwnership(t, st), mustIdentity(t, st), configured(stored),
-		slog.New(slog.NewTextHandler(off, nil))); err != nil {
-		t.Fatalf("announceClaim with the page off: %v", err)
-	}
-	if !strings.Contains(off.String(), "level=WARN") || !strings.Contains(off.String(), "-status-addr") {
-		t.Fatalf("with the page off the line does not say how to see the link:\n%s", off.String())
-	}
-}
-
-// setAddressParams stores onion the way a start parameter does and returns the
-// stored addresses.
-func setAddressParams(t *testing.T, st *store.Store, onion string) store.Addresses {
-	t.Helper()
-	if err := st.ApplyAddressParam(context.Background(), store.AddressOnion, onion, onion); err != nil {
+	if err := st.ApplyAddressParam(ctx, store.AddressOnion, testOnionAddr, testOnionAddr); err != nil {
 		t.Fatalf("ApplyAddressParam: %v", err)
 	}
-	got, err := st.Addresses(context.Background())
-	if err != nil {
-		t.Fatalf("Addresses: %v", err)
-	}
-	return got
-}
-
-// The startup line has to tell the two situations apart, because they ask
-// different things of the person reading it: a machine nobody has claimed is
-// about to get an owner, while one whose owner lost every device is about to
-// let that same owner back in. Before ownership was explicit the two were
-// indistinguishable and the message said "no owner yet" for both.
-func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "announce.db")
-	dbs, err := db.Open(path)
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = dbs.Close() })
-	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
-		t.Fatalf("db.Migrate: %v", err)
-	}
-	st := store.New(dbs.Read, dbs.Write)
-	ctx := context.Background()
-
-	fresh := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
-		t.Fatalf("announceClaim on a fresh store: %v", err)
-	}
-	if !strings.Contains(fresh.String(), "no owner yet") {
-		t.Fatalf("fresh store announced %q", fresh.String())
+	page := config.Config{Addr: "127.0.0.1:8080", StatusAddr: "127.0.0.1:8081"}
+	say := func(cfg config.Config) string {
+		t.Helper()
+		logs := &syncBuffer{}
+		if err := sayHowToPair(ctx, st, cfg, slog.New(ScrubLogs(slog.NewTextHandler(logs, nil)))); err != nil {
+			t.Fatalf("sayHowToPair: %v", err)
+		}
+		return logs.String()
 	}
 
-	// Claim it, then take the device away - which is what logging out does.
-	token, err := st.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	owned := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(owned, nil))); err != nil {
-		t.Fatalf("announceClaim on an owned store: %v", err)
-	}
-	if strings.Contains(owned.String(), "no owner yet") {
-		t.Fatalf("a server that still has an owner claims to have none: %q", owned.String())
-	}
-	if !strings.Contains(owned.String(), "get back in") {
-		t.Fatalf("owned-but-empty store announced %q", owned.String())
-	}
-
-	// And the third: a store that holds the person but lost the marker. This is
-	// the state feature 037 traded the old refusal for, so it is the one line an
-	// operator reads while recovering. Ordering matters here - Owned implies
-	// HasPerson, so a switch that tested HasPerson first would swallow the case
-	// above and pass every other assertion in this test.
-	handle, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
-	}
-	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("forget the owner: %v", err)
-	}
-	_ = handle.Close()
-
-	stranded := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
-		t.Fatalf("announceClaim on a store with no marker: %v", err)
-	}
-	if !strings.Contains(stranded.String(), "sign in as the person it belongs to") {
-		t.Fatalf("a store that holds somebody announced %q", stranded.String())
-	}
-	for _, wrong := range []string{"no owner yet", "get back in"} {
-		if strings.Contains(stranded.String(), wrong) {
-			t.Fatalf("announced %q, which is the copy for another state: %q", wrong, stranded.String())
+	out := say(page)
+	for _, want := range []string{"no device can reach this server yet", "http://127.0.0.1:8081", "noxd link"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the line does not say %q:\n%s", want, out)
 		}
 	}
-}
-
-// mustIdentity mints or reads the machine identity startup settles first.
-func mustIdentity(t *testing.T, st *store.Store) store.ServerIdentity {
-	t.Helper()
-	id, err := st.EnsureServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
+	// Not even masked: no line is ever handed a link or the onion address.
+	for _, leak := range []string{"nox://pair/", "[link]", "[onion]"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("the line carries %q:\n%s", leak, out)
+		}
 	}
-	return id
-}
 
-// mustOwnership reads the snapshot startup would hand to announceClaim.
-func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
-	t.Helper()
-	state, err := st.ReadOwnershipState(context.Background())
-	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
+	off := page
+	off.StatusAddr = ""
+	if out := say(off); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "-status-addr") {
+		t.Fatalf("with the page off the line does not say what would hand out a link:\n%s", out)
 	}
-	return state
+
+	now := time.Now().Unix()
+	link, err := st.IssueMachineLink(ctx, now)
+	if err != nil {
+		t.Fatalf("IssueMachineLink: %v", err)
+	}
+	if _, err := st.Pair(ctx, link.Token, "dev-a", "linux", now); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if out := say(page); out != "" {
+		t.Fatalf("a machine a device can reach still points at a link:\n%s", out)
+	}
 }
 
 // A startup that is going to abort must not rotate the journal on its way out.

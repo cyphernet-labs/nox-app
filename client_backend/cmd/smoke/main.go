@@ -1,11 +1,13 @@
 // Command smoke walks the whole stage-2 flow against a RUNNING noxd and says
 // whether it works.
 //
-// It exists because the flow crosses two devices and a real socket, which no
-// unit test reaches end to end and no person wants to click through twice
-// before a demo. Point it at the claim link on a fresh server's service page
-// and it claims the machine, adds a second device of the same person, and has
-// the two of them exchange a message.
+// It exists because the flow crosses several devices and a real socket, which
+// no unit test reaches end to end and no person wants to click through twice
+// before a demo. Point it at a machine link - the one on the service page, or
+// the one `noxd link` prints - and it pairs a first device through it, adds a
+// second by invite and allows it from the first, has a third declined and a
+// fourth withdraw its own request, and has the two paired devices exchange a
+// message.
 //
 // It talks to the wire directly rather than through the app - the channel
 // included: TCP, TLS 1.3 that checks no certificate, then the channel check
@@ -19,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,15 +38,17 @@ import (
 	"nox.app/client-backend/internal/server"
 )
 
-const usage = `usage: smoke <pairing link>
+const usage = `usage: smoke <machine link>
        smoke -check <host:port> <server key, base64>
 
-Give it the claim link on the service page of a freshly started noxd (the
-server's log says where the page is, never what the link is). The server must
-have no owner yet. The link's direct addresses
-are tried in its order - the public one first, when it has one - and the run
-goes on with the first that proves the key; an onion address in the link is
-reported and not tried, because this program has no Tor.
+Give it a machine link: the one on the service page of a running noxd, or the
+one "noxd link" prints (the server's log says where the page is, never what a
+link is). It works on a fresh server - the first device creates the person -
+and on one that has a person already, whom the first device then joins. The
+link's direct addresses are tried in its order - the public one first, when it
+has one - and the run goes on with the first that proves the key; an onion
+address in the link is reported and not tried, because this program has no
+Tor.
 
 With -check it only opens the channel - TLS and the channel check, with a
 throwaway device key - and says whether the machine at that address is the one
@@ -120,41 +125,49 @@ func run(rawLink string) error {
 		fmt.Println("the link also names an onion service - not tried here, there is no Tor in this program")
 	}
 
-	step(1, "The owner claims the server")
-	owner := newDevice()
-	ownerID, err := claim(ctx, target, owner)
+	step(1, "The first device pairs through the machine link")
+	first := newDevice()
+	personID, created, err := pairFirst(ctx, target, first)
 	if err != nil {
 		return err
 	}
 
-	ownerConn, err := greet(ctx, target, owner)
+	firstConn, err := greet(ctx, target, first)
 	if err != nil {
 		return err
 	}
-	defer ownerConn.close()
-	if _, err := ownerConn.call("identity.setLabel", data{"label": "Anna"}); err != nil {
-		return err
+	defer firstConn.close()
+	if created {
+		if _, err := firstConn.call("identity.setLabel", data{"label": "Anna"}); err != nil {
+			return err
+		}
+		ok("named: Anna")
 	}
-	ok("named: Anna")
 
-	step(2, "The owner adds a second device of their own")
-	phone, err := addDevice(ctx, target, ownerConn, ownerID)
-	if err != nil {
-		return err
-	}
-	phoneConn, err := greet(ctx, target, phone)
+	step(2, "A second device joins by invite, allowed on the first")
+	phoneConn, err := inviteAndAllow(ctx, target, firstConn, personID)
 	if err != nil {
 		return err
 	}
 	defer phoneConn.close()
-	devices, err := ownerConn.call("device.list", data{})
+	devices, err := firstConn.call("device.list", data{})
 	if err != nil {
 		return err
 	}
 	ok("device.list shows %d devices", len(devices["devices"].([]any)))
 
-	step(3, "The two devices exchange a message")
-	if err := talk(ownerConn, phoneConn, ownerID); err != nil {
+	step(3, "A third device is declined, and nothing is paired")
+	if err := inviteAndDeny(ctx, target, firstConn); err != nil {
+		return err
+	}
+
+	step(4, "A fourth device withdraws its request, and nothing is paired")
+	if err := inviteAndCancel(ctx, target, firstConn); err != nil {
+		return err
+	}
+
+	step(5, "The two devices exchange a message")
+	if err := talk(firstConn, phoneConn, personID); err != nil {
 		return err
 	}
 
@@ -162,73 +175,236 @@ func run(rawLink string) error {
 	return nil
 }
 
-func claim(ctx context.Context, target link, dev device) (string, error) {
+// pairFirst pairs dev through the machine link. On a fresh server it creates
+// the person; on one that has a person it joins them - either is right, and
+// which one happened is said.
+func pairFirst(ctx context.Context, target link, dev device) (string, bool, error) {
 	c, err := dial(ctx, target, dev)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer c.close()
 	if err := c.greeting(); err != nil {
-		return "", err
+		return "", false, err
 	}
 	reply, err := c.call("pair", data{"token": target.token, "platform": "macos"})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	id, okID := reply["identity"].(map[string]any)
 	if !okID {
-		return "", fmt.Errorf("the claim carried no identity: %v", reply)
+		return "", false, fmt.Errorf("the machine link carried no identity: %v", reply)
 	}
-	if id["created"] != true {
-		return "", fmt.Errorf("a claim must create the person, got %v", id)
+	created, okCreated := id["created"].(bool)
+	if !okCreated {
+		return "", false, fmt.Errorf("the identity does not say whether it was created: %v", id)
 	}
-	ok("claimed: created=%v", id["created"])
-	return id["id"].(string), nil
+	if created {
+		ok("paired: the person was created - a fresh server")
+	} else {
+		ok("paired: joined the person already here, no naming step")
+	}
+	return id["id"].(string), created, nil
 }
 
-func addDevice(ctx context.Context, target link, owner *conn, ownerID string) (device, error) {
-	invite, err := owner.call("device.invite", data{})
+// invite has the greeted device issue an invite and checks what it says about
+// itself.
+func invite(issuer *conn) (string, error) {
+	reply, err := issuer.call("device.invite", data{})
 	if err != nil {
-		return device{}, err
+		return "", err
 	}
-	inviteLink, err := server.ParsePairingLink(fmt.Sprint(invite["link"]))
+	inviteLink, err := server.ParsePairingLink(fmt.Sprint(reply["link"]))
 	if err != nil {
-		return device{}, fmt.Errorf("the invite link does not read back: %w", err)
+		return "", fmt.Errorf("the invite link does not read back: %w", err)
 	}
 	// The two flags say what the link carries (045): an onion address, a
 	// public one. Both are always there, and the onion one must match the link.
-	onion, okOnion := invite["onion"].(bool)
-	public, okPublic := invite["public"].(bool)
+	onion, okOnion := reply["onion"].(bool)
+	public, okPublic := reply["public"].(bool)
 	if !okOnion || !okPublic {
-		return device{}, fmt.Errorf("the invite reply lacks its onion/public flags: %v", invite)
+		return "", fmt.Errorf("the invite reply lacks its onion/public flags: %v", reply)
 	}
 	if onion != (inviteLink.Onion != nil) {
-		return device{}, fmt.Errorf("the invite says onion=%v, and its link says otherwise", onion)
+		return "", fmt.Errorf("the invite says onion=%v, and its link says otherwise", onion)
 	}
 	ok("device invite issued (10 minutes), a version-3 link: onion=%v public=%v", onion, public)
+	return fmt.Sprint(reply["token"]), nil
+}
 
-	dev := newDevice()
+// request presents an invite as dev and expects to be told to wait - an
+// invite pairs nothing until the device that issued it answers (046). It
+// returns the connection, which is where the answer arrives, and the request.
+func request(ctx context.Context, target link, dev device, token, platform string) (*conn, string, error) {
 	c, err := dial(ctx, target, dev)
 	if err != nil {
-		return device{}, err
+		return nil, "", err
 	}
-	defer c.close()
 	if err := c.greeting(); err != nil {
-		return device{}, err
+		c.close()
+		return nil, "", err
 	}
-	reply, err := c.call("pair", data{"token": invite["token"], "platform": "android"})
+	reply, err := c.call("pair", data{"token": token, "platform": platform})
 	if err != nil {
-		return device{}, err
+		c.close()
+		return nil, "", err
 	}
-	id := reply["identity"].(map[string]any)
-	if id["id"] != ownerID {
-		return device{}, errors.New("the second device joined a different person")
+	if reply["status"] != "pending" {
+		c.close()
+		return nil, "", fmt.Errorf("an invite must wait for Allow, got %v", reply)
 	}
-	if id["created"] == true {
-		return device{}, errors.New("a device invite created a person")
+	requestID, _ := reply["request_id"].(string)
+	if requestID == "" {
+		c.close()
+		return nil, "", fmt.Errorf("the pending reply names no request: %v", reply)
 	}
-	ok("paired to the SAME person, created=false - no naming step")
-	return dev, nil
+	ok("%s waits for approval: %s", platform, requestID)
+	return c, requestID, nil
+}
+
+// asked waits on the issuing device for the request to arrive.
+func asked(issuer *conn, requestID, platform string) error {
+	ev, err := issuer.event("device.pairRequested")
+	if err != nil {
+		return err
+	}
+	if ev["request_id"] != requestID || ev["platform"] != platform {
+		return fmt.Errorf("the issuing device was asked about %v, want %s from %s", ev, requestID, platform)
+	}
+	ok("the first device is asked: New device: %s", platform)
+	return nil
+}
+
+// inviteAndAllow adds a device by invite and allows it from the first one. The
+// new device greets on the connection it waited on, and is returned greeted.
+func inviteAndAllow(ctx context.Context, target link, issuer *conn, personID string) (*conn, error) {
+	token, err := invite(issuer)
+	if err != nil {
+		return nil, err
+	}
+	phone, requestID, err := request(ctx, target, newDevice(), token, "android")
+	if err != nil {
+		return nil, err
+	}
+	if err := asked(issuer, requestID, "android"); err != nil {
+		phone.close()
+		return nil, err
+	}
+	if _, err := issuer.call("device.approve", data{"request_id": requestID, "allow": true}); err != nil {
+		phone.close()
+		return nil, err
+	}
+	resolved, err := phone.event("pair.resolved")
+	if err != nil {
+		phone.close()
+		return nil, err
+	}
+	id, _ := resolved["identity"].(map[string]any)
+	if resolved["outcome"] != "allowed" || id == nil || id["id"] != personID || id["created"] != false {
+		phone.close()
+		return nil, fmt.Errorf("Allow ended as %v, want allowed into %s with created=false", resolved, personID)
+	}
+	if ev, err := issuer.event("device.pairResolved"); err != nil || ev["request_id"] != requestID {
+		phone.close()
+		return nil, fmt.Errorf("the issuing device was not told the request is over: %v %v", ev, err)
+	}
+	ok("allowed: the new device joined the SAME person, created=false - no naming step")
+	if _, err := phone.call("session.hello", data{"schema": 1}); err != nil {
+		phone.close()
+		return nil, err
+	}
+	ok("it greets on the connection it waited on")
+	return phone, nil
+}
+
+// inviteAndDeny has a device ask and be declined: it is told, nothing is
+// paired, and a repeat of pair says declined too.
+func inviteAndDeny(ctx context.Context, target link, issuer *conn) error {
+	token, err := invite(issuer)
+	if err != nil {
+		return err
+	}
+	dev := newDevice()
+	tablet, requestID, err := request(ctx, target, dev, token, "ios")
+	if err != nil {
+		return err
+	}
+	defer tablet.close()
+	if err := asked(issuer, requestID, "ios"); err != nil {
+		return err
+	}
+	if _, err := issuer.call("device.approve", data{"request_id": requestID, "allow": false}); err != nil {
+		return err
+	}
+	resolved, err := tablet.event("pair.resolved")
+	if err != nil {
+		return err
+	}
+	if resolved["outcome"] != "denied" {
+		return fmt.Errorf("Deny ended as %v, want denied", resolved)
+	}
+	ok("declined: Your other device declined this request.")
+	again, err := tablet.call("pair", data{"token": token, "platform": "ios"})
+	if err != nil {
+		return err
+	}
+	if again["status"] != "denied" {
+		return fmt.Errorf("a repeat after Deny = %v, want denied", again)
+	}
+	if _, err := tablet.call("session.hello", data{"schema": 1}); err == nil {
+		return errors.New("a declined device was let in")
+	}
+	ok("a repeat says declined, and its greeting is refused - nothing was paired")
+	return nil
+}
+
+// inviteAndCancel has a device ask and then withdraw its own request with
+// pair.cancel, the second command allowed before a greeting: it is told the
+// request was cancelled, the issuing device stops being asked, an Allow
+// pressed after it changes nothing, and nothing is paired.
+func inviteAndCancel(ctx context.Context, target link, issuer *conn) error {
+	token, err := invite(issuer)
+	if err != nil {
+		return err
+	}
+	laptop, requestID, err := request(ctx, target, newDevice(), token, "linux")
+	if err != nil {
+		return err
+	}
+	defer laptop.close()
+	if err := asked(issuer, requestID, "linux"); err != nil {
+		return err
+	}
+	if _, err := laptop.call("pair.cancel", data{"token": token}); err != nil {
+		return err
+	}
+	resolved, err := laptop.event("pair.resolved")
+	if err != nil {
+		return err
+	}
+	if resolved["outcome"] != "cancelled" {
+		return fmt.Errorf("Cancel ended as %v, want cancelled", resolved)
+	}
+	if ev, err := issuer.event("device.pairResolved"); err != nil || ev["request_id"] != requestID {
+		return fmt.Errorf("the issuing device was not told the request is over: %v %v", ev, err)
+	}
+	ok("withdrawn: the new device is told cancelled, and the first device stops being asked")
+	if _, err := issuer.call("device.approve", data{"request_id": requestID, "allow": true}); err == nil {
+		return errors.New("an Allow after Cancel was taken")
+	}
+	ok("an Allow pressed after it is refused: the request is closed")
+	again, err := laptop.call("pair", data{"token": token, "platform": "linux"})
+	if err != nil {
+		return err
+	}
+	if again["status"] != "cancelled" {
+		return fmt.Errorf("a repeat after Cancel = %v, want cancelled", again)
+	}
+	if _, err := laptop.call("session.hello", data{"schema": 1}); err == nil {
+		return errors.New("a withdrawn device was let in")
+	}
+	ok("a repeat says cancelled, and its greeting is refused - nothing was paired")
+	return nil
 }
 
 // talk has the person's two devices exchange a message through the server.
@@ -237,16 +413,21 @@ func addDevice(ctx context.Context, target link, owner *conn, ownerID string) (d
 // marked as their own - that is the whole assertion. Nothing here needs a
 // second person: this machine has one, and talking to anybody else goes
 // through a relay that does not exist yet.
-func talk(desktop, phone *conn, ownerID string) error {
-	created, err := desktop.call("chat.create", data{"name": "Kitchen"})
+//
+// The chat's name and the send key are this run's own: a server the smoke has
+// run against before holds the last run's chat - a name taken - and its send
+// key, which would answer with the old message instead of sending a new one.
+func talk(desktop, phone *conn, personID string) error {
+	run := runSuffix()
+	created, err := desktop.call("chat.create", data{"name": "Kitchen " + run})
 	if err != nil {
 		return err
 	}
 	chat := created["chat"].(map[string]any)
-	ok("Anna created the chat %q on her desktop", chat["name"])
+	ok("the chat %q is created on the desktop", chat["name"])
 
 	if _, err := phone.call("message.send", data{
-		"chat_id": chat["chat_id"], "client_message_id": "smoke-1",
+		"chat_id": chat["chat_id"], "client_message_id": "smoke-" + run,
 		"body": data{"type": "text", "text": "the boiler is leaking"},
 	}); err != nil {
 		return err
@@ -255,7 +436,7 @@ func talk(desktop, phone *conn, ownerID string) error {
 	if err != nil {
 		return err
 	}
-	if msg["author_id"] != ownerID {
+	if msg["author_id"] != personID {
 		return fmt.Errorf("a message sent from her own phone came back as somebody else: %v", msg["author_id"])
 	}
 	ok("the desktop received it, authored by %v - her own", msg["author_label"])
@@ -476,6 +657,15 @@ func greet(ctx context.Context, target link, dev device) (*conn, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// runSuffix names one run of the smoke: four random bytes in hex.
+func runSuffix() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func step(n int, what string) { fmt.Printf("\n  %d. %s\n", n, what) }

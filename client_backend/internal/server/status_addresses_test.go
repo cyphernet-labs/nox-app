@@ -67,8 +67,8 @@ func storedAddresses(t *testing.T, srv *Server) store.Addresses {
 
 // The whole road, through a real listener and a real HTTP client: the page
 // hands out its form, the form posts back with the page's own origin and
-// token, and the next page - the claim code on it included - already names the
-// new address (SC-003: "in the new QR code at once").
+// token, and the next page - the code on it included - already names the new
+// address (SC-003: "in the new QR code at once").
 func TestSetFromThePageReachesTheNextCodeAtOnce(t *testing.T) {
 	_, srv := newTestServerWith(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
 	page := httptest.NewServer(srv.StatusHandler())
@@ -88,8 +88,8 @@ func TestSetFromThePageReachesTheNextCodeAtOnce(t *testing.T) {
 	if m == nil {
 		t.Fatalf("the page carries no form token: %s", body)
 	}
-	if strings.Count(string(body), m[1]) != 2 {
-		t.Fatalf("want the one process token in both forms: %s", body)
+	if n := strings.Count(string(body), `name="token"`); n < 2 || strings.Count(string(body), m[1]) != n {
+		t.Fatalf("want the one process token in every form: %s", body)
 	}
 
 	form := url.Values{"kind": {"onion"}, "value": {testOnionAddr}, "token": {m[1]}}
@@ -116,7 +116,7 @@ func TestSetFromThePageReachesTheNextCodeAtOnce(t *testing.T) {
 		t.Fatalf("the onion field does not show the stored address: %s", after)
 	}
 	if got := readLink(t, linkOf(t, after)); !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) {
-		t.Fatalf("the next claim link names onion key %x, want the address just set", got.Onion)
+		t.Fatalf("the next link names onion key %x, want the address just set", got.Onion)
 	}
 }
 
@@ -302,8 +302,8 @@ func TestThePageShowsTheAddressesAndItsForms(t *testing.T) {
 			t.Fatalf("the page does not show %q: %s", want, body)
 		}
 	}
-	if strings.Count(body, `name="token" value="`+srv.formToken+`"`) != 2 {
-		t.Fatalf("both forms must carry the process's token: %s", body)
+	if n := strings.Count(body, `name="token"`); n < 2 || strings.Count(body, `name="token" value="`+srv.formToken+`"`) != n {
+		t.Fatalf("every form must carry the process's token: %s", body)
 	}
 	if policy := rec.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "form-action 'self'") {
 		t.Fatalf("the policy lets the forms post elsewhere: %s", policy)
@@ -340,7 +340,7 @@ func TestThePageNamesAStartParameterThatWasNotApplied(t *testing.T) {
 // to - not even for a device that proved its key.
 func TestTheMainPortHasNoSetForm(t *testing.T) {
 	ts, srv := newTestServer(t)
-	claimDevice(t, ts, srv)
+	firstDevice(t, ts, srv)
 	resp, err := ts.Client().PostForm(ts.URL+"/addresses", setForm(srv, "onion", testOnionAddr))
 	if err != nil {
 		t.Fatalf("POST /addresses on the main port: %v", err)

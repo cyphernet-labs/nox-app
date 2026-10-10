@@ -6,6 +6,8 @@ import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -245,6 +247,63 @@ void main() {
       final before = (await repository.deviceSecret()).data;
       await repository.clear();
       expect((await repository.deviceSecret()).data, isNot(before));
+    });
+  });
+
+  group('a pairing waiting for approval (phase 046, FR-011)', () {
+    final waitUntil = DateTime.utc(2026, 10, 10, 12, 30);
+    final pending = PendingPairing(
+      link: 'nox://pair/link',
+      waitUntil: waitUntil,
+      connection: ConnectionSettings(serverAddress: '192.168.1.20:8443', onionAddress: '${'a' * 56}.onion:443', useTor: true),
+    );
+
+    test('is remembered whole - the link, the deadline and what was set on the connection screen', () async {
+      await repository.savePendingPairing(pending);
+
+      expect((await repository.readPendingPairing()).data, pending);
+    });
+
+    test('a link remembered with no connection settings comes back without them', () async {
+      await repository.savePendingPairing(PendingPairing(link: 'nox://pair/link', waitUntil: waitUntil));
+
+      final read = (await repository.readPendingPairing()).data!;
+      expect(read.connection, isNull);
+      expect(read.waitUntil, waitUntil);
+    });
+
+    test('lives in secure storage, never in the preferences: the link carries the token', () async {
+      await repository.savePendingPairing(pending);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getKeys().any((key) => (prefs.get(key)?.toString() ?? '').contains('nox://pair/link')), isFalse);
+      expect(await const FlutterSecureStorage().read(key: 'session.pending_pairing'), contains('nox://pair/link'));
+    });
+
+    test('nothing remembered reads as none, and so does a value nothing could resume', () async {
+      expect((await repository.readPendingPairing()).data, isNull);
+
+      await const FlutterSecureStorage().write(key: 'session.pending_pairing', value: '{not json');
+      expect((await repository.readPendingPairing()).data, isNull);
+      await const FlutterSecureStorage().write(key: 'session.pending_pairing', value: jsonEncode({'link': 'nox://pair/link'}));
+      expect((await repository.readPendingPairing()).data, isNull, reason: 'no deadline, nothing to wait until');
+    });
+
+    test('is forgotten when the wait ends', () async {
+      await repository.savePendingPairing(pending);
+      await repository.clearPendingPairing();
+
+      expect((await repository.readPendingPairing()).data, isNull);
+    });
+
+    test('goes with a discarded sign-in, and with a logout', () async {
+      await repository.savePendingPairing(pending);
+      await repository.discardSignIn();
+      expect((await repository.readPendingPairing()).data, isNull);
+
+      await repository.savePendingPairing(pending);
+      await repository.clear();
+      expect((await repository.readPendingPairing()).data, isNull);
     });
   });
 

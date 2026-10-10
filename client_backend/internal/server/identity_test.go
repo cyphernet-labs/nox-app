@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/protocol"
@@ -42,7 +41,7 @@ func eventKey(t *testing.T, data map[string]json.RawMessage) string {
 // next drain and is sent a second time.
 func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	anna := dialAs(t, ts, srv, dev)
 	anna.expectGreeting()
@@ -58,13 +57,9 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	}
 
 	// Path 2 - live delivery to a second connection of the same person.
-	// A second connection of the SAME person - which now means a second
-	// device of hers, paired through an invite.
-	invite, err := srv.store.IssueDeviceInvite(context.Background(), dev.pub, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	second, _ := pairDevice(t, ts, invite)
+	// A second connection of the SAME person - which means a second device of
+	// hers, paired through the machine link.
+	second, _ := pairDevice(t, ts, mustMachineLink(t, srv))
 	live := dialAs(t, ts, srv, second)
 	live.expectGreeting()
 	live.hello(1, "")
@@ -113,7 +108,7 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 // string, a rename used to make one's own history look like a stranger's.
 func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	anna := dialAs(t, ts, srv, dev)
 	anna.expectGreeting()
@@ -200,18 +195,14 @@ func TestAssertIdentitySchemaAcceptsAFreshDatabase(t *testing.T) {
 func TestPairCreatedTellsTheClientWhetherToOnboard(t *testing.T) {
 	ts, srv := newTestServer(t)
 
-	dev, claimed := claimDevice(t, ts, srv)
+	_, first := firstDevice(t, ts, srv)
 	var newcomer identity
-	mustUnmarshal(t, claimed["identity"], &newcomer)
+	mustUnmarshal(t, first["identity"], &newcomer)
 	if !newcomer.Created {
-		t.Fatal("claiming a fresh server brings the person into being")
+		t.Fatal("the first device on a fresh server brings the person into being")
 	}
 
-	invite, err := srv.store.IssueDeviceInvite(context.Background(), dev.pub, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	_, added := pairDevice(t, ts, invite)
+	_, added := pairDevice(t, ts, mustMachineLink(t, srv))
 	raw := added["identity"]
 	var returning identity
 	mustUnmarshal(t, raw, &returning)
@@ -230,7 +221,7 @@ func TestPairCreatedTellsTheClientWhetherToOnboard(t *testing.T) {
 // already paired, so nobody was brought into being by it.
 func TestGreetingNeverReportsCreated(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
+	dev, _ := firstDevice(t, ts, srv)
 
 	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
@@ -279,8 +270,8 @@ func TestGreetingFromAnUnpairedKeyIsRefused(t *testing.T) {
 }
 
 // The guard exists to replace a raw "no such column" with an instruction, so
-// the case it exists for - a feature-032 database, every table present and the
-// owner column missing - has to be the case it is tested on. A typo in the
+// the case it exists for - an older database, every table present and a
+// column missing - has to be the case it is tested on. A typo in the
 // predicate would otherwise either refuse every good database or wave every
 // stale one through to die deeper in.
 func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
@@ -304,7 +295,7 @@ func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
 	// are all there, the schema behind them is not the current one. Dropping a
 	// column is one way to get there; the fingerprint catches every other way
 	// too, which a per-column list could not.
-	if _, err := dbs.Write.ExecContext(ctx, "ALTER TABLE server_identity DROP COLUMN owner_user_id"); err != nil {
+	if _, err := dbs.Write.ExecContext(ctx, "ALTER TABLE devices DROP COLUMN last_seen_at"); err != nil {
 		t.Fatalf("drop column: %v", err)
 	}
 	if _, err := dbs.Write.ExecContext(ctx, "PRAGMA application_id = 1"); err != nil {
@@ -312,7 +303,7 @@ func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
 	}
 	err = assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path)
 	if err == nil {
-		t.Fatal("a database without the owner column was allowed to start")
+		t.Fatal("a database missing a column was allowed to start")
 	}
 	if !strings.Contains(err.Error(), path) {
 		t.Fatalf("the refusal does not say which file to delete: %v", err)

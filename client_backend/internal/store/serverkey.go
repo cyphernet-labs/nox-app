@@ -11,7 +11,7 @@ import (
 )
 
 // ServerIdentity is the machine's own long-lived identity: the key a device
-// recognises it by, and the moment somebody claimed it.
+// recognises it by.
 //
 // The key is Ed25519 and it never touches TLS (feature 044). The server proves
 // it inside every channel, signing the session's binding (internal/eidolon),
@@ -30,20 +30,14 @@ import (
 // The private half is deliberately NOT a field here. This struct is handed to
 // the status page and to device.invite, two paths that have no use for a
 // secret - it is reached through ServerKey instead.
+//
+// There is no owner here any more (046). The machine holds one person, and
+// whether a device can still reach it is the device count - one fact, kept in
+// one place, rather than a marker beside it that could disagree.
 type ServerIdentity struct {
 	// PublicKey is the machine's Ed25519 public key: what the pairing link
 	// carries, and what the server's message in the channel check presents.
 	PublicKey ed25519.PublicKey
-	// OwnerUserID is the person this machine belongs to, empty while nobody
-	// owns it. It is the ONLY definition of "claimed": deciding by ClaimedAt
-	// instead would put one fact in two records, and two records of one fact
-	// eventually disagree.
-	OwnerUserID string
-	// ClaimedAt is when the machine was claimed, zero while it has no owner.
-	// Nothing decides by it - it is there because the moment is unrecoverable
-	// and the service page will want to show it. Read today only by the test
-	// that pins it still being written.
-	ClaimedAt int64
 }
 
 // ErrNoServerIdentity is returned when the machine has no key yet. Callers
@@ -97,7 +91,7 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 	pub := ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
 
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO server_identity (id, public_key, private_key, claimed_at) VALUES (1, ?, ?, NULL)",
+		"INSERT INTO server_identity (id, public_key, private_key) VALUES (1, ?, ?)",
 		base64.StdEncoding.EncodeToString(pub), base64.StdEncoding.EncodeToString(seed[:]))
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("insert server identity: %w", err)
@@ -150,98 +144,11 @@ func (s *Store) ServerIdentity(ctx context.Context) (ServerIdentity, error) {
 	return readServerIdentity(ctx, s.read)
 }
 
-// setOwner records the person this machine belongs to. Called from inside the
-// claim transaction in Pair, so ownership and the person that holds it are
-// committed together or not at all.
-//
-// Conditional on the column still being empty: a claim racing another one must
-// not move ownership. The caller does not read the outcome back - the branch
-// that reaches here already knows which of the two cases it is in.
-func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
-	// claimed_at is written in the SAME statement on purpose. It decides
-	// nothing, but the moment is unrecoverable, and keeping the two writes
-	// apart is how one of them gets dropped by a later edit.
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE server_identity SET owner_user_id = ?, claimed_at = ? WHERE id = 1 AND owner_user_id IS NULL",
-		userID, now); err != nil {
-		return fmt.Errorf("set server owner: %w", err)
-	}
-	return nil
-}
-
-// OwnershipState is everything startup needs to know about who owns this
-// machine, read in ONE transaction.
-//
-// One read, because the three questions are one fact: taken apart they can
-// straddle a committing claim and describe a store that never existed, and the
-// answers then have to be threaded between functions to keep them agreeing.
-type OwnershipState struct {
-	// Owned is true when the machine has an owner recorded.
-	Owned bool
-	// HasPerson is true when the store already holds somebody, whether or not
-	// the ownership marker survived. It exists because "unclaimed" and "empty"
-	// stopped being the same thing: a claim on a store that holds a person
-	// ATTACHES to them and their whole conversation, and telling the operator
-	// "the first device to use this becomes the owner" there is simply false.
-	HasPerson bool
-	// OwnerCanGetIn is true when a device can still reach this machine.
-	//
-	// It answers REACHABILITY, not ownership, and the name is kept for the one
-	// decision it drives: whether to offer a claim link. Read without the owner
-	// id on purpose - a store that lost its marker still has a person who can
-	// get in, and answering "no" there prints a link over a machine in use that
-	// Pair would refuse anyway. Use Owned when the question is who the machine
-	// belongs to.
-	OwnerCanGetIn bool
-}
-
-// ReadOwnershipState answers all of it at once.
-func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) {
-	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return OwnershipState{}, fmt.Errorf("begin ownership read: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	owner, err := ownerUserID(ctx, tx)
-	if err != nil && !errors.Is(err, ErrNoServerIdentity) {
-		return OwnershipState{}, err
-	}
-	// The device count is read even when the machine row itself is missing.
-	// Answering "nobody can get in" from the absence of that row is the same
-	// mistake as answering it from a missing ownership marker: startup would
-	// print a claim link over a store somebody is still using, and Pair would
-	// refuse every presentation of it. One predicate, one answer.
-	devices, err := countDevices(ctx, tx)
-	if err != nil {
-		return OwnershipState{}, err
-	}
-	people, err := countPeople(ctx, tx)
-	if err != nil {
-		return OwnershipState{}, err
-	}
-	// Owned means the marker names somebody who is THERE. A marker pointing at a
-	// row that is gone - reachable by a hand edit with foreign keys off - would
-	// otherwise have startup promise "you are back in with your chats and
-	// messages" over a store whose claim mints a brand-new person instead, and
-	// every surviving message would render as somebody else's.
-	owned := false
-	if owner != "" {
-		found, err := ownerRowExists(ctx, tx, owner)
-		if err != nil {
-			return OwnershipState{}, err
-		}
-		owned = found
-	}
-	return OwnershipState{Owned: owned, HasPerson: people > 0, OwnerCanGetIn: devices > 0}, nil
-}
-
 // countDevices is the ONE spelling of "can anybody still reach this machine".
 //
 // Not scoped to a person: this machine holds one, so every device is theirs.
-// Reading it without the owner id matters - the claim path needs the answer
-// even when the ownership marker is missing, which is exactly the state where
-// scoping by owner silently counted zero and let the machine be taken over.
+// The machine link, the service page and the last device going away all ask
+// this one question, and nothing else answers it.
 func countDevices(ctx context.Context, q rowQuerier) (int, error) {
 	var devices int
 	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
@@ -250,29 +157,13 @@ func countDevices(ctx context.Context, q rowQuerier) (int, error) {
 	return devices, nil
 }
 
-// ownerUserID reads the owner inside a transaction that is already open.
-func ownerUserID(ctx context.Context, q rowQuerier) (string, error) {
-	var owner sql.NullString
-	err := q.QueryRowContext(ctx, "SELECT owner_user_id FROM server_identity WHERE id = 1").Scan(&owner)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNoServerIdentity
-	}
-	if err != nil {
-		return "", fmt.Errorf("read server owner: %w", err)
-	}
-	return owner.String, nil
-}
-
 type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, error) {
 	var pubB64 string
-	var claimedAt sql.NullInt64
-	var owner sql.NullString
-	err := q.QueryRowContext(ctx,
-		"SELECT public_key, claimed_at, owner_user_id FROM server_identity WHERE id = 1").Scan(&pubB64, &claimedAt, &owner)
+	err := q.QueryRowContext(ctx, "SELECT public_key FROM server_identity WHERE id = 1").Scan(&pubB64)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ServerIdentity{}, ErrNoServerIdentity
 	}
@@ -283,11 +174,7 @@ func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, erro
 	if err != nil {
 		return ServerIdentity{}, err
 	}
-	return ServerIdentity{
-		PublicKey:   pub,
-		OwnerUserID: owner.String,
-		ClaimedAt:   claimedAt.Int64,
-	}, nil
+	return ServerIdentity{PublicKey: pub}, nil
 }
 
 // decodeServerPublicKey reads the stored public key and refuses anything that
@@ -302,23 +189,4 @@ func decodeServerPublicKey(b64 string) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("server public key is %d bytes, want a %d-byte Ed25519 key", len(raw), ed25519.PublicKeySize)
 	}
 	return ed25519.PublicKey(raw), nil
-}
-
-// ownerRowExists reports whether the person named by the ownership marker is
-// actually in the store.
-//
-// A bool question, answered with a bool. It used to fill an *Identity that its
-// only caller declared and never read - and on the false path Scan leaves that
-// struct zeroed, so the next caller to trust the out-parameter would read a
-// person with no id and no name and be told nothing was wrong.
-func ownerRowExists(ctx context.Context, q rowQuerier, userID string) (bool, error) {
-	var present int
-	err := q.QueryRowContext(ctx, "SELECT 1 FROM users WHERE user_id = ?", userID).Scan(&present)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read the recorded owner: %w", err)
-	}
-	return true, nil
 }
