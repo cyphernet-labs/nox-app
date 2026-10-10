@@ -288,7 +288,7 @@
   },
   "devicesInviteHomeOnly": "This link works only on your home network.",
   "@devicesInviteHomeOnly": {
-    "description": "Under an invite the server could not make reachable from anywhere (phase 040, FR-019)."
+    "description": "Under an invite whose link carries neither the server's onion address nor its public address (phase 045): it works only on the home network."
   },
   "chatCreationPending": "Waiting to be created",
   "@chatCreationPending": {

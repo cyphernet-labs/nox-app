@@ -107,16 +107,14 @@ void main() {
     expect((await repository.inviteDevice()).hasData, isFalse);
   });
 
-  group('onion invites (040, FR-019)', () {
+  group('invites from outside the home network (040, 045)', () {
     // Version-3 links (the contract's vectors): one carrying the onion address
     // as well as a direct one, and one with a direct address only.
     const onionLink =
         'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
     const homeLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
-    test('until phase 045 the server answers false, and the card says home only - even over a link with the onion address', () async {
-      // The onion address rides along for the device once it is paired; a new
-      // device pairs at home, and the card must not promise otherwise.
+    test('a server that says false is believed, whatever the link carries', () async {
       when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': onionLink, 'onion': false}));
 
       final invite = (await repository.inviteDevice()).data!;
@@ -125,14 +123,28 @@ void main() {
       expect(invite.onion, isFalse);
     });
 
-    test('every invite asks for onion, whatever the server turns out to be', () async {
-      // Only the server knows whether it can offer onion right now, and one
-      // older than 039 skips a field it does not know - so asking costs nothing.
+    test('an invite asks for nothing: the link names every address the machine has (contract §8A)', () async {
       when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink}));
 
       await repository.inviteDevice();
 
-      verify(socket.send('device.invite', {'onion': true})).called(1);
+      verify(socket.send('device.invite', const <String, dynamic>{})).called(1);
+    });
+
+    test('a link carrying the public address works away from home, and the card does not say home only (T017)', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': false, 'public': true}));
+
+      final invite = (await repository.inviteDevice()).data!;
+
+      expect(invite.public, isTrue);
+      expect(invite.onion, isFalse);
+      expect(invite.homeOnly, isFalse);
+    });
+
+    test('neither address in the link: home only', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': false, 'public': false}));
+
+      expect((await repository.inviteDevice()).data!.homeOnly, isTrue);
     });
 
     test('the card reads the reply: an onion invite the server vouches for says it works from anywhere', () async {
