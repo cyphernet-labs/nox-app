@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -20,7 +22,6 @@ import 'package:nox_app/domain/repository/connection/server_addresses_repository
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
-import 'package:nox_app/domain/service/tor_service.dart';
 
 /// Owns the order in which the live channel comes up, which is load-bearing:
 ///
@@ -45,11 +46,10 @@ class LiveSessionStarter {
     this._messages,
     this._outbox,
     this._files,
-    this._pinned,
+    this._channels,
     this._selector,
     this._registrar,
     this._addresses,
-    this._tor,
   );
 
   final NoxSocketClient _socket;
@@ -61,11 +61,10 @@ class LiveSessionStarter {
   final MessageRepository _messages;
   final OutboxRepository _outbox;
   final FileRepository _files;
-  final PinnedHttpClient _pinned;
+  final ChannelHttpClient _channels;
   final ConnectionPathSelector _selector;
   final AccessKeyRegistrar _registrar;
   final ServerAddressesRepository _addresses;
-  final TorService _tor;
 
   StreamSubscription<SessionPhase>? _phaseSub;
 
@@ -93,42 +92,48 @@ class LiveSessionStarter {
     }
     final apiUrl = paired.data;
     // No build-time fallback. `AppConfig.apiUrl` names a machine nobody ever
-    // presented, so it has no fingerprint and a connection to it could not be
-    // checked - which is exactly what this phase exists to forbid. An install
-    // that has not paired simply does not connect.
+    // presented, so there is no key a connection to it could be checked
+    // against. An install that has not paired simply does not connect.
     if (apiUrl == null || apiUrl.isEmpty) return;
 
-    final pin = await _session.serverFingerprint();
-    if (!pin.hasData) {
+    final storedKey = await _session.serverKey();
+    if (!storedKey.hasData) {
       // Treated like an unreadable address, and for the same reason: a
       // transient keychain failure is not a statement about which server this
       // is.
-      logRepository.debug(target: this, message: 'sync: server fingerprint unreadable, retrying');
+      logRepository.debug(target: this, message: 'sync: server key unreadable, retrying');
       _retryLater();
       return;
     }
-    final fingerprint = pin.data;
-    if (fingerprint == null || fingerprint.isEmpty) {
-      // An address with nothing to check it against. Connecting anyway would
-      // accept whatever answered, which is the state of affairs this phase
-      // ends; the way out is to pair again, not to trust harder.
-      logRepository.debug(target: this, message: 'sync: paired address has no fingerprint, refusing to connect');
+    final serverKeyText = storedKey.data;
+    final serverKey = _keyBytes(serverKeyText);
+    if (serverKeyText == null || serverKey == null) {
+      // An address with nothing to check it against: a session paired before
+      // phase 044, which bootstrap retires (FR-025). Connecting anyway would
+      // accept whatever answered; the way out is to pair again, not to trust
+      // harder.
+      logRepository.debug(target: this, message: 'sync: paired address has no server key, refusing to connect');
       return;
     }
-    // Set on every start, never captured at construction: the client is a
-    // singleton that outlives pairing, re-pairing and logout, and reading the
-    // value once would pin an empty string on a fresh install for ever.
-    _pinned.pinTo(fingerprint);
-    // Where an onion host is dialled: the bridge of the Tor client built into
-    // the app, read at handshake time because it opens, moves and closes as
-    // the path changes (phase 040).
-    _pinned.onionBridge = () => _tor.bridge;
+    final seed = await _session.deviceSecret();
+    final deviceSeed = seed.hasData ? _keyBytes(seed.data) : null;
+    if (deviceSeed == null) {
+      // The key this device proves itself with cannot be read right now - a
+      // keychain still locked after a reboot. A failed attempt, never a wipe:
+      // without the key there is simply nothing to connect with yet.
+      logRepository.debug(target: this, message: 'sync: device key unreadable, retrying');
+      _retryLater();
+      return;
+    }
+    // Bound on every start, never captured at construction: the client is a
+    // singleton that outlives pairing, re-pairing and logout.
+    _channels.bind(serverKey: serverKey, deviceSeed: deviceSeed);
 
-    // Keyed on the SERVER, by its fingerprint (phase 040, FR-011). An address
-    // is a place: the server moves between them, and the same one leads to
-    // somebody else's machine on another network. The fingerprint is what
-    // every connection is checked against, so two worlds cannot share one.
-    await _wipeIfWorldChanged(fingerprint);
+    // Keyed on the SERVER, by its key (phase 040, FR-011; phase 044). An
+    // address is a place: the server moves between them, and the same one
+    // leads to somebody else's machine on another network. The key is what
+    // every connection proves, so two worlds cannot share one.
+    await _wipeIfWorldChanged(serverKeyText);
     // File bytes travel over REST, and they have to reach the SAME machine the
     // socket does, over the same checked client: an attachment uploaded
     // anywhere else would be referenced from a message on the paired server,
@@ -143,8 +148,10 @@ class LiveSessionStarter {
       if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) unawaited(_adoptGreeting());
     });
     _socket.onUnauthenticated = () => unawaited(_deviceRejected());
-    // Asked before every attempt: direct first, then Tor (phase 040).
-    _selector.begin(linkAddress: _hostPort(apiUrl), fingerprint: fingerprint);
+    // Asked before every attempt: direct first, then Tor (phase 040). Its
+    // probes open channels too, under the same two keys.
+    _selector.begin(linkAddress: _hostPort(apiUrl), serverKey: serverKey, deviceSeed: deviceSeed);
+    deviceSeed.fillRange(0, deviceSeed.length, 0);
     await _socket.start(targets: _selector, credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
   }
 
@@ -185,10 +192,9 @@ class LiveSessionStarter {
     // After the socket, so no new round starts; Tor stops here on a logout.
     await _selector.end(keepTor: keepTor);
     // Forget the server. A logout leaves nothing this install is entitled to
-    // talk to, and a pin left behind would let a connection still being torn
+    // talk to, and keys left bound would let a connection still being torn
     // down keep reaching it.
-    _pinned.unpin();
-    if (!keepTor) _pinned.onionBridge = null;
+    _channels.unbind();
   }
 
   /// Waits out a transient storage failure. Without it a single unreadable
@@ -222,20 +228,13 @@ class LiveSessionStarter {
     // sign-in runs its pairing in.
     if (data == null) return const GreetingCredentials.unpaired();
 
-    final seed = await _session.deviceSecret();
-    if (!seed.hasData) {
-      // A paired install whose key cannot be read right now. Greeting without
-      // it would be refused, and a refusal is indistinguishable from a
-      // revocation - which would wipe this device over a transient keychain
-      // failure. Defer instead.
-      logRepository.debug(target: this, message: 'sync: device key unreadable, greeting deferred');
-      return null;
-    }
-    // No label here any more. It used to ride the greeting behind a "renamed"
-    // flag, because a greeting was the only place a name could travel; with
-    // identity.setLabel it has its own command, and repeating a cached name on
-    // every reconnect is how two devices of one person flip-flop.
-    return GreetingCredentials(deviceSeed: seed.data);
+    // Nobody is named here: the connection proved this device's key before
+    // the server greeted (phase 044). And no label: it used to ride the
+    // greeting behind a "renamed" flag, because a greeting was the only place
+    // a name could travel; with identity.setLabel it has its own command, and
+    // repeating a cached name on every reconnect is how two devices of one
+    // person flip-flop.
+    return const GreetingCredentials();
   }
 
   /// The server does not know this device any more: revoked from elsewhere, or
@@ -321,19 +320,15 @@ class LiveSessionStarter {
   /// from the clock and a server counts from 1, so carrying either across is
   /// worse than starting clean: the cursor would ask for the future and the
   /// rows would mix two id spaces.
-  Future<void> _wipeIfWorldChanged(String fingerprint) async {
-    final epoch = 'fp:$fingerprint';
+  ///
+  /// The world is named by the server's key (`key:<base64>`, phase 044). Any
+  /// other name - an address (`live:`) or a certificate fingerprint (`fp:`)
+  /// from before - belongs to a server this install no longer has a session
+  /// with: nothing is migrated (FR-025).
+  Future<void> _wipeIfWorldChanged(String serverKey) async {
+    final epoch = 'key:$serverKey';
     final stored = await _syncRepository.getEpoch();
     if (stored == epoch) return;
-    if (stored != null && stored.startsWith('live:')) {
-      // Every install from before phase 040 named its world by the server's
-      // ADDRESS. The machine behind that address has been checked against this
-      // very fingerprint on every connection since phase 036, so it is the
-      // same world under a new name: renamed, never wiped (FR-012).
-      logRepository.debug(target: this, message: 'sync: the local world is now named by the server key');
-      await _syncRepository.setEpoch(epoch);
-      return;
-    }
     logRepository.debug(target: this, message: 'sync: data source changed, dropping the local cache once');
     await _wipeWorld();
     await _syncRepository.setEpoch(epoch);
@@ -407,4 +402,17 @@ class LiveSessionStarter {
   /// The REST base for the machine a socket URL names.
   static String _restUrlOf(Uri socketUrl) =>
       Uri(scheme: 'https', host: socketUrl.host, port: socketUrl.hasPort ? socketUrl.port : null).toString();
+
+  /// A stored key as its 32 bytes; null for anything else - absent, not
+  /// base64, the wrong length. Never a reason to throw: a value that cannot
+  /// be a key is no key.
+  static Uint8List? _keyBytes(String? text) {
+    if (text == null || text.isEmpty) return null;
+    try {
+      final bytes = base64.decode(text);
+      return bytes.length == 32 ? bytes : null;
+    } on FormatException {
+      return null;
+    }
+  }
 }

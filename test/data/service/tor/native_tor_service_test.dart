@@ -18,10 +18,13 @@ class _FakeApi extends NoxTorApi {
   ({String host, int port})? target;
   String clientVersion = 'arti-client 0.47.0';
 
+  /// Set to make setTarget refuse, as the library does for a stopped client.
+  int? refuseTargetWith;
+
   @override
   void start({required String stateDir, required String cacheDir}) {
     starts++;
-    snapshot = const NoxTorSnapshot(state: NoxTorState.bootstrapping, bootstrapPercent: 10, error: NoxTorError.none, port: null);
+    snapshot = const NoxTorSnapshot(state: NoxTorState.bootstrapping, bootstrapPercent: 10, error: NoxTorError.none);
   }
 
   @override
@@ -32,8 +35,9 @@ class _FakeApi extends NoxTorApi {
 
   @override
   void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
+    final code = refuseTargetWith;
+    if (code != null) throw NoxTorException(code);
     target = (host: onionHost, port: port);
-    snapshot = NoxTorSnapshot(state: snapshot.state, bootstrapPercent: snapshot.bootstrapPercent, error: snapshot.error, port: 4242);
   }
 
   @override
@@ -44,9 +48,6 @@ class _FakeApi extends NoxTorApi {
 
   @override
   NoxTorSnapshot status() => snapshot;
-
-  @override
-  Uint8List bridgeSecret() => Uint8List.fromList(List<int>.filled(32, 9));
 
   @override
   String onionFromPublicKey(Uint8List publicKey) => 'x.onion';
@@ -82,24 +83,32 @@ void main() {
     expect(service.status.bootstrapPercent, 10);
   });
 
-  test('a target opens the bridge with its secret, read once at set time', () async {
+  test('a target gives the client the access key, and says whether it took it', () async {
     await service.start();
-    service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32));
+    expect(service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32)), isTrue);
     expect(api.target, (host: 'x.onion', port: 443));
-    expect(service.bridge?.port, 4242);
-    expect(service.bridge?.secret, Uint8List.fromList(List<int>.filled(32, 9)));
     service.clearTarget();
-    expect(service.bridge, isNull);
+    expect(api.target, isNull);
+
+    api.refuseTargetWith = -8;
+    expect(
+      service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32)),
+      isFalse,
+      reason: 'refused, not thrown',
+    );
+  });
+
+  test('a refused key the channel reports shows in the status', () async {
+    await service.start();
+    api.snapshot = const NoxTorSnapshot(state: NoxTorState.ready, bootstrapPercent: 100, error: NoxTorError.wrongClientAuth);
+    service.setDormant(false); // any call polls the snapshot
+    await pumpEventQueue();
+    expect(service.status.error, TorError.wrongClientAuth);
   });
 
   test('obsolete is remembered for this Tor client, and the same client is not started again', () async {
     await service.start();
-    api.snapshot = const NoxTorSnapshot(
-      state: NoxTorState.obsolete,
-      bootstrapPercent: 0,
-      error: NoxTorError.softwareDeprecated,
-      port: null,
-    );
+    api.snapshot = const NoxTorSnapshot(state: NoxTorState.obsolete, bootstrapPercent: 0, error: NoxTorError.softwareDeprecated);
     service.setDormant(false); // any call polls the snapshot
     await pumpEventQueue();
     expect(prefs.getString(NativeTorService.kObsoleteClient), 'arti-client 0.47.0');
@@ -129,30 +138,15 @@ void main() {
     expect(api.starts, 0);
   });
 
-  test('a client gone without a port takes its bridge with it', () async {
-    await service.start();
-    service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32));
-    expect(service.bridge, isNotNull);
-
-    // Refused as obsolete: the library tears itself down, listener and all.
-    api.snapshot = const NoxTorSnapshot(
-      state: NoxTorState.obsolete,
-      bootstrapPercent: 0,
-      error: NoxTorError.softwareDeprecated,
-      port: null,
-    );
-    service.setDormant(false); // any call polls the snapshot
-    await pumpEventQueue();
-
-    expect(service.bridge, isNull, reason: 'the port may belong to somebody else by the next dial');
-  });
-
-  test('an unsupported platform does nothing at all', () async {
+  test('an unsupported platform runs no Tor, but still reads an onion address', () async {
+    // The address is the module's arithmetic, and the module is there on
+    // every platform since phase 044 - Linux among them, where Tor is not
+    // offered yet.
     final linux = NativeTorService.forTest(prefs, api: api, directories: () async => ('/s', '/c'), supported: false);
     await linux.start();
-    linux.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32));
+    expect(linux.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32)), isFalse);
     expect(api.starts, 0);
     expect(api.target, isNull);
-    expect(linux.onionFromPublicKey(Uint8List(32)), isNull);
+    expect(linux.onionFromPublicKey(Uint8List(32)), 'x.onion');
   });
 }

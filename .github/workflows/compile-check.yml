@@ -18,11 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # The native module (packages/nox_tor: the channel and the Tor client) is Rust, built by the native-assets hook.
       # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
       # its own, but installing it here keeps the build log readable and the
       # targets limited to what this job builds.
-      - name: Rust toolchain for the Tor client
+      - name: Rust toolchain for the native module
         shell: bash
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
@@ -41,11 +41,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # The native module (packages/nox_tor: the channel and the Tor client) is Rust, built by the native-assets hook.
       # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
       # its own, but installing it here keeps the build log readable and the
       # targets limited to what this job builds.
-      - name: Rust toolchain for the Tor client
+      - name: Rust toolchain for the native module
         shell: bash
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
@@ -60,11 +60,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # The native module (packages/nox_tor: the channel and the Tor client) is Rust, built by the native-assets hook.
       # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
       # its own, but installing it here keeps the build log readable and the
       # targets limited to what this job builds.
-      - name: Rust toolchain for the Tor client
+      - name: Rust toolchain for the native module
         shell: bash
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
@@ -79,11 +79,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # The native module (packages/nox_tor: the channel and the Tor client) is Rust, built by the native-assets hook.
       # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
       # its own, but installing it here keeps the build log readable and the
       # targets limited to what this job builds.
-      - name: Rust toolchain for the Tor client
+      - name: Rust toolchain for the native module
         shell: bash
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)

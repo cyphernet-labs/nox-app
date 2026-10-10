@@ -33,18 +33,27 @@ abstract class SessionRepository {
   Future<RepositoryResult<String>> deviceSecret();
 
   /// Records which server this installation was paired with, from the link:
-  /// where it lives and the fingerprint of the key it will be pinned against.
-  /// Without it the app would pair with one server and talk to another.
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint});
+  /// where the connection starts, and the server's Ed25519 key (base64) every
+  /// connection's Eidolon check must prove (phase 044). Without it the app
+  /// would pair with one server and talk to another.
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey});
 
   /// The paired server's address, or null when this install is not paired.
   Future<RepositoryResult<String?>> serverAddress();
 
-  /// The paired server's key fingerprint, or null when this install is not
-  /// paired. Read on every connection, on both transports: it is the one thing
-  /// that tells the person's own machine from anything else that answers at
-  /// that address.
-  Future<RepositoryResult<String?>> serverFingerprint();
+  /// The paired server's Ed25519 public key, base64, or null when this install
+  /// is not paired. Bound to every connection, on both transports: it is the
+  /// one thing that tells the person's own machine from anything else that
+  /// answers at that address.
+  Future<RepositoryResult<String?>> serverKey();
+
+  /// Whether the stored session was paired before phase 044: an identifier
+  /// with no server key. Such a session has nothing its connections could be
+  /// checked against, and is wiped once, at the first launch (FR-025).
+  ///
+  /// A storage READ error is an error, never a `true`: a keychain that is
+  /// still locked after a reboot must not cost anybody their session.
+  Future<RepositoryResult<bool>> predatesServerKey();
 
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption

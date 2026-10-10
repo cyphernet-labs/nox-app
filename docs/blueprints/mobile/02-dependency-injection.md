@@ -34,7 +34,7 @@ DI-контейнер при этом плоский: и `presentation`, и `dat
 - **`injectable`** — кодогенератор: сканирует аннотации `@injectable` / `@lazySingleton` / `@LazySingleton(...)` / `@Singleton(...)` и эмитит вызовы регистрации в `configure_dependencies.config.dart`.
 - **`injectable_generator`** + **`build_runner`** — dev-зависимости, производящие сгенерированный код.
 
-Ты **никогда** не пишешь `getIt.registerLazySingleton<T>(...)` руками для аннотированных классов — это делает генератор. Сторонние синглтоны, которые генератор вывести из аннотации на классе не может, объявлены декларативно в `@module`-классе `RegisterModule` (`lib/di/register_module.dart`): `FlutterSecureStorage` (`@lazySingleton`), `SharedPreferences` (`@preResolve` — async-резолв, который ждёт `getIt.allReady()`, см. §10) и env-ключевой `@Named('isTestEnvironment') bool`. Полностью ручных вызовов регистрации в теле `configureDependencies` сегодня нет (см. §3).
+Ты **никогда** не пишешь `getIt.registerLazySingleton<T>(...)` руками для аннотированных классов — это делает генератор. Сторонние синглтоны, которые генератор вывести из аннотации на классе не может, объявлены декларативно в `@module`-классе `RegisterModule` (`lib/di/register_module.dart`): `FlutterSecureStorage` (`@lazySingleton`), `SharedPreferences` (`@preResolve` — async-резолв, который ждёт `getIt.allReady()`, см. §10), `NoxChannelApi` (`@LazySingleton(env: [Environment.dev])` → `const NativeNoxChannelApi()` — канал нативного модуля `nox_tor`; конструктор ничего не грузит, библиотека ищется при первом открытии канала) и env-ключевой `@Named('isTestEnvironment') bool`. Полностью ручных вызовов регистрации в теле `configureDependencies` сегодня нет (см. §3).
 
 Версии пакетов — единственный источник истины — закреплены в [01-stack-and-tooling.md](01-stack-and-tooling.md). Сводка DI-релевантных пакетов (сверять с 01, не дублировать самостоятельно):
 
@@ -137,13 +137,12 @@ Future<void> configureDependencies(String env) async {
 - `ConnectivityService` — `ConnectivityServiceImpl` для `[dev, prod]`, `MockConnectivityService` для `[test]` (плагину нужен platform channel, которого под `flutter_test` нет);
 - `ChatRemoteDataSource` / `MessageRemoteDataSource` — после флипа фазы 026 `Real*` живут в `[dev]`, моки сужены до `[prod, test]` (§6.2);
 - `SessionPhaseService` — `SocketSessionPhaseService` (фаза сессии из живого канала) в `[dev]`, `ConnectivitySessionPhaseService` (фаза из коннективности) в `[prod, test]`. С фазы 036 у него есть и `reconnect()`: терминальной фазе лестницы переподключения не осталось, и без явного «попробовать ещё раз» приложение, однажды отказавшее серверу, не возвращается никогда. В мок-окружениях это no-op — канала там нет.
-- `PinnedHttpClient` — `@lazySingleton` во **всех трёх** окружениях (фаза 036). Один `HttpClient` на процесс для обоих транспортов: команды идут `wss`, байты вложений `https`, и решение о том, той ли машине они идут, принимается в одном месте.
 - `TorService` (фаза 040) — `NativeTorService` (Arti через `package:nox_tor`) в `[dev, prod]`, `FakeTorService` в `[test]`: тесты никогда не грузят нативную библиотеку, а фейк по умолчанию «не поддерживается», поэтому всё прежнее идёт только прямым путём.
 - `AppLifecycleService` и `NetworkChangeService` (фаза 040) — `AppLifecycleServiceImpl` / `NetworkChangeServiceImpl` в `[dev, prod]`, `ForegroundAppLifecycleService` / `QuietNetworkChangeService` в `[test]`.
 - `ConnectionStatusService` (фаза 040) — `LiveConnectionStatusService` (фаза сокета + выбор пути + статус Tor) в `[dev]`, вывод из `SessionPhaseService` в `[prod, test]`.
 - `ServerAddressesRepository` и `AccessKeyRepository` (фаза 040) — одна реализация на все три окружения поверх защищённого хранилища.
 
-Сверх этого фаза 026 принесла четыре регистрации **без пары** — они существуют только в `[Environment.dev]`, потому что без живого канала бессмысленны: `NoxSocketClient`, `WebSocketChannelFactory` (под `SocketChannelFactory`), `SyncService` и `LiveSessionStarter`. Фаза 040 добавила к ним ещё три: `ConnectionPathSelector`, `TlsDirectProber` (под `DirectProber`) и `AccessKeyRegistrar`. Их потребители обязаны спрашивать `getIt.isRegistered<T>()` перед резолвом — в `prod`/`test` этих типов в контейнере нет (так делает `AuthRepositoryImpl`, см. §5).
+Сверх этого есть регистрации **без пары** — они существуют только в `[Environment.dev]`, потому что без живого канала бессмысленны: `NoxSocketClient`, `WebSocketChannelFactory` (под `SocketChannelFactory`), `SyncService`, `LiveSessionStarter`, `LiveIdentityHandshake`, `DeviceRepositoryImpl` (под `DeviceRepository`), `ConnectionPathSelector`, `ChannelDirectProber` (под `DirectProber`), `AccessKeyRegistrar`, а также канал нативного модуля: `NoxChannelApi` (провайдер `RegisterModule`, §2), `ChannelHttpClient` — единственное место, где открываются соединения для HTTP и WebSocket, — и `ApiClient` поверх его клиента передач. Соединение с сервером открывает только флейвор, который с ним говорит; в `prod`/`test` канала нет вовсе. Потребители этих типов обязаны спрашивать `getIt.isRegistered<T>()` перед резолвом — в `prod`/`test` их в контейнере нет (так делают `AuthRepositoryImpl`, см. §5, и `LiveSessionStarter` перед `ApiClient.initBase`).
 
 Любой новый сервис поверх платформенного плагина обязан следовать той же схеме, иначе widget/BLoC-тесты падают на резолве.
 
@@ -354,9 +353,9 @@ class AppFlavor {
 
 **Фактический код.** Доменная модель `AppConfig` пока минимальна — флейвор плюс **nullable `apiUrl`**; `AppConfigRepositoryImpl` строит её в `initialize(...)`, беря адрес из `AppFlavor.getApiUrl()`, и дополнительно держит хендшейк-лимиты (`ServerLimits`, дефолты контракта до живого hello) и read-only-доступ к токену. Клиент WebSocket-конверта приехал в **фазе 026**, и вместе с ним — per-флейворный URL: `AppFlavor.getApiUrl()` читает `const String.fromEnvironment('app.apiUrl')`, `config/stage.json` несёт адрес локального `noxd`, а `config/prod.json` — нет, поэтому под флейвором `prod` `apiUrl` остаётся `null` и приложение продолжает работать на моках. Бэкенд и провод **выбраны**: Go-сервер `noxd` в `client_backend/`, контракт v0, живой канал — WebSocket-конверт (`NoxSocketClient`).
 
-> **Транспорт закрыт фазой 036.** `SocketChannelFactory` открывает `IOWebSocketChannel.connect(url, pingInterval: 25s, customClient: …)` с единственным на процесс `HttpClient` из `PinnedHttpClient` (`@lazySingleton`, все три окружения) — тот же экземпляр получает Dio через `IOHttpClientAdapter`, потому что `WebSocket.connect` переданный клиент **не закрывает** и клиент на подключение тёк бы на каждой переподключке. Схема всегда `wss`, отката нет. Доверие берётся не из корней (их у контекста нет вовсе — иначе проверку не позвали бы для сертификата, выданного публичным центром), а из отпечатка, который `LiveSessionStarter` вкладывает в клиент на каждом `start()`. Сверяется **лист**: колбэку плохого сертификата достаётся ВЕРХ предъявленной цепочки, а сертификат сервера публичен, поэтому приложить его сверху своего может кто угодно — фабрика соединений поднимает TLS сама и читает `SecureSocket.peerCertificate`. Порт — тот, что приехал ссылкой; 443 в коде нигде не зашит.
+> **Транспорт — канал нативного модуля.** `SocketChannelFactory` открывает `IOWebSocketChannel.connect(url, pingInterval: 25s, connectTimeout: …, customClient: …)` с клиентом сокета из `ChannelHttpClient` (`client`), а Dio получает через `IOHttpClientAdapter` его клиент передач (`transferClient`). Оба — по одному на процесс: `WebSocket.connect` переданный клиент **не закрывает**, и клиент на подключение тёк бы на каждой переподключке; раздельные — потому что Dio на каждом запросе пишет свой таймаут подключения в отданный ему клиент. `connectionFactory` обоих открывает канал модуля `packages/nox_tor` — транспорт → TLS 1.3 → проверка Eidolon — против ключа сервера, который `LiveSessionStarter` передаёт через `bind(serverKey:, deviceSeed:)` на каждом `start()`. Схема всегда `wss`/`https`, отката нет; сертификат сервера технический и ничего не решает. Порт — тот, что приехал ссылкой; 443 в коде нигде не зашит. `ChannelHttpClient`, `NoxChannelApi` и `ApiClient` зарегистрированы только в `[Environment.dev]` (§3.1). Подробно — [14-networking-and-auth.md](14-networking-and-auth.md) §6.0.
 
-Источник токена приезжает со стадией 2 контракта (аутентификация; стадия 1 сервера работает без неё).
+Токена контракт v0 не несёт: соединение аутентифицирует канал (проверка Eidolon, контракт §1), поэтому у ключа `auth_id_token` писателя нет.
 
 ```dart
 // lib/domain/model/app_config/app_config.dart
@@ -430,7 +429,7 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
 > `AppConfigRepositoryImpl` зарегистрирован под всеми тремя окружениями (`env: [dev, prod, test]`). Конструкторные зависимости у него есть — `FlutterSecureStorage` и env-ключевой `@Named('isTestEnvironment') bool`, оба из `RegisterModule` (§2), — но внешнего конфиг-источника среди них нет: флейвор задаётся вызовом `initialize(flavorType:)` из `main.dart` (§10). До вызова `initialize` геттер `config` бросает `StateError`. Под тестом репозиторий резолвится без ручных моков (обе зависимости приходят из `RegisterModule`, а secure storage подменён in-memory-бэкендом из `flutter_test_config.dart`) — отдельной test-конфиг-модели регистрировать не нужно.
 
-**Целевая форма (набор полей — пример/TBD).** Сервер и провод зафиксированы (Go-сервер `noxd`, контракт v0), а вот **остальной per-флейворный payload сборки — ещё нет**. Транспорт (фаза 026) уже принёс первый такой ключ — `app.apiUrl`; со стадией 2 (аутентификация) тот же тип `AppConfig` обрастёт дополнительными полями (источник токена, материал пиннинга и т. п.), а `AppConfigRepositoryImpl.initialize(...)` будет заполнять их из dart-define-payload'а (`const String.fromEnvironment`). **Per-flavor-подкласса нет** — все различия приходят из payload'а флейвора. Тип-носитель — **`AppConfig`** (плоский value-object), а не отдельная «конфиг-модель»; контракт чтения остаётся прежним (`AppConfigRepository.config`). Имена полей ниже — **пример/TBD** (заменить на реальные ключи сборки, когда они будут зафиксированы); сегодня `AppConfig` несёт `flavor` и `apiUrl`, причём `apiUrl` приходит из `app.apiUrl` (stage — адрес локального `noxd`, prod — ключа нет, значит `null`).
+**Целевая форма (набор полей — пример/TBD).** Сервер и провод зафиксированы (Go-сервер `noxd`, контракт v0), а вот **остальной per-флейворный payload сборки — ещё нет**. Транспорт (фаза 026) уже принёс первый такой ключ — `app.apiUrl`; дальше тот же тип `AppConfig` обрастёт дополнительными полями, а `AppConfigRepositoryImpl.initialize(...)` будет заполнять их из dart-define-payload'а (`const String.fromEnvironment`). Адрес и ключ сервера в этот payload не входят: оба приезжают ссылкой спаривания и живут в сессии. **Per-flavor-подкласса нет** — все различия приходят из payload'а флейвора. Тип-носитель — **`AppConfig`** (плоский value-object), а не отдельная «конфиг-модель»; контракт чтения остаётся прежним (`AppConfigRepository.config`). Имена полей ниже — **пример/TBD** (заменить на реальные ключи сборки, когда они будут зафиксированы); сегодня `AppConfig` несёт `flavor` и `apiUrl`, причём `apiUrl` приходит из `app.apiUrl` (stage — адрес локального `noxd`, prod — ключа нет, значит `null`).
 
 ```dart
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
@@ -582,8 +581,14 @@ class LoggerLogRepository implements LogRepository {
   /// A v3 onion host anywhere in a line.
   static final RegExp _onion = RegExp(r'[a-z2-7]{56}\.onion', caseSensitive: false);
 
-  /// What every line goes through on its way out (phase 040, FR-013).
-  static String scrub(String line) => line.replaceAll(_onion, '[onion]');
+  /// A pairing link anywhere in a line: version 3 (`nox://pair/…`, phase 044)
+  /// and the `https://nox.app/p/#…` of the builds before it, which a person
+  /// may still paste.
+  static final RegExp _link = RegExp(r'(nox://pair/|https://nox\.app/p/#)[A-Za-z0-9_\-=]*', caseSensitive: false);
+
+  /// What every line goes through on its way out (phase 040, FR-013; phase
+  /// 044, FR-022).
+  static String scrub(String line) => line.replaceAll(_link, '[link]').replaceAll(_onion, '[onion]');
 
   @override
   void debug({Object? target, required String message}) {
@@ -605,14 +610,14 @@ class LoggerLogRepository implements LogRepository {
 - Реализации репозиториев и API обращаются к логгеру через глобальный алиас `logRepository` (§8).
 - Любое перехваченное-и-проглоченное исключение **обязано** нести инлайн-комментарий, почему это безопасно.
 - `LoggerLogRepository` зарегистрирован без `env`-списка → доступен во всех окружениях (включая `test`), что позволяет `BaseRepositoryHelper` логировать и под тестом.
-- Каждая строка проходит `scrub`: onion-адрес сервера позволяет спросить сеть Tor, в сети ли сервер, и приезжает внутри чужих исключений (`dart:io` кладёт URI запроса в `HttpException`), поэтому чистится на выходе, а не в местах вызова. Ключи и секреты не логируются нигде.
+- Каждая строка проходит `scrub`: onion-адрес сервера (`[onion]`) позволяет спросить сеть Tor, в сети ли сервер, а ссылка спаривания (`[link]`) несёт токен, которым спаривается устройство. Оба приезжают внутри чужих исключений (`dart:io` кладёт URI запроса в `HttpException`, `FormatException` цитирует свой источник), поэтому чистятся на выходе, а не в местах вызова. Ключи, семя устройства, подписи и токены не логируются нигде.
 - Проброс в observability-бэкенд (Sentry / RUM) — точка расширения внутри `error(...)`, помеченная примером/TBD. «Не выбран» здесь — правда, но речь **не** о серверном бэкенде NOX (он выбран: Go-сервер `noxd`, контракт v0): не выбран именно вендор наблюдаемости / crash-репортинга — отдельный открытый вопрос, не зависящий от контракта провода.
 
 ---
 
 ## 10. `main.dart` — последовательность запуска
 
-Точный порядок: привязка Flutter → `runZonedGuarded` → резолв флейвора → `await configureDependencies(env)` → `await getIt.allReady()` → инициализация конфиг-репозитория → подъём живого канала и слива очереди исходящих → `runApp(AppRoot())`. Маппинг флейвор → окружение: `prod` → `Environment.prod`, `stage` → `Environment.dev`.
+Точный порядок: привязка Flutter → `runZonedGuarded` → резолв флейвора → `await configureDependencies(env)` → `await getIt.allReady()` → инициализация конфиг-репозитория → уборка устаревших ключей и снятие сессии без ключа сервера → подъём живого канала и слива очереди исходящих → `runApp(AppRoot())`. Маппинг флейвор → окружение: `prod` → `Environment.prod`, `stage` → `Environment.dev`.
 
 ```dart
 import 'dart:async';
@@ -623,6 +628,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
@@ -649,15 +655,23 @@ void main() {
       final configRepository = getIt<AppConfigRepository>();
       await configRepository.initialize(flavorType: flavor);
 
-      // 4) Bring the live channel up before the first screen resolves — only the
+      // 4) One-time upgrade housekeeping: keys nothing reads any more go here,
+      //    once, never inside a read. Reports rather than throws.
+      await sessionRepository.sweepLegacyKeys();
+      // 5) A session with no server key has nothing to check a connection
+      //    against: it is wiped once (a forced logout) and the person pairs
+      //    again. A keychain that cannot be read right now wipes nothing.
+      await authRepository.retireLegacySession();
+
+      // 6) Bring the live channel up before the first screen resolves — only the
       //    dev environment binds a starter at all, hence the isRegistered guard.
       if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().start();
-      // 5) The outgoing queue drains in EVERY flavor, unlike the socket-bound
+      // 7) The outgoing queue drains in EVERY flavor, unlike the socket-bound
       //    starter above: a message written before the last close has to leave
       //    whether or not this build talks to a real server.
       getIt<OutboxService>().start();
 
-      // 6) Go.
+      // 8) Go.
       runApp(const AppRoot());
     },
     (error, stack) {
@@ -678,10 +692,12 @@ void main() {
 3. **`Future.wait([configureDependencies(env), setPreferredOrientations(...)])`** — сборка контейнера и блокировка ориентации идут параллельно (независимы).
 4. **`getIt.allReady()`** — блокирует до завершения всех `preResolve: true` async-регистраций. Вызов делает **настоящую** работу: `@preResolve`-`SharedPreferences` из `RegisterModule` (§2) резолвится именно здесь, поэтому без `allReady()` первый же `getIt<SharedPreferences>()` в сессии/настройках бросил бы «not ready». Будущие async-потребители (например `PackageInfo.fromPlatform()` из целевой формы §3) подключаются к тому же вызову и правки `main.dart` не требуют.
 5. **`configRepository.initialize(flavorType: flavor)`** — поднимает конфиг/обсёрвабилити-репозиторий (например, инициализация Sentry-сообщений, чтение Remote Config-подобных значений) уже после готового контейнера.
-6. **`LiveSessionStarter.start()` под `getIt.isRegistered<T>()`** — живой канал поднимается до первого экрана (проверка мира и подписка применителя обязаны опередить приветствие). Guard обязателен: стартер зарегистрирован только в `[Environment.dev]` (§3), и в `prod`/`test` его в контейнере нет.
-7. **`OutboxService.start()` — без guard'а**: очередь исходящих зарегистрирована во всех трёх окружениях (§6.3), и слив нужен в любой сборке — сообщение, записанное до прошлого закрытия приложения, должно уйти независимо от того, говорит ли эта сборка с реальным сервером.
-8. **`runApp(AppRoot())`** — корневой виджет. `AppRoot` поднимает `AppRootBloc` (тема: light/dark + `themeMode`) — см. [06-theming.md](06-theming.md).
-9. **`runZonedGuarded`** — внешний guard: всё непойманное над деревом виджетов попадает в callback ошибки и роутится через единственный лог-канал.
+6. **`sessionRepository.sweepLegacyKeys()`** — разовая уборка ключей, которые больше никто не читает (`session.is_owner`, записи приглашения версии 2, `session.server_fingerprint`). Здесь, а не внутри чтения сессии: миграция внутри самого горячего чтения попадала бы в конверт ошибок, решающий, увидит человек свои чаты или экран Login. Вызов отчитывается результатом и не бросает — guard не нужен.
+7. **`authRepository.retireLegacySession()`** — сессия, у которой есть идентификатор, но нет ключа сервера (`session.server_key`), не может проверить ни одно соединение: проверка Eidolon сверяет ключ сервера с ключом из ссылки. Такая сессия стирается один раз — принудительным выходом, — и человек спаривается заново; миграции нет. Ошибка чтения защищённого хранилища не стирает ничего: это с той же вероятностью действующая сессия. Тоже до `LiveSessionStarter.start()` — до того, как что-либо прочтёт сессию.
+8. **`LiveSessionStarter.start()` под `getIt.isRegistered<T>()`** — живой канал поднимается до первого экрана (проверка мира и подписка применителя обязаны опередить приветствие). Guard обязателен: стартер зарегистрирован только в `[Environment.dev]` (§3), и в `prod`/`test` его в контейнере нет.
+9. **`OutboxService.start()` — без guard'а**: очередь исходящих зарегистрирована во всех трёх окружениях (§6.3), и слив нужен в любой сборке — сообщение, записанное до прошлого закрытия приложения, должно уйти независимо от того, говорит ли эта сборка с реальным сервером.
+10. **`runApp(AppRoot())`** — корневой виджет. `AppRoot` поднимает `AppRootBloc` (тема: light/dark + `themeMode`) — см. [06-theming.md](06-theming.md).
+11. **`runZonedGuarded`** — внешний guard: всё непойманное над деревом виджетов попадает в callback ошибки и роутится через единственный лог-канал.
 
 > **Об ошибках BLoC и логировании.** Отдельного BLoC-обсёрвера в проекте **нет**. Логирование ошибок уже происходит на уровне репозиториев через обязательный `LogRepository` (`BaseRepositoryHelper.execute` всегда логирует — см. [04-data-layer.md](04-data-layer.md)), а ошибки в обработчиках BLoC оборачиваются `BaseBloc.executeLogic` (см. [05-presentation-layer.md](05-presentation-layer.md)) — поэтому отдельный BLoC-обсёрвер не нужен.
 
@@ -734,12 +750,12 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] Окружения только `Environment.dev` / `prod` / `test`; кастомных нет.
 - [ ] `AppDatabase` — интерфейс `{ db, clearEntireDatabase() }`, три env-скоупленных провайдера (`AppDatabaseProd`/`Dev`/`Test`), `@LazySingleton(as: AppDatabase, env: [<one>])`, **по одному** env на провайдер; Prod/Dev = `databaseFactoryIo` (mobile/desktop), Test = `databaseFactoryMemory`; per-env файлы `app.db`/`app_dev.db`/`app_test.db`. Никакой рантайм-`if`-ветки.
 - [ ] DAO и мапперы — `@lazySingleton` (без `env`); `ItemMapper extends BaseMapper<...,dynamic,dynamic>` без конструкторных зависимостей; пути `lib/data/local/item/` и `lib/data/mapper/item/`. Живые DAO — `ChatDao`, `MessageDao`, `OutboxDao`, `SyncDao`.
-- [ ] Регистрации фаз 026–027: `Real{Chat,Message}RemoteDataSource` → `[dev]`, соответствующие моки → `[prod, test]`, `SessionPhaseService` — `Socket*` `[dev]` / `Connectivity*` `[prod, test]`; `NoxSocketClient`, `WebSocketChannelFactory`, `SyncService`, `LiveSessionStarter` — **только** `[Environment.dev]` (потребитель обязан проверить `getIt.isRegistered<T>()`); `OutboxRepositoryImpl` — `@LazySingleton(as: OutboxRepository, env: [dev, prod, test])`, `OutboxService` — `@LazySingleton(env: [dev, prod, test])` без `as:`.
+- [ ] Регистрации фаз 026–027: `Real{Chat,Message}RemoteDataSource` → `[dev]`, соответствующие моки → `[prod, test]`, `SessionPhaseService` — `Socket*` `[dev]` / `Connectivity*` `[prod, test]`; `NoxSocketClient`, `WebSocketChannelFactory`, `SyncService`, `LiveSessionStarter` и канал нативного модуля — `NoxChannelApi` (из `RegisterModule`), `ChannelHttpClient`, `ApiClient`, `ChannelDirectProber` — **только** `[Environment.dev]` (потребитель обязан проверить `getIt.isRegistered<T>()`); `OutboxRepositoryImpl` — `@LazySingleton(as: OutboxRepository, env: [dev, prod, test])`, `OutboxService` — `@LazySingleton(env: [dev, prod, test])` без `as:`.
 - [ ] Реализации репозиториев — `@LazySingleton(as: <Feature>Repository, env: [Environment.dev, Environment.prod, Environment.test])`; **env-список не забыт** (иначе резолв бросает в рантайме). `ItemRepositoryImpl(this._itemMapper, this._itemRemote)` — network-only (`getItems` + `clean`), инъектит `ItemRemoteDataSource`, а не `ItemDao`; это **замороженный** verification-слайс, а не канон продуктовых репозиториев (чаты/сообщения — cache-first поверх `ChatDao`/`MessageDao`).
 - [ ] `AppFlavorType{prod, stage}` + `AppFlavor.getFlavor()` (compile-time, `String.fromEnvironment('app.flavor')`, `default → prod`).
-- [ ] Факт: `AppConfig({required flavor, apiUrl})` (`apiUrl` из `AppFlavor.getApiUrl()` — stage несёт адрес, prod оставляет `null`) + `AppConfigRepositoryImpl` `@LazySingleton(as: AppConfigRepository, env: [dev, prod, test])` с двумя конструкторными зависимостями из `RegisterModule` (`FlutterSecureStorage`, `@Named('isTestEnvironment') bool`), строит `AppConfig` в `initialize(flavorType:)`. Доп. поля `AppConfig` (источник токена, ключи подписи) с чтением через `const String.fromEnvironment` внутри `initialize` — целевая форма: сервер и контракт v0 зафиксированы, адрес приехал с транспортом (026), остальные per-флейворные ключи сборки — **пример/TBD** и приезжают со стадией 2 (аутентификация); тип-носитель остаётся `AppConfig`, контракт `AppConfigRepository.config` неизменен.
+- [ ] Факт: `AppConfig({required flavor, apiUrl})` (`apiUrl` из `AppFlavor.getApiUrl()` — stage несёт адрес, prod оставляет `null`) + `AppConfigRepositoryImpl` `@LazySingleton(as: AppConfigRepository, env: [dev, prod, test])` с двумя конструкторными зависимостями из `RegisterModule` (`FlutterSecureStorage`, `@Named('isTestEnvironment') bool`), строит `AppConfig` в `initialize(flavorType:)`. Доп. поля `AppConfig` с чтением через `const String.fromEnvironment` внутри `initialize` — целевая форма: сервер и контракт v0 зафиксированы, адрес приехал с транспортом (026), остальные per-флейворные ключи сборки — **пример/TBD**; адрес и ключ сервера в конфиг сборки не входят (ссылка спаривания), токена контракт не несёт; тип-носитель остаётся `AppConfig`, контракт `AppConfigRepository.config` неизменен.
 - [ ] `LogRepository` интерфейс (`lib/domain/repository/`, `Object? target`) + `LoggerLogRepository` impl `@LazySingleton(as: LogRepository)` (`lib/data/repository/`, `Logger(printer: SimplePrinter(printTime: true))` + `_tag`); в `lib/` нет сырого `print`/`debugPrint`.
 - [ ] `PackageInfo`: в скелете не зарегистрирован; в целевой форме — async `preResolve: true` вне теста, `setMockInitialValues` под тестом (подключается с первым потребителем).
 - [ ] `global_aliases.dart` — top-level **геттеры** (не `final`); сегодня их десять (`logRepository`, `itemRepository`, `settingsRepository`, `chatRepository`, `appStateRepository`, `authRepository`, `sessionRepository`, `cameraPermissionService`, `notificationPermissionService`, `qrImageDecodeService`), новые добавляются по мере «разогрева»; всё, у чего алиаса нет, BLoC зовёт через `getIt<T>()` напрямую.
-- [ ] `main.dart`: `ensureInitialized` → `runZonedGuarded(...)` → `AppFlavor.getFlavor` → `await configureDependencies(env)` → `await getIt.allReady()` → `getIt<AppConfigRepository>().initialize(flavorType:)` → `LiveSessionStarter.start()` **под `getIt.isRegistered<T>()`** (dev-only регистрация) → `OutboxService.start()` (без guard'а, зарегистрирован везде) → `runApp(AppRoot)`; маппинг `prod→prod`, `stage→dev`.
+- [ ] `main.dart`: `ensureInitialized` → `runZonedGuarded(...)` → `AppFlavor.getFlavor` → `await configureDependencies(env)` → `await getIt.allReady()` → `getIt<AppConfigRepository>().initialize(flavorType:)` → `sessionRepository.sweepLegacyKeys()` → `authRepository.retireLegacySession()` (сессия без `session.server_key` стирается один раз; ошибка чтения не стирает ничего) → `LiveSessionStarter.start()` **под `getIt.isRegistered<T>()`** (dev-only регистрация) → `OutboxService.start()` (без guard'а, зарегистрирован везде) → `runApp(AppRoot)`; маппинг `prod→prod`, `stage→dev`.
 - [ ] Один прогон `build_runner build --delete-conflicting-outputs` после любой правки аннотации/конструктора; `.config.dart` никогда не редактируется руками.
