@@ -220,6 +220,19 @@ void main() {
       expect(factory.urls.single.toString(), 'wss://10.0.0.5:9000/ws');
     });
 
+    test('a stored address in URL form keeps its port, 443 included', () async {
+      // A Uri drops its scheme's default port: read through hasPort, this was
+      // a bare host - no address the probe dials.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: 'https://10.0.0.5:443', serverKey: kKeyA);
+
+      await starter.start();
+      await settle();
+
+      expect(prober.rounds.first, ['10.0.0.5:443']);
+      expect(factory.urls.single.toString(), 'wss://10.0.0.5:443/ws');
+    });
+
     test('the server key from the link is bound to every connection the channel opens (phase 044)', () async {
       // Bound on every start rather than read once: the client is a singleton
       // built long before anybody pairs.

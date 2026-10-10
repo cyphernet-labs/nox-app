@@ -1,4 +1,5 @@
 import 'package:nox_app/domain/model/connection/server_addresses.dart';
+import 'package:nox_app/general/connection/address_format.dart';
 
 /// Reads the `addresses` object - the greeting's field and the payload of the
 /// `server.addresses` event, which are the same shape (contract §3, §8A):
@@ -30,21 +31,18 @@ abstract final class ServerAddressesParser {
     return ServerAddresses(direct: List<String>.unmodifiable(direct), public: _publicOf(raw['public']), onion: _onionOf(raw['onion']));
   }
 
-  /// `host:port` with an explicit, valid port; IPv6 in brackets.
-  static bool isHostPort(String value) {
-    if (value.isEmpty || value.contains('/') || value.contains('@')) return false;
-    final uri = Uri.tryParse('https://$value');
-    if (uri == null || uri.host.isEmpty || !uri.hasPort) return false;
-    return uri.port > 0 && uri.port <= 65535;
-  }
+  /// `host:port` with an explicit, valid port; IPv6 in brackets; an onion
+  /// name never. Read the way every server address in the app is read
+  /// ([AddressFormat.parseServerAddress]) - an address kept here is one the
+  /// direct probe will dial, port 443 included.
+  static bool isHostPort(String value) => AddressFormat.parseServerAddress(value) != null;
 
   /// The public address (phase 045): `host:port`, an onion name never - that
   /// goes through Tor or nowhere.
   static String? _publicOf(Object? raw) {
     if (raw is! String) return null;
     final value = raw.trim();
-    if (!isHostPort(value) || value.toLowerCase().contains('.onion')) return null;
-    return value;
+    return isHostPort(value) ? value : null;
   }
 
   static String? _onionOf(Object? raw) {

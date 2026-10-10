@@ -385,7 +385,12 @@ class LiveSessionStarter {
   static String _hostPort(String apiUrl) {
     if (!apiUrl.contains('://')) return apiUrl;
     final uri = Uri.parse(apiUrl);
-    return uri.hasPort ? '${uri.host.contains(':') ? '[${uri.host}]' : uri.host}:${uri.port}' : uri.host;
+    // `port`, never `hasPort`: a Uri drops its scheme's default, so
+    // `https://host:443` has no port to report while it still names 443, and
+    // a bare host is no address the probe will dial. A scheme Uri has no
+    // default for (`wss`) reads 0 without a port, and means 443 too.
+    final port = uri.port == 0 ? 443 : uri.port;
+    return '${uri.host.contains(':') ? '[${uri.host}]' : uri.host}:$port';
   }
 
   /// The REST base for attachment bytes: the same machine, `https`.

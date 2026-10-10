@@ -34,6 +34,11 @@ void main() {
       '[fd12:3456::20]:8443',
       '[::1]:9000',
       '  192.168.1.20:8443  ',
+      // The scheme default a Uri drops: still an explicit, valid port here.
+      '203.0.113.7:443',
+      '[2001:db8::7]:443',
+      'nox.example.org:443',
+      '192.168.1.20:0443',
     ]) {
       test('"$good" is one', () => expect(AddressFormat.isServerAddress(good), isTrue));
     }
@@ -47,6 +52,13 @@ void main() {
       '192.168.1.20:0',
       '192.168.1.20:65536',
       '192.168.1.20:+80',
+      // A port is 1 to 5 ASCII digits: int.tryParse alone takes the first
+      // two, and the third is 443 with a leading zero too many.
+      '192.168.1.20:0x1bb',
+      'nox.example.org:0x1BB',
+      '192.168.1.20:000443',
+      '192.168.1.20:-443',
+      '192.168.1.20:٤٤٣',
       'fd12:3456::20:8443',
       '[fd12:3456::20:8443',
       '[192.168.1.20]:8443',
@@ -67,6 +79,27 @@ void main() {
       final long = List<String>.filled(5, 'a' * 60).join('.');
       expect(long.length, greaterThan(253));
       expect(AddressFormat.isServerAddress('$long:1'), isFalse);
+    });
+  });
+
+  group('a server address read into its parts', () {
+    test('the port comes off the text, 443 included, and the host as a connection dials it', () {
+      expect(AddressFormat.parseServerAddress('203.0.113.7:443'), (host: '203.0.113.7', port: 443));
+      expect(AddressFormat.parseServerAddress('[2001:DB8::7]:443'), (host: '2001:db8::7', port: 443), reason: 'no brackets');
+      expect(AddressFormat.parseServerAddress('NOX.Example.ORG:443'), (host: 'nox.example.org', port: 443));
+      expect(AddressFormat.parseServerAddress('nox.example.org:08443'), (host: 'nox.example.org', port: 8443));
+    });
+
+    test('what is stored is read exactly as written: spaces around it make it none', () {
+      expect(AddressFormat.parseServerAddress(' 203.0.113.7:443'), isNull);
+      expect(AddressFormat.parseServerAddress('203.0.113.7:443 '), isNull);
+      expect(AddressFormat.isServerAddress(' 203.0.113.7:443 '), isTrue, reason: 'a field is trimmed first');
+    });
+
+    test('anything that is not a server address has no parts', () {
+      for (final bad in ['nox.example.org', '203.0.113.7:0x1bb', '$rfcOnion:443', 'https://203.0.113.7:443', '[2001:db8::7]']) {
+        expect(AddressFormat.parseServerAddress(bad), isNull, reason: bad);
+      }
     });
   });
 
