@@ -115,6 +115,14 @@ function Fail([string]$Text) { throw (New-Object System.ApplicationException -Ar
 # as it was. The tor steps keep a record of their own: tor failing takes back
 # only tor, and the server is installed without it. (Actions, not script
 # blocks: a closure cannot call this script's functions.)
+#
+# The record is also kept on disk, in JournalDir, written whole before each
+# step, with the copies of the files the run replaced. A run that ends with no
+# chance to take back - its window closed, its SSH session dropped, killed by
+# the PowerShell it was piped from, or the machine losing power - leaves it
+# there, and the next run takes it back before it does anything else. It
+# holds actions, paths and names, never the password, and only SYSTEM and the
+# administrators may write it: what it holds is run.
 
 $script:UndoMain = New-Object System.Collections.Generic.List[object]
 $script:UndoTor = New-Object System.Collections.Generic.List[object]
@@ -127,10 +135,169 @@ $script:UndoFailed = $false
 $script:ServerLockedAgain = $false
 # CtrlCGuard says whether the rollback can make the process ignore Ctrl+C.
 $script:CtrlCGuard = $false
+# UndoFailedSteps keeps the steps that could not be taken back: they stay in
+# the record on disk, for the owner.
+$script:UndoFailedSteps = New-Object System.Collections.Generic.List[object]
+$script:JournalDir = ''
+$script:JournalOpen = $false
 
 function Add-Undo([string]$Action, [string]$A = '', [string]$B = '') {
     $entry = [pscustomobject]@{ Action = $Action; A = $A; B = $B }
     if ($script:UndoInto -eq 'Tor') { $script:UndoTor.Add($entry) } else { $script:UndoMain.Add($entry) }
+    Write-Journal
+}
+
+function ConvertTo-JournalField([string]$S) { return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($S)) }
+function ConvertFrom-JournalField([string]$S) { return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($S)) }
+
+# Open-Journal makes the folder of the record on disk the first time the run
+# records a step - SYSTEM's and the administrators' alone, made so even when
+# it was there already, before anything is written into it.
+function Open-Journal {
+    if ($script:JournalOpen) { return }
+    if (-not $script:JournalDir.EndsWith('NOX-install')) { Fail "no folder for the record of changes: $($script:JournalDir)" }
+    New-Item -ItemType Directory -Path $script:JournalDir -Force | Out-Null
+    if (-not $Prefix) {
+        $out = Invoke-Native "$env:SystemRoot\System32\icacls.exe" @($script:JournalDir, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
+        if ($out.ExitCode -ne 0) { Fail "could not set who may open $($script:JournalDir)`: $($out.Output.Trim())" }
+    }
+    $script:JournalOpen = $true
+}
+
+function Add-JournalLines($Lines, [string]$Name, $Record) {
+    foreach ($u in $Record) { $Lines.Add($Name + "`t" + $u.Action + "`t" + (ConvertTo-JournalField $u.A) + "`t" + (ConvertTo-JournalField $u.B)) }
+}
+
+# Write-Journal writes the record as it stands to disk - whole, through a
+# replace, so the file is always one complete record. Its first line names
+# the run's process: a run that finds the record knows whether the one that
+# wrote it still goes.
+function Write-Journal {
+    Open-Journal
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("nox-install-journal 1 $PID")
+    Add-JournalLines $lines 'Tor' $script:UndoTor
+    Add-JournalLines $lines 'Main' $script:UndoMain
+    Add-JournalLines $lines 'Failed' $script:UndoFailedSteps
+    $file = Join-Path $script:JournalDir 'journal'
+    $tmp = "$file.new"
+    [System.IO.File]::WriteAllLines($tmp, $lines, (New-Object System.Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $file) { [System.IO.File]::Replace($tmp, $file, $null) } else { [System.IO.File]::Move($tmp, $file) }
+}
+
+# Close-Journal removes the record and the copies from disk: the run is taken
+# back, or it stands.
+function Close-Journal {
+    if ($script:JournalDir.EndsWith('NOX-install') -and (Test-Path -LiteralPath $script:JournalDir)) {
+        Remove-Item -LiteralPath $script:JournalDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $script:JournalOpen = $false
+}
+
+# Save-FailedJournal sets aside, readably, what could not be taken back, with
+# the copies of the replaced files beside it, for the owner to look at.
+function Save-FailedJournal {
+    $failed = Join-Path $script:JournalDir 'journal.failed'
+    try {
+        [System.IO.File]::WriteAllLines($failed, [string[]]@($script:UndoFailedSteps | ForEach-Object { "$($_.Action)`t$($_.A)`t$($_.B)" }), (New-Object System.Text.UTF8Encoding($false)))
+        Remove-Item -LiteralPath (Join-Path $script:JournalDir 'journal') -Force -ErrorAction SilentlyContinue
+    } catch { }
+    $script:JournalOpen = $false
+    Warn "what was not taken back is listed in $failed, the copies of the files the run replaced beside it; put it right, remove $($script:JournalDir), and run the script again"
+}
+
+# Set-Committed marks the installation as standing: the record on disk goes
+# first, so a run that ends after this point is never taken back by the next
+# one, then the copies with it.
+function Set-Committed {
+    Remove-Item -LiteralPath (Join-Path $script:JournalDir 'journal') -Force -ErrorAction SilentlyContinue
+    $script:Committed = $true
+    Close-Journal
+}
+
+# Test-JournalTrusted says whether the record on disk can only have been
+# written by SYSTEM, the administrators or this account: they own its folder
+# and its file, and nobody else may write to them. (A check under -Prefix is
+# the account's own.)
+function Test-JournalTrusted {
+    if ($Prefix) { return $true }
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', $me)
+    $writes = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, Delete, ChangePermissions, TakeOwnership'
+    foreach ($p in @($script:JournalDir, (Join-Path $script:JournalDir 'journal'))) {
+        $acl = Get-Acl -LiteralPath $p
+        if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+        foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writes) -and ($trusted -notcontains $rule.IdentityReference.Value)) { return $false }
+        }
+    }
+    return $true
+}
+
+# Test-JournalOwnerAlive says whether the run that wrote the record still
+# goes: that process lives and is this script.
+function Test-JournalOwnerAlive([int]$Id) {
+    if ($Id -eq $PID) { return $false }
+    try { $p = Get-CimInstance Win32_Process -Filter "ProcessId = $Id" -ErrorAction Stop } catch { return $false }
+    return ($null -ne $p -and [string]$p.CommandLine -match 'install-windows\.ps1')
+}
+
+# Resume-Interrupted takes back what a run before this one changed and left
+# recorded on disk - it ended with no chance to take it back - before this
+# run looks at the machine. Ctrl+C does not cut it short. When all of it is
+# back this run goes on; when not, it stops, with the record set aside.
+function Resume-Interrupted {
+    $file = Join-Path $script:JournalDir 'journal'
+    $failed = Join-Path $script:JournalDir 'journal.failed'
+    if (Test-Path -LiteralPath $failed) { Fail "a run before this one could not take back everything it changed: what is left is listed in $failed, the copies of the files it replaced beside it; put it right, remove $($script:JournalDir), and run the script again" }
+    if (-not (Test-Path -LiteralPath $file)) { return }
+    if (-not (Test-JournalTrusted)) { Fail "$($script:JournalDir) holds a record of changes that others could have written; look at it, remove it, and run the script again" }
+    $lines = [System.IO.File]::ReadAllLines($file)
+    if ($lines.Count -lt 1 -or $lines[0] -notmatch '^nox-install-journal 1 (\d+)$') { Fail "$file is not a record this script wrote; look at it, remove $($script:JournalDir), and run the script again" }
+    $owner = [int]$Matches[1]
+    if (Test-JournalOwnerAlive $owner) { Fail "another run of this script is under way (process $owner): let it finish, and run the script again" }
+    try {
+        for ($i = 1; $i -lt $lines.Count; $i++) {
+            $f = $lines[$i] -split "`t"
+            if ($f.Count -ne 4) { continue }
+            $entry = [pscustomobject]@{ Action = $f[1]; A = (ConvertFrom-JournalField $f[2]); B = (ConvertFrom-JournalField $f[3]) }
+            switch ($f[0]) {
+                'Tor' { $script:UndoTor.Add($entry) }
+                'Main' { $script:UndoMain.Add($entry) }
+                # A step that failed before is reported, not tried again unseen.
+                'Failed' { $script:UndoFailedSteps.Add($entry); $script:UndoFailed = $true }
+            }
+        }
+    } catch {
+        Fail "$file is not a record this script wrote; look at it, remove $($script:JournalDir), and run the script again"
+    }
+    Step 'Taking back an interrupted run'
+    Say 'A run before this one ended before it finished - its window was closed, it was stopped, or the machine'
+    Say 'went down - and what it changed is still in place. That is taken back first.'
+    $script:JournalOpen = $true
+    Set-CtrlCIgnored $true
+    try {
+        Invoke-Undo $script:UndoTor
+        Invoke-Undo $script:UndoMain
+    } finally {
+        Set-CtrlCIgnored $false
+    }
+    if ($script:UndoFailed) {
+        Save-FailedJournal
+        Fail 'not everything the interrupted run changed could be taken back: see the lines above'
+    }
+    Close-Journal
+    Say 'What the interrupted run changed is taken back.'
+}
+
+# Write-ServerLockedAgain is what to say when taking back started the server
+# that ran before: it starts locked, as every start does, and how it opens.
+function Write-ServerLockedAgain {
+    if (-not $script:ServerLockedAgain) { return }
+    $cmd = '& ' + (ConvertTo-Argument $script:Noxd).Replace('"', "'")
+    Say 'The server that ran before was started again and, as after every start, it is locked until its'
+    Say "password is entered - on the service page, http://127.0.0.1:$($script:PreviousStatusPort) on this machine, or with:"
+    Say "    $cmd unlock$(Get-StatusFlagFor $script:PreviousStatusPort)"
 }
 
 function Invoke-UndoAction($U) {
@@ -149,13 +316,18 @@ function Invoke-UndoAction($U) {
 }
 
 # Invoke-Undo runs a record newest first and empties it. Each step leaves the
-# record once it ran, so a run interrupted while taking back goes on from that
-# step, not from the start.
+# record - and the record on disk - once it ran, so taking back that is
+# interrupted goes on from that step, not from the start.
 function Invoke-Undo([System.Collections.Generic.List[object]]$Record) {
     while ($Record.Count -gt 0) {
         $u = $Record[$Record.Count - 1]
-        try { $null = Invoke-UndoAction $u } catch { Warn "could not undo a step: $($_.Exception.Message)"; $script:UndoFailed = $true }
+        try { $null = Invoke-UndoAction $u } catch {
+            Warn "could not undo a step: $($_.Exception.Message)"
+            $script:UndoFailed = $true
+            $script:UndoFailedSteps.Add($u)
+        }
         $Record.RemoveAt($Record.Count - 1)
+        try { Write-Journal } catch { }
     }
 }
 
@@ -163,6 +335,7 @@ function Save-TorRecord {
     foreach ($b in $script:UndoTor) { $script:UndoMain.Add($b) }
     $script:UndoTor.Clear()
     $script:UndoInto = 'Main'
+    Write-Journal
 }
 
 # --- running programs --------------------------------------------------------
@@ -274,15 +447,20 @@ function New-Directory([string]$Path) {
         $top = $parent
         $parent = Split-Path -Parent $top
     }
-    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    # Recorded before the step, as every change is; removing what was never
+    # made is nothing.
     Add-Undo 'remove' $top
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
 }
 
 # Install-File copies one file into place and records how to take it back:
 # the previous file is kept in the scratch directory until the run ends.
 function Install-File([string]$Source, [string]$Dest) {
     if (Test-Path -LiteralPath $Dest) {
-        $keep = Join-Path $script:Work ('previous-' + [guid]::NewGuid().ToString('N'))
+        # Beside the record on disk: a run taken back by the next one finds
+        # the copy there.
+        Open-Journal
+        $keep = Join-Path $script:JournalDir ('previous-' + [guid]::NewGuid().ToString('N'))
         Copy-Item -LiteralPath $Dest -Destination $keep -Force
         Add-Undo 'restore' $keep $Dest
     } else {
@@ -408,6 +586,7 @@ function Start-ServiceAgain([string]$Name) {
 # file, as deploy/README.md describes, takes it away. Without the guard (a
 # system that refuses Add-Type) the rollback falls back to the other way.
 function Initialize-CtrlCGuard {
+    if ($script:CtrlCGuard) { return }
     try {
         Add-Type -Namespace NoxInstall -Name Native -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(System.IntPtr handler, bool add);'
         $script:CtrlCGuard = $true
@@ -811,9 +990,9 @@ function Start-Server {
         Add-Undo 'firewall-port' $FirewallRule $old
         $rule | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $script:Port
     } else {
+        Add-Undo 'firewall-remove' $FirewallRule
         New-NetFirewallRule -Name $FirewallRule -DisplayName 'NOX server' -Direction Inbound -Action Allow -Protocol TCP `
             -LocalPort $script:Port -Program $script:Noxd -Profile Any | Out-Null
-        Add-Undo 'firewall-remove' $FirewallRule
     }
     Start-InstalledService $ServerService
 }
@@ -929,6 +1108,9 @@ function Initialize-Paths {
     $script:RunDir = Join-Path $script:DataDir 'run'
     $script:ServerPidFile = Join-Path $script:RunDir 'noxd.pid'
     $script:TorPidFile = Join-Path $script:RunDir 'nox-tor.pid'
+    # The record of changes on disk: SYSTEM's and the administrators' alone,
+    # beside nothing the server's account may write.
+    if ($Prefix) { $script:JournalDir = Join-Path $root 'ProgramData\NOX-install' } else { $script:JournalDir = Join-Path $env:ProgramData 'NOX-install' }
 }
 
 function Invoke-Install {
@@ -942,6 +1124,8 @@ function Invoke-Install {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     Initialize-Paths
+    Initialize-CtrlCGuard
+    Resume-Interrupted
     $script:FreshData = -not ((Test-Path -LiteralPath $script:Db) -or (Test-Path -LiteralPath "$($script:Db).key"))
     $script:Update = (-not $script:FreshData) -or [bool](Get-PreviousArg '-addr')
     $script:Port = $Port
@@ -950,6 +1134,8 @@ function Invoke-Install {
     if ($prev -match ':(\d+)$') { $script:PreviousStatusPort = [int]$Matches[1] } else { $script:PreviousStatusPort = $DefaultStatusPort }
     $script:StatusPort = $StatusPort
     if (-not $script:StatusPort) { $script:StatusPort = $script:PreviousStatusPort }
+    Write-ServerLockedAgain
+    $script:ServerLockedAgain = $false
     $script:PublicAddress = $PublicAddr
     if (-not $script:PublicAddress) { $script:PublicAddress = Get-PreviousArg '-public-addr' }
     $script:Onion = ''
@@ -970,7 +1156,6 @@ function Invoke-Install {
 
     # From here on the machine changes; a failure takes every change back,
     # and nothing - not Ctrl+C either - cuts the taking back short.
-    Initialize-CtrlCGuard
     Step "Installing the server at $($script:Noxd)"
     if ($Prefix) { Stop-Background 'noxd' $script:ServerPidFile } else { Stop-ServiceForUpdate $ServerService }
     New-Directory $script:ProgramDir
@@ -1005,7 +1190,7 @@ function Invoke-Install {
         }
         Fail "the server did not start, or did not answer on its service page within $HealthWaitSeconds seconds"
     }
-    $script:Committed = $true
+    Set-Committed
     Note "the server answers: $state"
 
     if ($script:FreshData) {
@@ -1047,19 +1232,16 @@ try {
             Warn 'the installation did not finish; taking back what this run changed'
             Invoke-Undo $script:UndoTor
             Invoke-Undo $script:UndoMain
-            if ($script:UndoFailed) { Warn 'not everything could be taken back: see the lines above' }
-            elseif ($script:ServerLockedAgain) { Say 'Everything this run changed was taken back.' }
-            else { Say 'This machine is as it was before the run.' }
-            if ($script:ServerLockedAgain) {
-                $cmd = '& ' + (ConvertTo-Argument $script:Noxd).Replace('"', "'")
-                Say 'The server that ran before was started again and, as after every start, it is locked until its'
-                Say "password is entered - on the service page, http://127.0.0.1:$($script:PreviousStatusPort) on this machine, or with:"
-                Say "    $cmd unlock$(Get-StatusFlagFor $script:PreviousStatusPort)"
-            }
+            if ($script:UndoFailed) { Warn 'not everything could be taken back: see the lines above'; Save-FailedJournal }
+            elseif ($script:ServerLockedAgain) { Say 'Everything this run changed was taken back.'; Close-Journal }
+            else { Say 'This machine is as it was before the run.'; Close-Journal }
+            Write-ServerLockedAgain
         } finally {
             if ($null -ne $ctrlC) { try { [Console]::TreatControlCAsInput = $ctrlC } catch { } }
             Set-CtrlCIgnored $false
         }
+    } elseif (-not $script:Committed -and $script:JournalOpen) {
+        Close-Journal
     }
     if ($script:Work -and (Test-Path -LiteralPath $script:Work)) { Remove-Item -LiteralPath $script:Work -Recurse -Force -ErrorAction SilentlyContinue }
 }
