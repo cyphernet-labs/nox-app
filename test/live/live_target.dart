@@ -43,7 +43,7 @@ class LiveTarget {
   static LiveTarget? orSkip() {
     final target = fromDefine();
     if (target == null) {
-      stdout.writeln('SKIP: pass --dart-define=link=<the claim link on noxd\'s service page>');
+      stdout.writeln('SKIP: pass --dart-define=link=<a machine link: noxd\'s service page, or `noxd link`>');
     }
     return target;
   }
@@ -66,7 +66,8 @@ class LiveTarget {
   /// stops it again. The server knows a device only by the key its channel
   /// proves, and a key it does not know may do nothing but pair - so a probe
   /// pairs first and then starts its socket again, greeting as a device the
-  /// server has. Spends the link: a claim link pairs once.
+  /// server has. Spends the link: a machine link pairs once, and an invite
+  /// would only open a request that waits for Allow (phase 046).
   Future<void> pair(NoxSocketClient socket) async {
     await socket.start(url: socketUrl, credentialsProvider: () async => const GreetingCredentials.unpaired());
     final reply = await socket.pair(token: link.token, platform: 'macos');

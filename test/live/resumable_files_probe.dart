@@ -97,7 +97,7 @@ void main() {
       addTearDown(() => Process.killPid(onionService.pid));
       final server = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:$port', log: 'noxd.log', onionAddr: onionService.onion);
       addTearDown(() => Process.killPid(server.pid));
-      final claim = await server.claimLink();
+      final machine = await server.machineLink();
 
       // --- The app, with the two seams of the Tor probe. ---
       FlutterSecureStorage.setMockInitialValues({});
@@ -114,7 +114,7 @@ void main() {
       bool liveOn(ConnectionPath path) => socket.currentPhase == SessionPhase.live && selector.currentPath == path;
 
       final auth = getIt<AuthRepository>();
-      expect((await auth.signIn(identifier: claim)).hasData, isTrue, reason: 'sign-in by the claim link');
+      expect((await auth.signIn(identifier: machine)).hasData, isTrue, reason: 'sign-in by the machine link');
       expect((await auth.completeOnboarding(label: 'FilesProbe')).hasData, isTrue);
       await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
       // Tor only by the person's leave (phase 045).

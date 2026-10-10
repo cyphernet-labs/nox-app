@@ -100,8 +100,9 @@ class LiveNoxd {
   final int pid;
   final File _log;
 
-  /// The loopback port of the server's service page - where its claim link
-  /// is: the server never writes one to its log (phase 045, FR-022).
+  /// The loopback port of the server's service page - where its machine link
+  /// is while no device is paired: the server never writes one to its log
+  /// (phases 045 and 046).
   final int pagePort;
 
   /// Starts `noxd` on [addr], with its service page on a free loopback port.
@@ -148,11 +149,11 @@ class LiveNoxd {
     }
   }
 
-  /// The claim link, as the service page shows it. Needs the network let
+  /// The machine link, as the service page shows it while no device is paired. Needs the network let
   /// through (`LiveTarget.letTheNetworkThrough`): the page is plain HTTP.
-  Future<String> claimLink() async {
+  Future<String> machineLink() async {
     String? link;
-    await liveUntil('the claim link on the service page', const Duration(seconds: 10), () async {
+    await liveUntil('the machine link on the service page', const Duration(seconds: 10), () async {
       link = await _linkOnPage();
       return link != null;
     });

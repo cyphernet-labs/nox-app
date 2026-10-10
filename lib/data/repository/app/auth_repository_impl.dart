@@ -175,7 +175,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           return stored;
         }
         // The identity comes from the pair reply, not from the fact that THIS
-        // device presented a claim link: the server is the only one who knows,
+        // device presented a machine link: the server is the only one who knows,
         // and a device that inferred it would be right until the day it was
         // not. Stored now so the name is on screen without waiting for the
         // greeting that follows.
@@ -188,7 +188,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         } else {
           final adopted = await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label);
           if (!adopted.hasData) {
-            // NOT fatal, and deliberately not a rollback: the claim token is
+            // NOT fatal, and deliberately not a rollback: the pairing token is
             // already spent, so discarding here would leave the device unable
             // to pair again - the brick this path was rewritten to avoid.
             logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');

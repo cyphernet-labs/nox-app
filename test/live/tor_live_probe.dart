@@ -111,9 +111,9 @@ void main() {
     // address, told where its onion service is. ---
     final firstTor = await LiveTor.start(tor: tor, work: work, target: '$host:$port');
     final first = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:$port', log: 'noxd1.log', onionAddr: firstTor.onion);
-    final claim = await first.claimLink();
+    final machine = await first.machineLink();
     stdout.writeln('NOXD: pid=${first.pid}; TOR: pid=${firstTor.pid}');
-    expect(PairingLink.parse(claim).onionServiceKey, isNotNull, reason: 'the link carries the onion address the server was given');
+    expect(PairingLink.parse(machine).onionServiceKey, isNotNull, reason: 'the link carries the onion address the server was given');
 
     // --- The app, with two seams: where "away" comes from, and when the
     // network changes. Registered before anything resolves the selector.
@@ -151,16 +151,16 @@ void main() {
       return null;
     }
 
-    // --- 1. Pair at home by the claim link, as the connection screen hands
+    // --- 1. Pair at home by the machine link, as the connection screen hands
     // it over: the link's addresses, Use Tor off. Direct; Tor never started.
     var watch = Stopwatch()..start();
-    final link = PairingLink.parse(claim);
+    final link = PairingLink.parse(machine);
     final linkOnion = '${torService.onionFromPublicKey(link.onionServiceKey!)}:443';
     final signedIn = await auth.signIn(
-      identifier: claim,
+      identifier: machine,
       connection: ConnectionSettings(serverAddress: link.directAddresses.first, onionAddress: linkOnion),
     );
-    expect(signedIn.hasData, isTrue, reason: 'sign-in by the claim link');
+    expect(signedIn.hasData, isTrue, reason: 'sign-in by the machine link');
     expect((await auth.completeOnboarding(label: 'TorProbe')).hasData, isTrue);
     await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     measure('pairing at home, to live: ${watch.elapsedMilliseconds} ms');
