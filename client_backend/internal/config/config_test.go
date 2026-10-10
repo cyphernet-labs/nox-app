@@ -33,7 +33,8 @@ func TestLoad(t *testing.T) {
 		{
 			// The flag moves the port; it does not put the page on a network.
 			// Somebody who tries has to learn it now rather than when a
-			// stranger claims their server.
+			// stranger pairs a device with their server through the link the
+			// page hands out.
 			name:    "a service page bound off loopback is refused",
 			args:    []string{"-status-addr", "0.0.0.0:8081"},
 			getenv:  noEnv,

@@ -67,10 +67,10 @@ func TestEveryConnectionGetsTheSlowPathTimeouts(t *testing.T) {
 	}
 }
 
-// A claim through the onion service is a claim like any other (045, FR-008):
-// the very first device may pair through Tor, from anywhere, and then greet
-// the same way.
-func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
+// A machine link presented through the onion service pairs like any other
+// (045, FR-008; 046): the very first device may pair through Tor, from
+// anywhere, and then greet the same way.
+func TestAMachineLinkThroughTheOnionServicePairsLikeAnyOther(t *testing.T) {
 	ts, srv := newTestServer(t)
 	token := mustMachineLink(t, srv)
 	d := newDevice(t)
@@ -85,7 +85,7 @@ func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
 	var id identity
 	mustUnmarshal(t, data["identity"], &id)
 	if !id.Created {
-		t.Fatalf("the claim did not create the person: %+v", id)
+		t.Fatalf("the first pairing did not create the person: %+v", id)
 	}
 
 	again, err := dialThroughOnion(t, ts, srv, d)
