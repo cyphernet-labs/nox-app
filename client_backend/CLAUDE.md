@@ -112,15 +112,19 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    walk one person's connections from another's goroutine. The device key
    needs no lock: the channel fixes it before the connection is registered,
    and it never changes.
-   `Server.claim`, the transfer-token store (`internal/server/tokens.go`)
-   and - since 043 - the upload-writer registry (`internal/server/writers.go`:
-   which request is writing which part, so a new PUT can interrupt one whose
-   connection died silently instead of writing beside it) hold the only
-   other three. The mutex inside each PUT's `stallReader` (`files.go`) is
-   NOT a fourth: it lives and dies with one request, guards nothing another
-   request or connection reads, and only orders that request's read-deadline
-   renewal against an interrupt, so the interrupt is never pushed back by a
-   whole stall timeout. Since 039 the registry also carries `greeted`
+   `Server.claim`, the transfer-token store (`internal/server/tokens.go`),
+   the upload-writer registry (043, `internal/server/writers.go`: which
+   request is writing which part, so a new PUT can interrupt one whose
+   connection died silently instead of writing beside it) and each channel
+   listener's registry of handshakes under way (`internal/server/channel.go`:
+   which connections are still proving a key, oldest first and counted per
+   source, so the accept loop can turn one away or cut the oldest without
+   ever waiting) hold the only other four. The mutex inside each PUT's
+   `stallReader` (`files.go`) is NOT a fifth: it lives and dies with one
+   request, guards nothing another request or connection reads, and only
+   orders that request's read-deadline renewal against an interrupt, so the
+   interrupt is never pushed back by a whole stall timeout. Since 039 the
+   connection registry also carries `greeted`
    and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
    reply is queued - which is what keeps `server.addresses` behind it. Tor
    state reaches readers as an immutable snapshot behind `atomic.Pointer`,
@@ -218,7 +222,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/server/channel.go` — the front door: a listener wrapper that takes
   every connection through TLS and the check on a goroutine of its own, under
   one deadline from accept (10 s direct, 30 s onion), and hands `http.Server`
-  only the ones that passed, with the proved key in the request context
+  only the ones that passed, with the proved key in the request context. Its
+  accept loop never waits: a source (an IPv4 address, an IPv6 /64) has at most
+  8 handshakes under way, a peer off loopback gets 5 s to send its first byte,
+  and past 256 in all the oldest handshake is cut for the newcomer; loopback -
+  tor - is held to neither of the first two
 - `internal/server/tls.go` — the technical certificate: a fresh ECDSA P-256 key
   in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
 - `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
