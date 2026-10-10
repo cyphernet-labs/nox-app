@@ -216,9 +216,10 @@ void main() {
       // as another device would, with that copy out of the way.
       final kept = await getIt<FileRepository>().localPathFor(fileId: sent.attachmentId!, suggestedName: 'big.bin');
       expect(kept, isNotNull, reason: 'the bytes this device sent stay on it');
-      // Sealed, like everything the app keeps (phase 048): its plain length is
-      // the file's.
-      expect((await openSealed(kept!)).length, size);
+      // Sealed, like everything the app keeps (phase 048): every chunk opens
+      // under this device's key, and the bytes are the ones that went up -
+      // compared before the copy goes, a mebibyte at a time.
+      await expectSamePlainBytes(kept!, source);
       File(kept).deleteSync();
       final attachment = MessageAttachment(
         id: sent.attachmentId!,

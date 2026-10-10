@@ -100,11 +100,17 @@ class LiveTor {
     final shell = await Process.run('/bin/sh', ['-c', '"$tor" -f "${torrc.path}" > /dev/null 2>&1 & echo \$!']);
     final pid = int.parse((shell.stdout as String).trim());
     final hostname = File('$work/hs/hostname');
-    await liveUntil(
-      'tor writes the onion address',
-      const Duration(seconds: 60),
-      () => hostname.existsSync() && hostname.readAsStringSync().trim().isNotEmpty,
-    );
+    try {
+      await liveUntil(
+        'tor writes the onion address',
+        const Duration(seconds: 60),
+        () => hostname.existsSync() && hostname.readAsStringSync().trim().isNotEmpty,
+      );
+    } on Object {
+      // Detached like the server, and as long-lived when left behind.
+      Process.killPid(pid);
+      rethrow;
+    }
     return LiveTor._(pid, hostname.readAsStringSync().trim());
   }
 
@@ -166,18 +172,26 @@ class LiveNoxd {
     ]);
     final pid = int.parse((shell.stdout as String).trim());
     final server = LiveNoxd._(pid, file, page, password);
-    // The lock's line is written once the page listens: before it, a
-    // `noxd unlock` would find nobody to give the password to.
-    await liveUntil('noxd waiting for its password', const Duration(seconds: 30), () {
-      server._failOnError();
-      return server.lines().any(_isLockLine);
-    });
-    await server._unlock(noxd);
-    await liveUntil('noxd listening on $addr', const Duration(seconds: 60), () {
-      server._failOnError();
-      return server.lines().any((l) => l['msg'] == 'listening');
-    });
-    return server;
+    try {
+      // The lock's line is written once the page listens: before it, a
+      // `noxd unlock` would find nobody to give the password to.
+      await liveUntil('noxd waiting for its password', const Duration(seconds: 30), () {
+        server._failOnError();
+        return server.lines().any(_isLockLine);
+      });
+      await server._unlock(noxd);
+      await liveUntil('noxd listening on $addr', const Duration(seconds: 60), () {
+        server._failOnError();
+        return server.lines().any((l) => l['msg'] == 'listening');
+      });
+      return server;
+    } on Object {
+      // Detached, it outlives the probe: a server that never came up for it
+      // would go on holding its ports, and a work directory the next run
+      // empties under it.
+      Process.killPid(pid);
+      rethrow;
+    }
   }
 
   /// The lines a server waiting for its password writes (phase 047): the
@@ -209,7 +223,13 @@ class LiveNoxd {
       // A command that ended before reading both lines says why in its exit
       // code and its output, below.
     }
-    final code = await unlock.exitCode.timeout(const Duration(minutes: 2));
+    final code = await unlock.exitCode.timeout(
+      const Duration(minutes: 2),
+      onTimeout: () {
+        unlock.kill();
+        fail('noxd unlock did not end within 2 minutes');
+      },
+    );
     if (code != 0) fail('noxd unlock exited with $code: ${(await err).trim()} ${(await out).trim()}');
   }
 
@@ -264,9 +284,10 @@ class LiveNoxd {
 }
 
 /// Opens a file the app keeps on the disk - a download, the queue's kept
-/// copy - the way the app opens it (phase 048). It has to be sealed under this
-/// device's local-data key: a plain file there is the very defect the phase
-/// closed, and the plain bytes come out of the reader, not off the disk.
+/// copy - the way the app opens it (phase 048). It has to be sealed: a plain
+/// file there is the very defect the phase closed, and the plain bytes come
+/// out of the reader, not off the disk. Only the header is checked here; the
+/// chunks open under this device's local-data key as they are read.
 Future<SealedReader> openSealed(String path) async {
   final file = File(path);
   expect(await SealedFile.isSealed(file), isTrue, reason: 'what the app keeps on the disk is sealed (phase 048)');
