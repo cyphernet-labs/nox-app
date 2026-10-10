@@ -522,11 +522,17 @@ tor_unit() {
 }
 
 setup_tor_system() {
-	local defaults out unit
+	local defaults out unit tor_was_active=0 tor_was_enabled=0
 	step "tor"
+	# Taking back leaves tor as it found it: started again - last, on its own
+	# settings - only if it ran, stopped otherwise, and enabled only if it
+	# was. Fedora, RHEL and Arch neither start nor enable an installed tor.
+	if systemctl is-active --quiet tor 2>/dev/null; then tor_was_active=1; fi
+	if systemctl is-enabled --quiet tor 2>/dev/null; then tor_was_enabled=1; fi
 	system_tor || return 1
-	# Last when undoing: tor runs again on its own settings, restored by then.
-	undo_push "systemctl restart tor >/dev/null 2>&1 || true"
+	if [ "$tor_was_active" = 1 ]; then
+		undo_push_last "systemctl restart tor >/dev/null 2>&1"
+	fi
 	render "$DEPLOY_DIR/nox-tor.conf.tmpl" "$WORK/nox-tor.conf" HS_DIR="$(torq "$HS_DIR")" PORT="$PORT"
 	put_file "$WORK/nox-tor.conf" "$NOX_TOR_CONF" 644 root root
 	include_nox_conf
@@ -543,7 +549,13 @@ setup_tor_system() {
 	# tor writes the address from the key on every start; without the old
 	# file, the wait below proves this start. The key itself stays.
 	rm -f "$HS_DIR/hostname"
+	if [ "$tor_was_enabled" = 0 ]; then
+		undo_push "systemctl disable tor >/dev/null 2>&1 || true"
+	fi
 	systemctl enable tor >/dev/null 2>&1 || true
+	if [ "$tor_was_active" = 0 ]; then
+		undo_push "systemctl stop tor >/dev/null 2>&1 || true"
+	fi
 	systemctl restart tor || tor_fail "systemctl could not restart tor" || return 1
 	if ! ONION=$(wait_onion "$HS_DIR"); then
 		unit=$(tor_unit)
