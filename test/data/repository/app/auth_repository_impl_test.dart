@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
@@ -31,6 +35,7 @@ import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../utils/fake_session_repository.dart';
 import 'auth_repository_impl_test.mocks.dart';
 
 @GenerateMocks([
@@ -336,6 +341,77 @@ void main() {
       expect(result.data, isFalse);
       verifyNever(session.clear());
       verifyNever(chats.clean());
+    });
+  });
+
+  group('the local data at the start (phase 048)', () {
+    late _ScriptedVault vault;
+
+    void useVault(List<LocalDataOpening> answers) {
+      vault = _ScriptedVault(answers);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<DeviceVault>(vault);
+      repository.unreadablePause = (_) => Duration.zero;
+    }
+
+    test('a key that opens its database changes nothing', () async {
+      useVault([LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+      verifyNever(files.clean());
+      expect(vault.forgets, 0);
+    });
+
+    test('a new key clears what no key opens any more, and nothing else', () async {
+      useVault([LocalDataOpening.created]);
+      final copies = Directory(await AppDataRoot.pathOf(AppDataRoot.outboxFolder));
+      await Directory('${copies.path}/left-behind').create(recursive: true);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      verify(files.clean()).called(1);
+      expect(copies.existsSync(), isFalse);
+      verifyNever(session.clear());
+    });
+
+    test('a key that is gone with its data still here: the data goes, and the device pairs again (FR-011)', () async {
+      useVault([LocalDataOpening.lost]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isTrue);
+      expect(vault.forgets, greaterThanOrEqualTo(1), reason: 'a key that opens nothing is no key');
+      verify(session.clear()).called(1);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+
+    test('a store that does not answer is asked again, and never costs the data', () async {
+      useVault([LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      expect(vault.asked, 3);
+      verifyNever(session.clear());
+      verifyNever(files.clean());
+      expect(vault.forgets, 0);
+    });
+
+    test('the pause before asking again grows, and stays short', () {
+      final pause = AuthRepositoryImpl(session, appState, chats, messages, sync, outbox, files).unreadablePause;
+      expect([for (var i = 1; i <= 7; i++) pause(i).inSeconds], [2, 4, 8, 16, 30, 30, 30]);
+    });
+
+    test('logout drops the key with the data it sealed (FR-012)', () async {
+      useVault([]);
+
+      await repository.logout();
+
+      expect(vault.forgets, 1);
     });
   });
 
@@ -646,4 +722,23 @@ class _RecordingPrefetch implements AttachmentPrefetchService {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A vault that answers what a test says, in order, and counts what it was
+/// asked.
+class _ScriptedVault extends DeviceVault {
+  _ScriptedVault(this.answers) : super(FakeSessionRepository());
+
+  final List<LocalDataOpening> answers;
+  int asked = 0;
+  int forgets = 0;
+
+  @override
+  Future<LocalDataOpening> open() async {
+    asked++;
+    return answers.isEmpty ? LocalDataOpening.open : answers.removeAt(0);
+  }
+
+  @override
+  Future<void> forget() async => forgets++;
 }

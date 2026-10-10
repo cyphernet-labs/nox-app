@@ -46,6 +46,15 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> sweepLegacyKeys() => throw UnimplementedError();
 
   @override
+  Future<RepositoryResult<String?>> storageKey() => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<bool>> saveStorageKey({required String key}) => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<bool>> forgetStorageKey() => throw UnimplementedError();
+
+  @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) async {
     _label = label;
     labelDirty = true;

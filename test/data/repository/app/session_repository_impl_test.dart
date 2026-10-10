@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/secure/secure_store_options.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
@@ -20,7 +21,13 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     repository = SessionRepositoryImpl(const FlutterSecureStorage(), prefs);
+    // The storage mock of `flutter test` ignores options, so the sweep of the
+    // records written under the options before phase 048 - iOS and macOS only
+    // - would delete today's records here. The group that tests it says so.
+    SessionRepositoryImpl.debugApplePlatform = false;
   });
+
+  tearDown(() => SessionRepositoryImpl.debugApplePlatform = null);
 
   test('reads a null session when no identifier is stored', () async {
     final result = await repository.readSession();
@@ -370,6 +377,80 @@ void main() {
     });
   });
 
+  group('the local-data key (phase 048)', () {
+    test('no key is a key that is not there - an answer, not an error', () async {
+      final result = await repository.storageKey();
+      expect(result.hasData, isTrue);
+      expect(result.data, isNull);
+    });
+
+    test('a key stored reads back, and forgotten it is gone', () async {
+      await repository.saveStorageKey(key: 'a2V5');
+      expect((await repository.storageKey()).data, 'a2V5');
+      expect((await repository.forgetStorageKey()).hasData, isTrue);
+      expect((await repository.storageKey()).data, isNull);
+      // Forgetting what is not there is no failure either.
+      expect((await repository.forgetStorageKey()).hasData, isTrue);
+    });
+
+    test('a store that does not answer is an error, never "no key" - which would cost the data', () async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final prefs = await SharedPreferences.getInstance();
+      final locked = SessionRepositoryImpl(const _LockedStorage(), prefs);
+
+      expect((await locked.storageKey()).hasData, isFalse);
+    });
+
+    test('a failed sign-in keeps it: the key is the device\'s, and the data it sealed stays', () async {
+      await repository.saveStorageKey(key: 'a2V5');
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+
+      await repository.discardSignIn();
+
+      expect((await repository.storageKey()).data, 'a2V5');
+    });
+  });
+
+  group('the records of builds before phase 048', () {
+    test('on iOS and macOS the sweep deletes everything under the old options - and only under them', () async {
+      SessionRepositoryImpl.debugApplePlatform = true;
+      final storage = _RecordingStorage();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect((await SessionRepositoryImpl(storage, prefs).sweepLegacyKeys()).hasData, isTrue);
+
+      final sweep = storage.deletedAll.single;
+      // The plugin's own keychain service, of the class a backup carries off
+      // the device, and the legacy file keychain on macOS.
+      expect(sweep.ios?.accountName, const IOSOptions().accountName);
+      expect(sweep.ios?.accessibility, KeychainAccessibility.unlocked);
+      expect((sweep.macOs as MacOsOptions?)?.usesDataProtectionKeychain, isFalse);
+      // Today's records live under another service, out of its reach.
+      expect(SecureStoreOptions.ios.accountName, isNot(sweep.ios?.accountName));
+      expect(SecureStoreOptions.macOs.accountName, isNot(sweep.macOs?.accountName));
+    });
+
+    test('elsewhere the options did not change, and the session outlives the sweep', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await repository.saveStorageKey(key: 'a2V5');
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect((await repository.readSession()).data?.identifier, 'abc');
+      expect((await repository.storageKey()).data, 'a2V5');
+    });
+
+    test('the store of today is for this device only', () {
+      expect(SecureStoreOptions.ios.accessibility, KeychainAccessibility.first_unlock_this_device);
+      expect(SecureStoreOptions.macOs.accessibility, KeychainAccessibility.first_unlock_this_device);
+      expect(SecureStoreOptions.macOs.usesDataProtectionKeychain, isTrue);
+      expect(SecureStoreOptions.ios.synchronizable, isFalse);
+      expect(SecureStoreOptions.macOs.synchronizable, isFalse);
+    });
+  });
+
   group('connection records (phases 040, 045)', () {
     const storage = FlutterSecureStorage();
 
@@ -465,6 +546,23 @@ class _NoSweepStorage extends FlutterSecureStorage {
 }
 
 /// A keychain that is still locked after a reboot: every read throws.
+/// Records every `deleteAll` and deletes nothing.
+class _RecordingStorage extends FlutterSecureStorage {
+  _RecordingStorage();
+
+  final List<({AppleOptions? ios, AppleOptions? macOs})> deletedAll = <({AppleOptions? ios, AppleOptions? macOs})>[];
+
+  @override
+  Future<void> deleteAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => deletedAll.add((ios: iOptions, macOs: mOptions));
+}
+
 class _LockedStorage extends FlutterSecureStorage {
   const _LockedStorage();
 

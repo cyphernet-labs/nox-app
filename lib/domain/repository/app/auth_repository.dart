@@ -23,6 +23,17 @@ abstract class AuthRepository {
   /// failed open, a 401 on a file transfer - ever reaches it.
   Future<RepositoryResult<bool>> logout({bool forced = false});
 
+  /// Opens the local data under its key, at the start, before anything reads
+  /// it (phase 048). The key the secure store holds - or a new one, when there
+  /// is neither a key nor a database. A database whose key is gone, or that
+  /// the key does not open, can never be read again: the device's data goes
+  /// through one forced [logout] - its full wipe, and the pairing screen - and
+  /// the conversation comes back from the server once the device is paired
+  /// again (FR-011). A secure store that does not answer wipes nothing: the
+  /// read is tried again, with a pause, until it does. `true` when the data
+  /// went.
+  Future<RepositoryResult<bool>> openLocalData();
+
   /// Retires a session paired before phase 044 - an identifier with no server
   /// key (FR-025): one forced logout through [logout], the full wipe, and the
   /// pairing screen. Nothing it holds could check a connection, and the

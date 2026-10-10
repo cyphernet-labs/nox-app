@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
@@ -12,23 +13,21 @@ import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// The file chain over the data source (contract v0 §7).
 ///
-/// Downloaded bytes live in a CACHE directory named by file id. Not the
-/// database — Sembast is a document store and blobs do not belong in it. Not
-/// the documents directory — this is cache: losing it costs one re-download,
-/// while documents are backed up and synced, which is the wrong promise for
-/// somebody else's picture.
+/// Downloaded bytes live in a folder of the app's data folder named by file
+/// id (phase 048: `AppDataRoot`). Not the database — Sembast is a document
+/// store and blobs do not belong in it. Not the documents directory, which is
+/// backed up and synced — the wrong promise for somebody else's picture; and
+/// not the cache folder either, which the system may empty under a file the
+/// thread still shows. Losing the folder costs one re-download.
 @LazySingleton(as: FileRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   FileRepositoryImpl(this._remote, this._config);
 
   final FileRemoteDataSource _remote;
   final AppConfigRepository _config;
-
-  static const String _cacheFolder = 'nox_attachments';
 
   /// How many changes of path one attempt goes on through by itself. A path
   /// that keeps changing under a transfer is a broken link after all, and the
@@ -420,16 +419,16 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   @override
   Future<void> clean() async {
     _epoch++;
-    final dir = Directory('${(await getApplicationCacheDirectory()).path}/$_cacheFolder');
+    final dir = Directory(await AppDataRoot.pathOf(AppDataRoot.attachmentsFolder));
     if (dir.existsSync()) await dir.delete(recursive: true);
   }
 
   /// Keyed by file id, so two files that share a display name cannot collide;
   /// the name is kept only for the extension, which is what decoders sniff.
   Future<String> _cachePathFor(String fileId, String suggestedName) async {
-    final root = await getApplicationCacheDirectory();
+    final folder = await AppDataRoot.pathOf(AppDataRoot.attachmentsFolder);
     final ext = suggestedName.contains('.') ? suggestedName.split('.').last : '';
-    return '${root.path}/$_cacheFolder/$fileId${ext.isEmpty ? '' : '.$ext'}';
+    return '$folder${Platform.pathSeparator}$fileId${ext.isEmpty ? '' : '.$ext'}';
   }
 
   String _nameOf(String path) => path.split(Platform.pathSeparator).last;

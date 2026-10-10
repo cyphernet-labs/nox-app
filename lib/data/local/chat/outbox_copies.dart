@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/di/global_aliases.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// The outgoing queue's own copies of the files it sends (phase 043).
 ///
@@ -18,17 +18,17 @@ import 'package:path_provider/path_provider.dart';
 ///
 /// One folder per send, named by its `client_message_id`, holding the file
 /// under its own name: the upload declares the name of the file it reads.
-/// Application Support, not the cache: nothing may empty it before the bytes
-/// are on the server.
+/// The app's data folder (phase 048: `AppDataRoot`), not the cache: nothing
+/// may empty it before the bytes are on the server.
 @lazySingleton
 class OutboxCopies {
-  static const String folder = 'nox_outbox';
+  static const String folder = AppDataRoot.outboxFolder;
 
   static final String _sep = Platform.pathSeparator;
 
   String? _root;
 
-  Future<String> _rootPath() async => _root ??= '${(await getApplicationSupportDirectory()).path}$_sep$folder';
+  Future<String> _rootPath() async => _root ??= await AppDataRoot.pathOf(folder);
 
   /// Copies [source] for the send [key] and returns the copy's path - or null
   /// when no copy can be made, and the queue then sends from [source] as it

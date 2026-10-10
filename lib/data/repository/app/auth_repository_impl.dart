@@ -1,5 +1,11 @@
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -28,6 +34,8 @@ import 'package:nox_app/domain/repository/connection/server_addresses_repository
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
+import 'package:nox_tor/vault.dart';
+import 'package:sembast/sembast.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
 /// only forced logout passes `sessionExpired`. Sign-in is a stub (backend TBD).
@@ -428,8 +436,116 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
           rethrow;
         }
+        // Then the database itself, and the key that sealed it (phase 048,
+        // FR-012): an empty store is still a file of this identity's, and the
+        // key is the last thing that could open anything of it.
+        await _wipeLocalData();
       },
     );
+  }
+
+  /// The database closes under its key, the key goes, then the file - in
+  /// this order a crash leaves either a database whose key is gone, which the
+  /// next start retires ([openLocalData]), or nothing; and the stores were
+  /// emptied before, so nobody's messages outlive the logout either way. A
+  /// read that reaches for the database meanwhile finds no key and opens
+  /// nothing. Best effort, like the file cache: loud in the log, never a
+  /// reason to leave the person signed in.
+  Future<void> _wipeLocalData() async {
+    final database = getIt<AppDatabase>();
+    try {
+      await database.close();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    await getIt<DeviceVault>().forget();
+    try {
+      await database.clearEntireDatabase();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+  }
+
+  /// How long a start-up waits before it asks the secure store for the key
+  /// again, after the [attempt]-th time it did not answer: short at first - a
+  /// keystore coming up is a matter of moments - and never more than half a
+  /// minute.
+  @visibleForTesting
+  Duration Function(int attempt) unreadablePause = _defaultUnreadablePause;
+
+  static Duration _defaultUnreadablePause(int attempt) => Duration(seconds: min(30, 2 << min(attempt - 1, 4)));
+
+  @override
+  Future<RepositoryResult<bool>> openLocalData() async {
+    final vault = getIt<DeviceVault>();
+    for (var attempt = 1; ; attempt++) {
+      switch (await vault.open()) {
+        case LocalDataOpening.open:
+          if (await _databaseOpens()) return const RepositoryResult<bool>.success(data: false);
+          return _retireLocalData();
+        case LocalDataOpening.created:
+          // A new key, so whatever is still in the data folder no key opens:
+          // files of a key a logout did not live to delete, or what a build
+          // before this phase kept unsealed. Nothing has written since.
+          await _discardFiles();
+          return const RepositoryResult<bool>.success(data: false);
+        case LocalDataOpening.lost:
+          return _retireLocalData();
+        case LocalDataOpening.unreadable:
+          // Never a wipe (FR-011): the splash stays, and the store is asked
+          // again.
+          logRepository.debug(target: this, message: 'bootstrap: the secure store did not give the local-data key, asking again');
+          await Future<void>.delayed(unreadablePause(attempt));
+      }
+    }
+  }
+
+  /// Whether the database opens under the key the module holds. One sealed
+  /// under another key, or one that will not read at all, is as lost as one
+  /// whose key is gone. A disk that will not give the file up says nothing
+  /// about the key, and wipes nothing.
+  Future<bool> _databaseOpens() async {
+    try {
+      await getIt<AppDatabase>().db;
+      return true;
+    } on DatabaseException catch (error) {
+      return error.code != DatabaseException.errInvalidCodec;
+    } on FormatException {
+      return false;
+    } on VaultException {
+      return false;
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+      return true;
+    }
+  }
+
+  /// The local data can never be read again: it goes - file by file, since
+  /// none of it opens - and with it the session, through the one forced
+  /// logout, to the pairing screen. The conversation comes back from the
+  /// server after the pairing.
+  Future<RepositoryResult<bool>> _retireLocalData() async {
+    logRepository.debug(target: this, message: 'bootstrap: the local data does not open with a key of this device, pairing again');
+    // A key that opens nothing is no key: the logout below starts the new one.
+    await getIt<DeviceVault>().forget();
+    try {
+      await getIt<AppDatabase>().clearEntireDatabase();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    await _discardFiles();
+    final out = await logout(forced: true);
+    return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
+  }
+
+  /// The attachments and the queue's copies, deleted without opening them.
+  Future<void> _discardFiles() async {
+    try {
+      await _fileRepository.clean();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    await getIt<OutboxCopies>().clear();
   }
 
   @override

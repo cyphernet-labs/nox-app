@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -57,6 +60,29 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// and dies with a logout through `deleteAll`.
   static const String _kDeviceSecret = 'session.device_secret';
 
+  /// The local-data key (phase 048), base64 of 32 bytes. Kept like every
+  /// other record here - for this device only - and, unlike the session's
+  /// records, it belongs to the device rather than to the person: a failed
+  /// sign-in leaves it, a logout deletes it with the data it sealed.
+  static const String _kStorageKey = 'device.storage_key';
+
+  /// The options every record was written with before phase 048: the
+  /// plugin's own keychain service and the keychain's default class on iOS,
+  /// which a backup carries to another phone, and the legacy file keychain on
+  /// macOS, which Time Machine and Migration Assistant do.
+  static const IOSOptions _legacyIOSOptions = IOSOptions();
+  static const MacOsOptions _legacyMacOsOptions = MacOsOptions(usesDataProtectionKeychain: false);
+
+  /// Whether this is iOS or macOS, where the records of builds before phase
+  /// 048 live under other options than today's. Elsewhere the options did not
+  /// change, and a sweep by the old ones would delete the session itself. A
+  /// test on a macOS host says which platform it means: the storage mock of
+  /// `flutter test` ignores options.
+  @visibleForTesting
+  static bool? debugApplePlatform;
+
+  static bool get _applePlatform => debugApplePlatform ?? (Platform.isIOS || Platform.isMacOS);
+
   /// Where this install's connection to its server starts, and the server's
   /// Ed25519 key (base64) every connection must prove (phase 044). Both come
   /// out of the pairing link.
@@ -101,6 +127,21 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // The device's onion access key and its registration mark (phases
       // 040-044): the onion service opens for no key since phase 045.
       await ConnectionStorage.sweepLegacy(_secureStorage);
+      // Everything builds before phase 048 kept in the keychain, which a
+      // backup could carry off the device (FR-003): on iOS the plugin's own
+      // service, of a class that migrates; on macOS the legacy keychain. The
+      // records of today live under another service, in the data-protection
+      // keychain on macOS, so this reaches only the old ones - whatever their
+      // name or class - and the session they held is paired again.
+      if (_applePlatform) {
+        try {
+          await _secureStorage.deleteAll(iOptions: _legacyIOSOptions, mOptions: _legacyMacOsOptions);
+        } on Object catch (error) {
+          // A legacy keychain with nothing in it can refuse the delete of its
+          // synchronizable variant; the next launch tries again.
+          logRepository.error(target: this, error: error.runtimeType);
+        }
+      }
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -200,6 +241,32 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       final minted = await DeviceKeys.generateSeed();
       await _secureStorage.write(key: _kDeviceSecret, value: minted);
       return RepositoryResult<String>.success(data: minted);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<String?>> storageKey() {
+    // Inside `execute`: a store that throws is an error, and an error is
+    // never "no key" - only an answer of nothing is.
+    return execute<String?>(() async {
+      final stored = await _secureStorage.read(key: _kStorageKey);
+      return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> saveStorageKey({required String key}) {
+    return execute<bool>(() async {
+      await _secureStorage.write(key: _kStorageKey, value: key);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> forgetStorageKey() {
+    return execute<bool>(() async {
+      await _secureStorage.deleteIfPresent(key: _kStorageKey);
+      return const RepositoryResult<bool>.success(data: true);
     });
   }
 
