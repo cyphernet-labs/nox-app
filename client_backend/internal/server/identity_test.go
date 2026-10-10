@@ -160,7 +160,7 @@ func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 // this check the mismatch degrades into an internal error on every greeting.
 func TestAssertIdentitySchemaRefusesAStaleDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stale.db")
-	d, err := db.Open(path)
+	d, err := db.Open(path, testDataKey)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestGreetingFromAnUnpairedKeyIsRefused(t *testing.T) {
 // stale one through to die deeper in.
 func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stale.db")
-	dbs, err := db.Open(path)
+	dbs, err := db.Open(path, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

@@ -3,9 +3,10 @@
 Self-hosted messenger backend for ONE person and the devices they own:
 one WebSocket command channel (JSON envelope, global `seq` event log,
 cursor replay) plus a small REST surface (file upload/download), both behind
-the channel check of feature 044, embedded SQLite, single static CGO-free
-binary. tor, when the machine has one, is a separate OS service set up by
-hand or by the install script (049): it publishes the onion service and
+the channel check of feature 044, embedded SQLite encrypted at rest and locked
+after every start until the owner's password comes (047), single static
+CGO-free binary. tor, when the machine has one, is a separate OS service set
+up by hand or by the install script (049): it publishes the onion service and
 forwards it to the main port. The server spawns no process, holds none of
 tor's keys and only stores its own addresses - the public one and the onion
 one (045). Different people never share a machine and their machines never
@@ -39,24 +40,25 @@ upgrade. The greeting has no challenge, `session.hello` and `pair` carry no
 device key, and the pairing link is `nox://pair/` version 3 (contract §8A).
 
 **A device joins one of two ways (feature 046, contract §8A).** The MACHINE
-LINK is handed out on the machine itself - by the service page (at once while
-no device is paired, otherwise on `Add a device` / `New link`) or by
-`noxd link` - lives ten minutes, is the only live one (a new link voids the
-one before), and pairs at once: it creates the person when there is nobody,
-and joins them, with everything they wrote, when there is. A device INVITE
-(`device.invite`, ten minutes) pairs nothing by itself: `pair` with it opens
-a request, the issuing device is asked (`device.pairRequested`) and answers
-with `device.approve`, and the request closes exactly once - allowed, denied,
-expired, cancelled by the new device (`pair.cancel`), or denied because a
-device taking part in it was revoked. People come into being only through
-`pair` with a machine link. The machine belongs to ONE person (037) and there
-is no owner beside them: whether anybody can reach the machine is the device
-count, and the last device going away puts the service page back to showing a
-link. There is no separate recovery - no phrase, no codes: the machine link
-is the way back. No link and no token ever reaches the log. Still out of
-scope and blocked: the protocol to the relay (Q13), and ATS / App Review for
-a personal server reached through the app's own Rust module (Q14, due before
-release).
+LINK is handed out on the machine itself, once its password has opened it - by
+the service page (at once while no device is paired, otherwise on `Add a
+device` / `New link`) or by `noxd link` - lives ten minutes, is the only live
+one (a new link voids the one before), and pairs at once: it creates the
+person when there is nobody, and joins them, with everything they wrote, when
+there is. A device INVITE (`device.invite`, ten minutes) pairs nothing by
+itself: `pair` with it opens a request, the issuing device is asked
+(`device.pairRequested`) and answers with `device.approve`, and the request
+closes exactly once - allowed, denied, expired, cancelled by the new device
+(`pair.cancel`), or denied because a device taking part in it was revoked.
+People come into being only through `pair` with a machine link. The machine
+belongs to ONE person (037) and there is no owner beside them: whether
+anybody can reach the machine is the device count, and the last device going
+away puts the service page back to showing a link. There is no separate
+recovery - no phrase, no codes: the machine link is the way back, and a
+backup is the way back for the machine itself (047). No link, no token, no
+password and no key ever reaches the log. Still out of scope and blocked: the
+protocol to the relay (Q13), and ATS / App Review for a personal server
+reached through the app's own Rust module (Q14, due before release).
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -71,23 +73,52 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
     go vet ./...
     go test -race ./...       # -race is mandatory, not optional
     go build -o noxd . && ./noxd -addr 127.0.0.1:8080 -db nox.db
-    ./noxd link -qr           # a machine link from the RUNNING server, drawn as a code too
-                              # (-status-addr names its service page, default 127.0.0.1:8081)
+    ./noxd unlock             # the password: set the first time, entered after every start
+    ./noxd link -qr           # a machine link from the RUNNING, unlocked server, drawn as a code too
+    ./noxd password           # a new password - the data key is re-sealed, nothing re-encrypted
+    ./noxd backup /abs/nox.tar                    # one encrypted file, written by the running server
+    ./noxd restore nox.tar -db /new/place/nox.db  # onto an empty place, no server running there
+                              # (the commands but restore find the service page by -status-addr,
+                              # default 127.0.0.1:8081)
     go run ./cmd/smoke '<machine link>'   # the whole pairing flow against a running server
 
 ## Toolchain & dependencies
 
-- Go **1.27**. Direct dependencies: exactly four — `github.com/coder/websocket`,
-  `modernc.org/sqlite`, `golang.org/x/sync` (errgroup) and `rsc.io/qr`. Adding
-  any other requires written justification; "convenient" is not one.
+- Go **1.27**. Direct dependencies: exactly seven — `github.com/coder/websocket`,
+  `github.com/ncruces/go-sqlite3`, `golang.org/x/crypto`, `golang.org/x/sync`
+  (errgroup), `golang.org/x/term`, `lukechampine.com/adiantum` and `rsc.io/qr`.
+  Adding any other requires written justification; "convenient" is not one.
+- **Why `ncruces/go-sqlite3` (047):** it is the one SQLite for Go that encrypts
+  page by page without CGO - SQLite compiled to WebAssembly and run in-process by
+  wazero, with the `adiantum` VFS that encrypts every page of the database and of
+  its WAL with the data key. `modernc.org/sqlite` has no encrypting VFS, and
+  writing one over it means rewriting SQLite's VFS layer; SQLCipher is CGO.
+  Its own dependencies come with it: the Wasm build of SQLite
+  (`go-sqlite3-wasm`), `lukechampine.com/adiantum` and `x/sys`. Bump it only
+  with the full suite run: the Wasm build carries SQLite's own version, and
+  `internal/db`'s key check reads the files the way its VFS writes them.
+- **Why `lukechampine.com/adiantum` (047):** the cipher the `adiantum` VFS
+  encrypts with, already in the binary through it, imported directly for ONE
+  job: telling a data key that is not the database's before SQLite opens
+  anything (`internal/db/keycheck.go`). SQLite finds out only after it has run
+  WAL recovery with that key, and then deletes the WAL it could not read -
+  committed transactions with it. Reaching the cipher through the VFS instead
+  would mean opening the file through SQLite, which is the very thing to
+  avoid.
+- **Why `golang.org/x/crypto` (047):** Argon2id derives the key that seals the
+  data key from the owner's password, XChaCha20-Poly1305 seals it and
+  ChaCha20-Poly1305 seals each attachment chunk. Writing any of them here would be
+  writing our own cryptography. HKDF comes from the standard library
+  (`crypto/hkdf`).
+- **Why `golang.org/x/term` (047):** `noxd unlock`, `noxd password` and `noxd
+  restore` read the password from a terminal without echo, on every platform the
+  server runs on; the standard library has no way to turn echo off.
 - **Why `rsc.io/qr` (035):** encoding a QR is a whole capability — Reed-Solomon
   over GF(256), version selection, eight masks scored by penalty — not a
   convenience, and writing it here buys nothing but our own bugs in the thing
   people scan to pair a device with their server - on the service page, and in
   the terminal for `noxd link -qr`. Pure Go, no dependencies of its own, no
   CGO, so `CGO_ENABLED=0` static builds are untouched.
-- `modernc.org/libc` does not follow semver — its version stays pinned;
-  bump only together with `modernc.org/sqlite` and run the full test suite.
 - Dev tools go through `tool` directives in go.mod (Go 1.24+), never a
   `tools.go` with blank imports.
 
@@ -99,7 +130,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    (045): it never opens the database, the server never starts, commands or
    stops it, and all the server knows of it is the onion address stored in
    `server_identity`. `run_test.go` holds that `Run` starts no tor even with
-   one on the PATH.
+   one on the PATH. The `noxd` commands never open the database either:
+   `link` (046), `unlock`, `password` and `backup` (047) go to the running
+   server over its service page's listener, and `restore` opens only the copy
+   it is putting into an empty place, where no server runs.
 2. **Two pools, one writer.** All writes go through `internal/store`
    using the write handle (`SetMaxOpenConns(1)` + `_txlock=immediate`);
    reads use the read pool. Never `Exec` a mutation on the read handle;
@@ -189,7 +223,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    address snapshot (`addressSet`: the found addresses plus the stored public
    and onion address) reaches readers behind an `atomic.Pointer` that the
    watcher alone writes, not under a lock; there is no Tor state in the
-   process.
+   process. The lock of 047 holds no mutex either: every request that touches
+   the key file - the first password, the password, a change, a backup - is
+   served by ONE goroutine at a time (`gate.go`: Run's while the server is
+   locked, the keeper's after), in the order they came, and the lock state is
+   an atomic readers only load.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
@@ -198,15 +236,21 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    seconds, and a writer parked on it lets live frames overflow the queue.
    `SetReadLimit(max_frame_bytes)`.
 9. **Shutdown order:** the HTTP servers drain (the main one, then the
-   service page, each on its OWN deadline) →
+   service page, each on its OWN deadline - the page cancels its requests'
+   contexts first, so a backup being written stops before the database it
+   reads closes) →
    registered WS conns get `Close(StatusGoingAway)`, IN PARALLEL - one close
    handshake can take 10 s, and over Tor it does (Shutdown does NOT wait for
    hijacked conns — keep the conn registry wired via `RegisterOnShutdown`) →
-   wait for the handlers, up to 15 s → the address watcher and the request
-   sweeper stop, each on its OWN context (both send to connections that are
-   still being told goodbye, and both use the database - the sweeper writes
-   it) → hub stops → DB closes. Preserve it. There is no tor to stop: it is
-   not the server's process.
+   wait for the handlers, up to 15 s → the gate's keeper (047), the address
+   watcher and the request sweeper stop, each on its OWN context (the watcher
+   and the sweeper send to connections that are still being told goodbye, and
+   all three use the database - the sweeper writes it, the keeper may be
+   writing a backup out of it) → hub stops → DB closes. Preserve it. There is
+   no tor to stop: it is not the server's process. Startup runs the other way
+   (047): the service page comes up FIRST, before the database opens - the
+   password is entered there - and everything else, the main port last, only
+   once the password has opened the data.
 10. **Idempotency:** `message.send` is keyed by `(author_id,
     client_message_id)`; a replayed command returns the original echo,
     never a duplicate row. The key keeps `author_id` because that is the
@@ -229,9 +273,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
     `001_init.sql` and schema changes edit it in place — no deployed
     databases exist yet. Append-only numbering starts with the first
     release.
-13. **Pragmas are fixed** in `internal/db` (busy_timeout(5000) first,
-    then WAL, synchronous(NORMAL), foreign_keys(1)) for every
-    connection. Do not vary per-call.
+13. **Pragmas are fixed** in `internal/db` for every connection, in this
+    order: the data key (`PRAGMA hexkey`, run by the connection hook and
+    never put in the URI - 047), then busy_timeout(5000), WAL,
+    synchronous(NORMAL), foreign_keys(1) and temp_store(memory). Do not vary
+    per-call.
 
 ## Code style (details in the go-style skill)
 
@@ -250,7 +296,23 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 - `main.go`              — flags, wiring, ordered startup/shutdown (~3 lines of logic)
 - `internal/config/`     — flags + `NOX_*` env, validated at start
-- `internal/db/`         — pools, pragmas, `user_version` migration runner
+- `internal/db/`         — pools, pragmas, `user_version` migration runner; the
+  `adiantum` VFS keyed with the data key (047), the key checked against the
+  first block of the database, its WAL and its journal before SQLite opens any
+  of them (`keycheck.go`), `Snapshot` (VACUUM INTO under the same key, the key
+  cut out of any error) and `QuickCheck`
+- `internal/vault/`      — the data key (047): 32 random bytes, sealed in
+  `<db>.key` with XChaCha20-Poly1305 under Argon2id of the password; create,
+  open, change (a new seal written beside, flushed, renamed over), the password
+  rule. The only place a password turns into a key
+- `internal/backup/`     — `noxd backup` and `noxd restore` (047): one tar of the
+  sealed key, the snapshot and the finished attachments, closed by a manifest
+  with a MAC only the data key makes; the restore checks everything before it
+  puts anything in place, and rotates the journal id
+- `internal/prompt/`     — passwords for the commands: a terminal without echo,
+  or a line at a time from standard input
+- `commands.go`          — the `noxd` subcommands by name, and unlock, password,
+  backup and restore (047); `link` stays in `main.go`
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
@@ -291,9 +353,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   that a request came through tor
 - `internal/server/logscrub.go` — the ONE slog handler every line of the
   process goes through (`ScrubLogs`: main wraps the process handler, `Run` and
-  `New` wrap whatever logger they get, net/http's error log is routed through
-  it): onion addresses become `[onion]` and pairing links `[link]`, whatever
-  the text came from - a call site covers only the text its author thought of
+  `New` wrap whatever logger they get - `Run` before the lock, so the gate's
+  lines are held to it too - and the error logs of both `http.Server`s, the
+  main port's and the service page's, are routed through it): onion addresses
+  become `[onion]` and pairing links `[link]`, whatever the text came from - a
+  call site covers only the text its author thought of
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
@@ -368,16 +432,31 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   again after each of its greetings), `pair.resolved` to the new device's
   connections that have not greeted, `device.pairResolved` to the issuer;
   and the sweeper (`Server.requestSweep`, 2 s) that closes what ran out
-- `internal/server/status.go`, `status_page.go`, `status_qr.go` — the service
-  page on its own loopback listener: the machine's state, the machine link
-  with its countdown, `Add a device` / `New link` (`POST /link`), the address
-  forms (`POST /addresses`) and `GET /health`; both forms checked for `Host`,
-  this page's `Origin` and the per-process form token (CSP `form-action
-  'self'`); the QR as SVG for the page and as text for `noxd link -qr`
+- `internal/server/gate.go` — the lock (047): the state on disk (no database
+  and no key - a first password; both - locked; one without the other - no
+  start), the service page's listener for the life of the process, `GET
+  /health`, the password forms and `/control/state|unlock|password|backup`,
+  and the ONE goroutine that serves the key file. `POST /control/link` is
+  routed here too, so `noxd link` is held to the command rule in every state
+  and told `state` (409) until the server is open. Every other request of the
+  page goes to the open server's page once there is one; before that, the
+  lock page and a 409 for anything posted
+- `internal/server/lock_page.go` — the page while the server is not open: the
+  password field and nothing else - no link, no address, no figure, no script
+- `internal/server/backup.go` — a backup of the running server
+- `internal/server/status.go`, `status_page.go`, `status_qr.go` — the OPEN
+  server's service page, behind the gate on its loopback listener: the
+  machine's state, the machine link with its countdown, `Add a device` / `New
+  link` (`POST /link`), the address forms (`POST /addresses`) and `Change
+  password` (posted to the gate); every form checked for `Host`, this page's
+  `Origin` and the per-process form token, one token from the lock page to the
+  open one (CSP `form-action 'self'`); the QR as SVG for the page and as text
+  for `noxd link -qr`
 - `internal/server/control.go` — `POST /control/link` on that same listener,
-  the whole of `noxd link` but the printing: a local `Host`, `X-Nox-Control: 1`
-  and NO `Origin`, or 403. The command never opens the database (invariant 1):
-  it asks the running server
+  the whole of `noxd link` but the printing, and the commands' side of the
+  lock's `/control/*` (047): a local `Host`, `X-Nox-Control: 1` and NO
+  `Origin`, or 403; a locked server answers `noxd link` with 409. The commands
+  never open the database (invariant 1): they ask the running server
 - `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
   with its continuation (`file_id` in, `received` out), the PUT that keeps
   whatever arrives and carries the rest of the file from the offset its token
@@ -395,7 +474,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   how many leading bytes of the part are on stable storage (043). The record
   is written only after the part is flushed and lowered before a part is cut
   back, so it never vouches for a byte that is not on disk; the schema knows
-  nothing of it
+  nothing of it. Every byte is encrypted (047): a 32-byte header, then chunks
+  of 64 KiB sealed one by one with ChaCha20-Poly1305 under a key of the file's
+  own (HKDF of the data key and the id), nonce = the chunk's index, the index
+  and "last" in the AAD. A chunk is sealed once all of it arrived - until then
+  it waits in the request's memory - so a part holds whole chunks only, an
+  upload continues from the start of the chunk it broke in, and a range opens
+  only the chunks it touches (`Reader`, an `io.ReadSeeker` for ServeContent)
 - `migrations/`          — append-only numbered `.sql` (embedded)
 
 ## Testing
@@ -415,6 +500,18 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   its buttons and `noxd link` - and spent: a machine link, and an invite with
   its request and its Allow.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
+- Every test database and files directory is encrypted with a fixed test key
+  (`testDataKey`), so a stack stopped and started again over the same files
+  opens them. A server `Run` starts is locked like any other: `runServer` sets
+  its first password - or enters it, on a restart - the way `noxd unlock`
+  does, with keys sealed at cheap Argon2id costs (`testKDF`, through
+  `run(..., kdf)`): what is under test around the lock is the lock. The
+  production costs - and the time they take - are tested once, in
+  `internal/vault`. `gate_test.go` holds the lock itself (the state on disk,
+  the page and the commands in each state, a wrong password changing no byte),
+  `at_rest_test.go` that no marker of a stopped server's data is left readable
+  on its disk, and `TestNoPasswordAndNoKeyEverReachesTheLog` (`logs_test.go`)
+  that neither a password nor the data key reaches the log.
 - Nothing in the server runs tor, so no test needs one. `run_test.go` holds
   that `Run` starts no process even with a tor on the PATH and that the
   removed tor flags stop the start with a hint; `oneport_test.go` holds the
@@ -436,8 +533,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   (`beforeWait`) - makes the connection a stranger again; the addresses are
   `address_settings_test.go`, `status_addresses_test.go` and
   `internal/store/addresses_test.go`; the log
-  is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -
-  parameters, `Set`, a machine link, an invite with its Allow, a refused
+  is `logscrub_test.go` - the lock's own lines included - and
+  `log_audit_test.go`, which drives a whole run - each start through the
+  lock, parameters, `Set`, a machine link, an invite with its Allow, a refused
   upgrade through the onion service - and finds no onion address, link, token
   or key in it. The path
   through the real Tor network is checked by hand, with tor run as the
@@ -450,10 +548,30 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   way: there is no flag to serve plaintext or skip the check, and adding one
   would be adding the downgrade the whole design removed. The SERVICE PAGE is
   the deliberate exception and stays plain HTTP on its own loopback listener,
-  together with `GET /health` and `POST /control/link`, where `noxd link` asks
-  for a machine link: the main port answers nothing before the check.
-- Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
-  local filesystem only (WAL breaks on network mounts).
+  together with `GET /health` and the `/control/*` the commands ask - `noxd
+  link` for a machine link, `noxd unlock|password|backup` for the lock: the
+  main port answers nothing before the check.
+- **The server starts LOCKED (047).** Its data is encrypted with a data key only
+  the owner's password unseals, and the password is stored nowhere: after every
+  start only the service page listens, showing a password field and nothing
+  else, and the main port is not even bound - a device sees what it sees when
+  the server is off. The password goes in on the page or with `noxd unlock`
+  (from a terminal without echo, or a line from standard input). Until it does
+  there is no link to hand out, no address to set and nothing else running -
+  the address watcher, the request sweeper, the stranger limits all start with
+  the data; `GET /health` says `{"status":"locked"}`. A forgotten password is
+  lost data, by decision. `-status-addr` cannot be empty, and a busy page port
+  stops the start: the password has nowhere else to go.
+- Backups: `noxd backup <absolute file>` - the RUNNING server snapshots the
+  database (`VACUUM INTO` beside it, under the same key) and writes one tar with
+  the sealed key and the finished attachments, never over an existing file and
+  never as anything but `<file>.partial` until it is whole. `noxd restore <file>
+  -db <path>` puts it onto an empty place with the same password, gives the
+  journal a new id - every device re-reads the history, none pairs again - and
+  names the devices the restored server lets in, with the moment the backup
+  was made. Never copy a live DB; local filesystem only (WAL breaks on network
+  mounts). tor's `HiddenServiceDir` is not in a backup: a server restored
+  elsewhere without it gets a new onion address.
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
 - **tor is a separate service** (045). The server spawns no process and has
   no tor flags: `-tor`, `-tor-bin` and `-tor-dir` stop the start with a hint.
@@ -481,7 +599,7 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   repository; the official macOS tor is UNSIGNED and killed at launch
   on Apple Silicon until signed (ad-hoc is enough for dev). The address tor
   writes to `<HiddenServiceDir>/hostname` reaches the server by
-  `-onion-addr` or by `Set` on the service page. With no child process
+  `-onion-addr` or by `Set` on the open service page. With no child process
   there is nothing for a service manager to stop in order: a systemd unit
   needs no `KillMode` of its own.
 - **Address flags** (045): `-public-addr` / `NOX_PUBLIC_ADDR` (`host:port`)
@@ -489,6 +607,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   an address into the database only when the parameter appeared or changed
   since the value last applied (`*_address_param`), so an address set on the
   service page survives a restart with the old parameter still in the unit.
+  They are applied once the password has opened the database, before the main
+  port listens.
   A malformed one is not applied and does not stop the start: the server
   keeps the stored address, logs an error and the page names the parameter
   on every start until it is fixed. An empty one changes nothing; only the
@@ -529,8 +649,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **The service page lives on its OWN loopback listener** (`-status-addr`), and
   the main mux serves it nowhere. That separation IS the protection: a check on
   RemoteAddr inside a handler is one somebody eventually routes around with a
-  header, and the main server is ordinarily bound to every interface. An empty
-  address removes the listener rather than the handler, so the port is not held.
+  header, and the main server is ordinarily bound to every interface. The
+  address cannot be empty since 047: the password is entered there.
 - **The service page has exactly ONE script, admitted by its HASH.** It reveals a
   Copy button and puts the machine link on the clipboard - two lines of base64
   are not something to select by hand - and counts the minutes the link has
@@ -543,8 +663,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   those bytes may run; and `default-src 'none'` still forbids `connect-src`, so
   the script can read the link and has nowhere to send it. The hash is DERIVED
   from the script constant on every response rather than written down: a stored
-  derivative is a second copy of one fact. A page with no LIVE link carries no
-  script and its policy admits none.
+  derivative is a second copy of one fact. A page with no LIVE link - the lock
+  page above all - carries no script and its policy admits none.
 - **Clipboard access needs a secure context, and this page has one without TLS.**
   `http://127.0.0.1` and `http://localhost` are potentially trustworthy origins;
   measured in a browser, not assumed. The fallback still exists: if the API is
@@ -568,20 +688,66 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   network out; this keeps the operator's own browser out. Any site can be rebound
   to 127.0.0.1 by DNS and read the page as same-origin - and the machine link
   with it - and the request really does arrive from loopback, so the socket
-  cannot help. Its forms (`POST /link`, `POST /addresses`) also need this page's
-  own `Origin` and the per-process form token, which a page from elsewhere
-  cannot read. `POST /control/link` turns the rule around - `X-Nox-Control: 1`
-  and NO `Origin`: a browser always sends an `Origin` on a POST, and the custom
-  header forces a CORS preflight nothing here answers, so a page from another
-  site never gets as far as sending it, while `noxd link` sends exactly that.
+  cannot help. Its forms (`POST /link`, `POST /addresses` and the three
+  password forms of 047) also need this page's own `Origin` and the per-process
+  form token, which a page from elsewhere cannot read. `/control/*` turns the
+  rule around - `X-Nox-Control: 1` and NO `Origin`: a browser always sends an
+  `Origin` on a POST, and the custom header forces a CORS preflight nothing
+  here answers, so a page from another site never gets as far as sending it,
+  while `noxd link`, `noxd unlock`, `noxd password` and `noxd backup` send
+  exactly that.
 - **The listener's OWN address is verified after binding.** The config check
   catches a mistyped flag; a hostname can resolve to loopback at parse time and
   elsewhere at bind time, and only the socket knows which happened.
-- **A busy status port does not stop the server.** It is logged and the page is
-  skipped: 8081 is not a rare port, and people talking to each other must not
-  depend on a page nobody has opened. Without the page there is no machine link
-  at all - neither the page nor `noxd link` - which is why an empty
-  `-status-addr` on a machine with no device yet is logged as an error.
+- **A busy status port STOPS the server (047).** It used to be logged and
+  skipped, while the page held nothing a server needed; now the password that
+  opens the data is entered there, and a server without its page could never
+  open. 8081 is not a rare port - the error names it, and `-status-addr` moves
+  it.
+- **The database's pages carry no MAC (047).** Adiantum is length-preserving
+  and deterministic: a page changed on disk is not detected, and two snapshots
+  show which pages changed between them. Changing the disk needs the machine,
+  which is out of scope; a backup - which does leave the machine - is closed by
+  a MAC only the data key makes, and a restore checks it before anything moves.
+  The `-shm` file is not encrypted: it is the WAL's index, page numbers and
+  checksums, no data.
+- **A wrong data key is told by the files, never by SQLite (047).** `db.Open`
+  decrypts the first block of the database, of its WAL and of its rollback
+  journal itself and refuses a key under which none of them shows its header,
+  before SQLite opens anything. Leaving it to SQLite's "file is not a database"
+  costs the WAL: SQLite runs its recovery first, reads every frame under that
+  key as noise, and a connection closing alone over a WAL that looks empty
+  deletes it. Any ONE of the three files is enough, never the database's
+  alone: a crash in the middle of a checkpoint can tear the database's first
+  block while the WAL still holds that page. An EMPTY database is not asked
+  about at all, as SQLite does not ask: it deletes a WAL or a journal beside a
+  database of zero pages unread, and a new database cut off in its first
+  transaction is exactly an empty file beside a journal whose header has no
+  magic yet - asking that journal refused the right key on every start.
+- **A chunk cut back is sealed again under the same nonce.** Safe while the
+  bytes are the same, which is what a client continuing an upload sends; other
+  bytes under the same index could come only from a faulty device of the
+  person's own, and both ciphertexts would show only to forensics on the
+  machine's disk. Recorded in specs/047 research R11.
+- **A restore lets in a device revoked after the backup (047).** Revocation
+  deletes the device's row, the backup was made with it, and the restored
+  server stays the same machine to every device it knew - pairing nobody again
+  is the point of the restore. So nothing refuses such a device: `noxd restore`
+  prints the backup's moment and every device it lets in, and says to revoke
+  one revoked since again. A confirmation before unpacking, revocations kept
+  outside the database and devices held back until approved were weighed and
+  rejected (specs/047 research R11).
+- **No limit on password attempts.** The page and the commands are loopback
+  only, and whoever reaches them has the machine (out of scope). Each attempt
+  costs Argon2id - about a second on a small board - and they are served one at
+  a time.
+- **A password is exactly what was typed:** at least twelve characters, not
+  whitespace alone, never trimmed and never normalised. A password outside
+  ASCII typed on a machine that composes Unicode differently is a different
+  password.
+- **A database without its key file, or a key file without its database, does
+  not start** - the server never guesses which of the two is the mistake, and
+  never creates a database beside a lost one. The error says what to do.
 - **Only the TOKEN is stored, never the built link.** The page and `noxd link`
   rebuild the link from the unspent token whenever they are asked, and the
   address in it is resolved at that moment. A built link kept for later froze an
@@ -719,8 +885,7 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   shipped, while a link is a way in for ten minutes - from anywhere, since it
   carries, packed, the onion service's key. The startup line, when no device
   can reach the machine, names the service page and `noxd link` - never a
-  link; with `-status-addr` empty it is an error saying nothing can hand one
-  out. Issuing one logs who asked (`service page` or `noxd link`), a closed
+  link. Issuing one logs who asked (`service page` or `noxd link`), a closed
   request logs its outcome, and nothing names a device, a token or an address
   in a link. Behind the call sites, every line goes through the log's own
   handler (`logscrub.go`), which turns any onion address into `[onion]` and
@@ -732,7 +897,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   reasoning: encryption stops somebody reading the link off the wire, and does
   nothing about a page that hands it to whoever asks. The loopback bind is what
   answers that, and `assertLoopback` checks the socket rather than the string
-  somebody typed.
+  somebody typed. Neither does a password or the data key (047): the lock logs
+  that a password was accepted, refused or changed and that a backup was
+  written, and never what was typed, what key it opened or where a backup went.
 - **There is no revocation on the service page.** A lost device is revoked from
   a device the person holds - the one just added with a machine link included.
   The page hands out a way in; it does not judge which devices stay.

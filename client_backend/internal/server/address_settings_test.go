@@ -200,7 +200,7 @@ func TestNormalizeAddressTakesEmptyAsDeletion(t *testing.T) {
 // finds at startup.
 func startStore(t *testing.T) *store.Store {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "params.db"))
+	d, err := db.Open(filepath.Join(t.TempDir(), "params.db"), testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

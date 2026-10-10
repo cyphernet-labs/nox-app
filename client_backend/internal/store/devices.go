@@ -21,9 +21,20 @@ type Device struct {
 
 // ListDevices returns every device authorised for a person, oldest first.
 func (s *Store) ListDevices(ctx context.Context, userID string) ([]Device, error) {
-	rows, err := s.read.QueryContext(ctx,
+	return s.queryDevices(ctx,
 		"SELECT device_key, platform, created_at, last_seen_at FROM devices WHERE user_id = ? ORDER BY created_at",
 		userID)
+}
+
+// AllDevices returns every device the store lets in, oldest first: the list a
+// restore shows (047). The machine serves one person (037), so it is that
+// person's list without asking who they are.
+func (s *Store) AllDevices(ctx context.Context) ([]Device, error) {
+	return s.queryDevices(ctx, "SELECT device_key, platform, created_at, last_seen_at FROM devices ORDER BY created_at")
+}
+
+func (s *Store) queryDevices(ctx context.Context, query string, args ...any) ([]Device, error) {
+	rows, err := s.read.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}

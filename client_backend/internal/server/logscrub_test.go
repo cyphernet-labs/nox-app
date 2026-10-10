@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"nox.app/client-backend/internal/config"
 )
 
 // testLink is a version 3 pairing link of the shared vectors' shape: the
@@ -119,5 +123,30 @@ func TestScrubbingIsAppliedOnce(t *testing.T) {
 	}
 	if _, ok := scrubbedLogger(slog.New(base)).Handler().(scrubHandler); !ok {
 		t.Fatal("a plain logger was not wrapped")
+	}
+}
+
+// The lock's own lines go through the rule as well (047), whatever logger the
+// gate is handed: a key file it cannot write is named in its log, path and
+// all, and a path can hold anything - here an onion name, as the directory
+// the database was to live in, which is not there.
+func TestTheLockLogsThroughTheScrubber(t *testing.T) {
+	name := strings.TrimSuffix(testOnionAddr, ".onion")
+	logs := &syncBuffer{}
+	g := newGate(config.Config{DBPath: filepath.Join(t.TempDir(), name, "nox.db")}, stateSetup, testKDF,
+		slog.New(slog.NewJSONHandler(logs, nil)))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go g.awaitKey(ctx)
+	rep, ok := g.ask(ctx, gateRequest{kind: reqSetup, password: testPassword, repeat: testPassword})
+	if !ok || rep.code != codeInternal {
+		t.Fatalf("a first password with nowhere to write its key = %+v, %v; want internal", rep, ok)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "create the key file") || !strings.Contains(out, "[onion]") {
+		t.Fatalf("the gate did not log the write it could not make, masked:\n%s", out)
+	}
+	if strings.Contains(strings.ToLower(out), name) {
+		t.Fatalf("an onion name reached the lock's log:\n%s", out)
 	}
 }

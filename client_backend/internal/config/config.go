@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -26,13 +27,15 @@ type Config struct {
 	Addr      string
 	DBPath    string
 	FilesPath string
-	// StatusAddr is where the service page and /health listen, or empty for
-	// neither. Always a loopback address: the page hands out the machine link,
-	// and a machine link reachable over the network would let anybody on that
-	// network pair a device. The restriction lives on the SOCKET rather than in
-	// a handler, because a check inside the process is a check somebody
-	// eventually routes around with a header. `noxd link` asks the running
-	// server through the same listener, so without it there is no link at all.
+	// StatusAddr is where the service page and /health listen. Always a
+	// loopback address: the page hands out the machine link, and a machine
+	// link reachable over the network would let anybody on that network pair
+	// a device. The restriction lives on the SOCKET rather than in a handler,
+	// because a check inside the process is a check somebody eventually
+	// routes around with a header. `noxd link` asks the running server through
+	// the same listener, and so do `noxd unlock`, `noxd password` and `noxd
+	// backup` (047) - which is why it can no longer be empty: the password
+	// that opens the server's data is entered there, and nowhere else.
 	StatusAddr string
 	Limits     Limits
 
@@ -48,6 +51,19 @@ type Config struct {
 	PublicAddr string
 	OnionAddr  string
 }
+
+// KeyPath is where the database's data key lies, sealed by the owner's
+// password (047): beside the database, named after it. Derived rather than
+// configured - the two belong together, and a key file sent elsewhere by a
+// flag is a key file a backup or a move eventually leaves behind.
+func (c Config) KeyPath() string {
+	return c.DBPath + ".key"
+}
+
+// errNoServicePage refuses a server with no service page (047): the password
+// that opens its data could not be entered anywhere.
+var errNoServicePage = errors.New("-status-addr must not be empty: the password that opens this server's data is " +
+	"entered on its service page or with noxd unlock, and both use that address")
 
 // DefaultLimits mirrors the contract v0 §3 example values.
 func DefaultLimits() Limits {
@@ -102,7 +118,7 @@ func load(args []string, getenv func(string) string, usage io.Writer) (Config, e
 		"listen address (host:port); with tor, bind 0.0.0.0 or 127.0.0.1 and point HiddenServicePort 443 at 127.0.0.1:<port>")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
-	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page and /health, empty to disable both")
+	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page, /health and the noxd commands")
 	// The two address parameters take the environment AFTER parsing, not as
 	// their defaults: a default is printed in the usage text, and the usage
 	// text goes to the journal whenever a flag is mistyped - with the onion
@@ -143,6 +159,9 @@ func load(args []string, getenv func(string) string, usage io.Writer) (Config, e
 	if _, _, err := net.SplitHostPort(*addr); err != nil {
 		return Config{}, fmt.Errorf("invalid -addr %q: %w", *addr, err)
 	}
+	if *statusAddr == "" {
+		return Config{}, errNoServicePage
+	}
 	if err := checkStatusAddr(*statusAddr); err != nil {
 		return Config{}, err
 	}
@@ -178,12 +197,8 @@ type LinkConfig struct {
 // environment without being told, and it is held to loopback the same way: the
 // command asks for a link, and the answer must not come from anywhere else.
 func LoadLink(args []string, getenv func(string) string) (LinkConfig, error) {
-	defStatus := getenv("NOX_STATUS_ADDR")
-	if defStatus == "" {
-		defStatus = "127.0.0.1:8081"
-	}
 	fs := flag.NewFlagSet("noxd link", flag.ContinueOnError)
-	statusAddr := fs.String("status-addr", defStatus, "the running server's service page address (loopback)")
+	statusAddr := statusAddrFlag(fs, getenv)
 	qr := fs.Bool("qr", false, "draw the link as a QR code in the terminal as well")
 	if err := fs.Parse(args); err != nil {
 		return LinkConfig{}, fmt.Errorf("parse flags: %w", err)
@@ -191,20 +206,150 @@ func LoadLink(args []string, getenv func(string) string) (LinkConfig, error) {
 	if fs.NArg() > 0 {
 		return LinkConfig{}, fmt.Errorf("unexpected argument %q (noxd link takes only -status-addr and -qr)", fs.Arg(0))
 	}
-	if *statusAddr == "" {
-		return LinkConfig{}, errors.New("-status-addr must name the running server's service page: " +
-			"a server started with it empty has no page, and no way to hand out a link")
-	}
-	if err := checkStatusAddr(*statusAddr); err != nil {
+	// Every server has a page since 047 - its password is entered there - so
+	// an empty address names nothing to ask, whatever the server was started
+	// with.
+	if err := commandStatusAddr(*statusAddr); err != nil {
 		return LinkConfig{}, err
 	}
 	return LinkConfig{StatusAddr: *statusAddr, QR: *qr}, nil
 }
 
+// CommandConfig is what `noxd unlock` and `noxd password` need: where the
+// running server's service page listens.
+type CommandConfig struct {
+	StatusAddr string
+}
+
+// LoadCommand parses the arguments of `noxd unlock` or `noxd password` (047),
+// named by name. The address follows the server's own rule and default, as
+// for `noxd link`.
+func LoadCommand(name string, args []string, getenv func(string) string) (CommandConfig, error) {
+	fs := flag.NewFlagSet("noxd "+name, flag.ContinueOnError)
+	statusAddr := statusAddrFlag(fs, getenv)
+	if err := fs.Parse(args); err != nil {
+		return CommandConfig{}, fmt.Errorf("parse flags: %w", err)
+	}
+	if fs.NArg() > 0 {
+		return CommandConfig{}, fmt.Errorf("unexpected argument %q (noxd %s takes only -status-addr; "+
+			"the password is asked for, never given on the command line)", fs.Arg(0), name)
+	}
+	if err := commandStatusAddr(*statusAddr); err != nil {
+		return CommandConfig{}, err
+	}
+	return CommandConfig{StatusAddr: *statusAddr}, nil
+}
+
+// BackupConfig is what `noxd backup` needs: the file to write - absolute, the
+// way the running server reads it - and where that server's page listens.
+type BackupConfig struct {
+	File       string
+	StatusAddr string
+}
+
+// LoadBackup parses `noxd backup <file> [-status-addr ...]` (047). The file
+// may come before or after the flag; it is made absolute here, because the
+// server that writes it does not share this command's working directory.
+func LoadBackup(args []string, getenv func(string) string) (BackupConfig, error) {
+	fs := flag.NewFlagSet("noxd backup", flag.ContinueOnError)
+	statusAddr := statusAddrFlag(fs, getenv)
+	files, err := parseWithOne(fs, args, "the file to write the backup to")
+	if err != nil {
+		return BackupConfig{}, err
+	}
+	if err := commandStatusAddr(*statusAddr); err != nil {
+		return BackupConfig{}, err
+	}
+	abs, err := filepath.Abs(files)
+	if err != nil {
+		return BackupConfig{}, fmt.Errorf("resolve %q: %w", files, err)
+	}
+	return BackupConfig{File: abs, StatusAddr: *statusAddr}, nil
+}
+
+// RestoreConfig is what `noxd restore` needs: the backup file and the empty
+// place it goes to - the database path, and the attachments directory beside
+// it unless named.
+type RestoreConfig struct {
+	File      string
+	DBPath    string
+	FilesPath string
+}
+
+// LoadRestore parses `noxd restore <file> -db <path> [-files <dir>]` (047).
+// The database path is required and has no default and no environment
+// fallback: a restore lands where it was told to, never where a forgotten
+// NOX_DB or the working directory happens to point.
+func LoadRestore(args []string) (RestoreConfig, error) {
+	fs := flag.NewFlagSet("noxd restore", flag.ContinueOnError)
+	dbPath := fs.String("db", "", "where the restored database goes (must not exist yet)")
+	filesPath := fs.String("files", "", "where the restored attachments go (default <db>-files; must be empty)")
+	file, err := parseWithOne(fs, args, "the backup file")
+	if err != nil {
+		return RestoreConfig{}, err
+	}
+	if *dbPath == "" {
+		return RestoreConfig{}, errors.New("-db must name where the restored database goes")
+	}
+	files := *filesPath
+	if files == "" {
+		files = *dbPath + "-files"
+	}
+	return RestoreConfig{File: file, DBPath: *dbPath, FilesPath: files}, nil
+}
+
+// parseWithOne parses fs over args that carry exactly one positional
+// argument, before the flags or after them. The flag package stops at the
+// first word that is not a flag, so a file named first would otherwise leave
+// every flag after it unread.
+func parseWithOne(fs *flag.FlagSet, args []string, what string) (string, error) {
+	var positional []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return "", fmt.Errorf("parse flags: %w", err)
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+	switch len(positional) {
+	case 0:
+		return "", fmt.Errorf("%s is missing: name it", what)
+	case 1:
+		return positional[0], nil
+	default:
+		return "", fmt.Errorf("unexpected argument %q: only %s is named", positional[1], what)
+	}
+}
+
+// statusAddrFlag is -status-addr as every command reads it: the flag, then
+// NOX_STATUS_ADDR, then the server's default - so a command finds a server
+// started with the same environment without being told.
+func statusAddrFlag(fs *flag.FlagSet, getenv func(string) string) *string {
+	def := getenv("NOX_STATUS_ADDR")
+	if def == "" {
+		def = "127.0.0.1:8081"
+	}
+	return fs.String("status-addr", def, "the running server's service page address (loopback)")
+}
+
+// commandStatusAddr holds a command's address to the server's rule: present,
+// and loopback - the command sends a password, and the answer must not come
+// from anywhere else.
+func commandStatusAddr(addr string) error {
+	if addr == "" {
+		return errors.New("-status-addr must name the running server's service page")
+	}
+	return checkStatusAddr(addr)
+}
+
 // checkStatusAddr refuses anything the service page must not listen on.
 //
-// Empty is allowed and means no page. Everything else has to resolve to a
-// loopback address: the flag exists to move the port, not to put the page on a
+// Empty passes here and is refused by every caller, each with its own reason.
+// Everything else has to resolve to a loopback address: the flag exists to move the port, not to put the page on a
 // network, and somebody who writes 0.0.0.0 there has to learn it now rather
 // than when a stranger pairs with their server. A name is resolved rather than
 // pattern-matched, so "localhost" passes and a name that quietly points

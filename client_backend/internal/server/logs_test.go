@@ -4,14 +4,18 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"nox.app/client-backend/internal/vault"
 )
 
 // dialRun opens a WebSocket as d on a server Run started: the channel to its
@@ -152,6 +156,66 @@ func TestNoLinkAndNoTokenEverReachesTheLog(t *testing.T) {
 	for _, secret := range append(tokens, links...) {
 		if strings.Contains(out, secret) {
 			t.Fatalf("a token or link payload %q reached the log:\n%s", secret, out)
+		}
+	}
+}
+
+// FR-018 (047): neither a password - right, wrong, old or new - nor the data
+// key, in any spelling, nor where a backup went reaches the server's log, at
+// any step of the lock: the first password, wrong attempts, a restart and its
+// unlock, a change, a backup.
+func TestNoPasswordAndNoKeyEverReachesTheLog(t *testing.T) {
+	cfg := testRunConfig(t)
+	logs1, stop := runServer(t, cfg)
+	var refused *CommandError
+	if err := RequestPasswordChange(t.Context(), cfg.StatusAddr, "a wrong current one", "never set at all"); !errors.As(err, &refused) {
+		t.Fatalf("a change with a wrong password = %v", err)
+	}
+	const next = "staple orbit lantern"
+	if err := RequestPasswordChange(t.Context(), cfg.StatusAddr, testPassword, next); err != nil {
+		t.Fatalf("noxd password: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "secret-place-backup.tar")
+	if err := RequestBackup(t.Context(), cfg.StatusAddr, dst); err != nil {
+		t.Fatalf("noxd backup: %v", err)
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	logs2, stop2 := startRun(t, cfg)
+	if err := RequestUnlock(t.Context(), cfg.StatusAddr, "guess number one", ""); !errors.As(err, &refused) {
+		t.Fatalf("a wrong unlock = %v", err)
+	}
+	if err := RequestUnlock(t.Context(), cfg.StatusAddr, next, ""); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	if err := stop2(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+
+	key, err := vault.Open(cfg.KeyPath(), next)
+	if err != nil {
+		t.Fatalf("open the key: %v", err)
+	}
+	out := logs1.String() + logs2.String()
+	for name, secret := range map[string]string{
+		"the first password":     testPassword,
+		"the new password":       next,
+		"a wrong password":       "guess number one",
+		"a wrong current one":    "a wrong current one",
+		"a refused new password": "never set at all",
+		"the data key in hex":    fmt.Sprintf("%x", key),
+		"the data key in base64": base64.StdEncoding.EncodeToString(key),
+		"the backup's place":     "secret-place-backup",
+	} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("%s reached the log:\n%s", name, out)
+		}
+	}
+	// The log was exercised, so the silence above means something.
+	for _, said := range []string{"password changed", "backup written", "unlock refused: wrong password", "server unlocked"} {
+		if !strings.Contains(out, said) {
+			t.Fatalf("the log never says %q:\n%s", said, out)
 		}
 	}
 }
