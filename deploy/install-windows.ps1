@@ -116,6 +116,8 @@ $script:UndoMain = New-Object System.Collections.Generic.List[object]
 $script:UndoTor = New-Object System.Collections.Generic.List[object]
 $script:UndoInto = 'Main'
 $script:Committed = $false
+# UndoFailed is set when a step could not be taken back.
+$script:UndoFailed = $false
 
 function Add-Undo([string]$Action, [string]$A = '', [string]$B = '') {
     $entry = [pscustomobject]@{ Action = $Action; A = $A; B = $B }
@@ -137,11 +139,15 @@ function Invoke-UndoAction($U) {
     }
 }
 
+# Invoke-Undo runs a record newest first and empties it. Each step leaves the
+# record once it ran, so a run interrupted while taking back goes on from that
+# step, not from the start.
 function Invoke-Undo([System.Collections.Generic.List[object]]$Record) {
-    for ($i = $Record.Count - 1; $i -ge 0; $i--) {
-        try { Invoke-UndoAction $Record[$i] } catch { Warn "could not undo a step: $($_.Exception.Message)" }
+    while ($Record.Count -gt 0) {
+        $u = $Record[$Record.Count - 1]
+        try { $null = Invoke-UndoAction $u } catch { Warn "could not undo a step: $($_.Exception.Message)"; $script:UndoFailed = $true }
+        $Record.RemoveAt($Record.Count - 1)
     }
-    $Record.Clear()
 }
 
 function Save-TorRecord {
@@ -919,22 +925,35 @@ function Invoke-Install {
 
 $script:Work = ''
 $script:Password = $null
-$exitCode = 0
+$exitCode = 1
+$completed = $false
 try {
     Invoke-Install
+    $completed = $true
+    $exitCode = 0
 } catch {
-    $exitCode = 1
     $message = $_.Exception.Message
     if (-not ($_.Exception -is [System.ApplicationException])) { $message = "$message ($($_.InvocationInfo.PositionMessage))" }
     Write-Host "error: $message" -ForegroundColor Red
-    if (-not $script:Committed -and ($script:UndoTor.Count -gt 0 -or $script:UndoMain.Count -gt 0)) {
-        Warn 'the installation did not finish; taking back what this run changed'
-        Invoke-Undo $script:UndoTor
-        Invoke-Undo $script:UndoMain
-        Say 'This machine is as it was before the run.'
-    }
 } finally {
+    # The taking back is here and not in the catch: Ctrl+C stops the script
+    # past every catch, and only finally blocks run. It comes before the
+    # scratch directory goes, which holds the copies it restores from, and a
+    # second Ctrl+C does not cut it short.
     $script:Password = $null
+    if (-not $completed -and -not $script:Committed -and ($script:UndoTor.Count -gt 0 -or $script:UndoMain.Count -gt 0)) {
+        $ctrlC = $null
+        try { $ctrlC = [Console]::TreatControlCAsInput; [Console]::TreatControlCAsInput = $true } catch { $ctrlC = $null }
+        try {
+            Warn 'the installation did not finish; taking back what this run changed'
+            Invoke-Undo $script:UndoTor
+            Invoke-Undo $script:UndoMain
+            if ($script:UndoFailed) { Warn 'not everything could be taken back: see the lines above' }
+            else { Say 'This machine is as it was before the run.' }
+        } finally {
+            if ($null -ne $ctrlC) { try { [Console]::TreatControlCAsInput = $ctrlC } catch { } }
+        }
+    }
     if ($script:Work -and (Test-Path -LiteralPath $script:Work)) { Remove-Item -LiteralPath $script:Work -Recurse -Force -ErrorAction SilentlyContinue }
 }
 exit $exitCode

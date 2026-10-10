@@ -183,6 +183,8 @@ UNDO_INTO=MAIN
 # COMMITTED is set once the server answers on its service page: from there on
 # the installation stands, and what fails after it is reported, not undone.
 COMMITTED=0
+# UNDO_FAILED is set when a step could not be taken back.
+UNDO_FAILED=0
 
 undo_push() {
 	if [ "$UNDO_INTO" = TOR ]; then
@@ -192,17 +194,22 @@ undo_push() {
 	fi
 }
 
-# undo_run MAIN|TOR runs that record newest first and empties it.
+# undo_run MAIN|TOR runs that record newest first and empties it. Each step
+# leaves the record once it ran, so a run interrupted while taking back goes
+# on from that step, not from the start.
 undo_run() {
 	local name="UNDO_$1" count i cmd
 	eval "count=\${#${name}[@]}"
 	i=$((count - 1))
 	while [ "$i" -ge 0 ]; do
 		eval "cmd=\${${name}[$i]}"
-		eval "$cmd" || warn "could not undo: $cmd"
+		if ! eval "$cmd"; then
+			warn "could not undo: $cmd"
+			UNDO_FAILED=1
+		fi
+		eval "unset '${name}[$i]'"
 		i=$((i - 1))
 	done
-	eval "$name=()"
 }
 
 # undo_keep_tor moves the tor record into the main one: tor is in place, and
@@ -226,11 +233,18 @@ on_exit() {
 	fi
 	if [ "$status" -ne 0 ] && [ "$COMMITTED" = 0 ]; then
 		if [ ${#UNDO_TOR[@]} -gt 0 ] || [ ${#UNDO_MAIN[@]} -gt 0 ]; then
+			# A second Ctrl+C must not cut the taking back short: half of it
+			# would leave the machine in a state nobody chose.
+			trap '' INT TERM
 			printf '\n' >&2
 			warn "the installation did not finish; taking back what this run changed"
 			undo_run TOR
 			undo_run MAIN
-			say "This machine is as it was before the run."
+			if [ "$UNDO_FAILED" = 0 ]; then
+				say "This machine is as it was before the run."
+			else
+				warn "not everything could be taken back: see the lines above"
+			fi
 		fi
 	fi
 	if [ -n "$WORK" ] && [ -d "$WORK" ]; then
