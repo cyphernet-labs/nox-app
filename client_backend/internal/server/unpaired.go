@@ -192,8 +192,14 @@ func (s *Server) settleUnpaired(c *client) {
 //
 // One connection holds each request's wait: the one that presented it last.
 // The same key presenting the same invite on another connection - the app
-// does, on every new connection - takes the wait over, and the connection it
-// leaves is a stranger again, with a place and two minutes of its own.
+// does, on every new connection, and holds one at a time - takes the wait
+// over, and the connection it leaves is CLOSED, never put back among the
+// strangers. Put back as the newest, it would move behind every stranger that
+// dialled after it, and a key whose request waits - a leaked invite presented
+// first - could reorder the places with `pair` frames alone: present on each
+// spare connection in turn until a device that dialled later is the oldest,
+// then push that device out with one new connection - where the cap is meant
+// to cost a whole cap's worth of them within the device's round trip.
 //
 // A connection held to no limit has nothing to be exempt from: a paired
 // device's, or one already cut, which is closing.
@@ -207,20 +213,24 @@ func (c *client) awaitAnswer(r store.PairRequest) {
 		s.mu.Unlock()
 		return
 	}
-	// Out of its place - or of a wait on another request - first, so the
-	// place the displaced holder takes below can never push c itself out.
+	// Out of its place - or of a wait on another request - first. A repeat
+	// on the connection that holds this wait already leaves no previous
+	// holder behind: letting go of c gave the wait up.
 	s.letGoLocked(c)
-	var cut []*client
-	var report int
-	if prev := s.waits[r.RequestID]; prev != nil {
-		s.letGoLocked(prev)
-		cut, report = s.placeUnpairedLocked(prev)
+	left := s.waits[r.RequestID]
+	if left != nil {
+		s.letGoLocked(left)
 	}
 	s.waits[r.RequestID] = c
 	c.waitsOn = r.RequestID
 	s.armLocked(c, time.Until(time.Unix(r.ExpiresAt, 0))+s.requestSweep+s.unpairedTimeout)
 	s.mu.Unlock()
-	s.closeToMakeRoom(cut, report)
+	if left != nil {
+		// Off this goroutine, like a connection closed to make room: a close
+		// handshake can take seconds, and this device's answer must not wait
+		// on the goodbye of the connection it has left.
+		go left.close(websocket.StatusTryAgainLater, "another connection presented the invite")
+	}
 
 	// The request can close between the store's "pending" and the wait taking
 	// hold above - an Allow, a Deny, a cancel, the sweep - and whoever closed

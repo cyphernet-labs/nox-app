@@ -542,9 +542,10 @@ func TestAWaitThatEndsWithoutAPairingIsAStrangersAgain(t *testing.T) {
 
 // One connection holds each request's wait: the one that presented it last.
 // The app presents its invite again on every new connection, and the one it
-// left behind - dead, as a rule, though the server may not know it yet - is a
-// stranger again; the newest waits on, and is allowed. So the connections a
-// key nobody paired holds this way are no more than the requests that wait.
+// left behind - dead, as a rule, though the server may not know it yet - is
+// closed at once, not left to a deadline; the newest waits on, and is
+// allowed. So the connections a key nobody paired holds this way are no more
+// than the requests that wait.
 func TestTheConnectionThatPresentedTheInviteLastHoldsTheWait(t *testing.T) {
 	const deadline = 300 * time.Millisecond
 	ts, srv := newTestServerWith(t, func(s *Server) { s.unpairedTimeout = deadline })
@@ -557,7 +558,7 @@ func TestTheConnectionThatPresentedTheInviteLastHoldsTheWait(t *testing.T) {
 	if again != pending {
 		t.Fatalf("the second connection's answer = %+v, want the same request %+v", again, pending)
 	}
-	waitClosed(t, first, websocket.StatusPolicyViolation)
+	waitClosed(t, first, websocket.StatusTryAgainLater)
 	if n, w := unpairedHeld(srv), waitsHeld(srv); n != 0 || w != 1 {
 		t.Fatalf("%d held as strangers and %d as waiting, want only the second connection's wait", n, w)
 	}
@@ -569,6 +570,59 @@ func TestTheConnectionThatPresentedTheInviteLastHoldsTheWait(t *testing.T) {
 	issuer.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.approve","data":{"request_id":%q,"allow":true}}`, pending.RequestID))
 	expectNamedEvent(t, second, protocol.EventPairResolved)
 	second.hello(3, "")
+}
+
+// A wait moves to the connection that presented the invite last, and the one
+// it leaves is closed - never put back among the strangers. Put back as the
+// newest, it would move behind every stranger that dialled after it: a key
+// whose request waits - a leaked invite, presented first - could reorder the
+// places with `pair` frames alone, presenting on its spare connections one by
+// one until a device that dialled later was the oldest, and then push that
+// device out with ONE new connection instead of a whole cap's worth.
+func TestPresentingAnInviteAgainCannotReorderTheStrangers(t *testing.T) {
+	const most = 4
+	ts, srv := newTestServerWith(t, func(s *Server) { s.maxUnpaired = most })
+	_, issuer, token := issuerSetup(t, ts, srv)
+	leaked := newDevice(t)
+	holder, pending := presentInvite(t, ts, srv, leaked, token)
+	expectNamedEvent(t, issuer, protocol.EventDevicePairRequested)
+	var spares []*wsClient
+	for range most - 1 {
+		c := dialAs(t, ts, srv, leaked)
+		c.expectGreeting()
+		spares = append(spares, c)
+	}
+	// A device that dials after all of them, to pair with a link of its own:
+	// the places are full now, and it is the newest.
+	late := dialWS(t, ts, srv)
+	late.expectGreeting()
+
+	for _, c := range spares {
+		if again := presentAgain(t, c, 1, token); again != pending {
+			t.Fatalf("a spare connection's repeat = %+v, want the same request %+v", again, pending)
+		}
+	}
+	// One new connection of the same key. Had the repeats moved the
+	// connections they left behind the late device, it would be the oldest
+	// now, and this would push it out.
+	extra := dialAs(t, ts, srv, leaked)
+	extra.expectGreeting()
+
+	late.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, mustMachineLink(t, srv)))
+	if _, paired := late.expectOK(1)["identity"]; !paired {
+		t.Fatal("the late device did not pair through its machine link")
+	}
+	// Each repeat closed the connection the wait left, and the last spare
+	// waits; the new connection is the only stranger left in a place.
+	for _, left := range append([]*wsClient{holder}, spares[:len(spares)-1]...) {
+		waitClosed(t, left, websocket.StatusTryAgainLater)
+	}
+	if n, w := unpairedHeld(srv), waitsHeld(srv); n != 1 || w != 1 {
+		t.Fatalf("%d held as strangers and %d as waiting, want the new connection and the last spare's wait", n, w)
+	}
+	if still := presentAgain(t, spares[len(spares)-1], 2, token); still != pending {
+		t.Fatalf("the last spare's repeat = %+v, want the same request %+v", still, pending)
+	}
 }
 
 // A request can close between the store's "pending" and the wait taking hold -

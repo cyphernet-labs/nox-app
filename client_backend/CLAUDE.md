@@ -337,7 +337,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the request (`awaitAnswer`, `Server.waits`): out of the cap's count, never
   pushed out, under the request's own deadline (plus one sweep and two
   minutes, a bound only). One connection holds each request's wait - the
-  last to present it; the one it leaves is a newcomer again. Whoever closes
+  last to present it; the one it leaves is CLOSED with 1013, never put back
+  among the strangers: as the newest it would stand behind everybody who
+  dialled after it, and `pair` frames alone would reorder the places until
+  one new connection pushed out a later device. Whoever closes
   the request ends the wait (`endWait`): allowed lets the connection go,
   any other outcome puts it back as a newcomer with two fresh minutes; and
   a close landing between the store's `pending` and the wait taking hold is
@@ -426,9 +429,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   net/http's own answers included - while a paired device's stays for the
   next request; it holds too that a pairing waiting for Allow outlives the
   deadline and the cap and is paired after, that the last connection to
-  present a request holds its wait, and that a request ending without a
-  pairing - Deny, Cancel, its time, or a close landing before the wait took
-  hold (`beforeWait`) - makes the connection a stranger again; the addresses are
+  present a request holds its wait and the one before is closed - so repeats
+  of `pair` on spare connections cannot reorder the places - and that a
+  request ending without a pairing - Deny, Cancel, its time, or a close
+  landing before the wait took hold (`beforeWait`) - makes the connection a
+  stranger again; the addresses are
   `address_settings_test.go`, `status_addresses_test.go` and
   `internal/store/addresses_test.go`; the log
   is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -
@@ -686,7 +691,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   and the request's end puts it back as a newcomer or, allowed, lets it go.
   That keeps a bound: one connection per waiting request, and a request
   opens only with an invite a paired device issued and lives no longer than
-  it. What stays open: within its two minutes a
+  it. The connection a wait moves away from is closed rather than put back
+  as the newest stranger, which would hand a key with a waiting request a
+  way to reorder the places with `pair` frames alone; a request that ends
+  without a pairing does put its connection back as the newest - once per
+  request, worth one new connection to whoever ends it. What stays open:
+  within its two minutes a
   stranger may send `pair` as often as it likes, each failed attempt one
   short write transaction on the single writer - and a stranger holding a
   leaked invite may hold its one waiting connection until the person answers
