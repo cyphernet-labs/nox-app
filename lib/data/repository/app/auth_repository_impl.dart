@@ -445,13 +445,15 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     );
   }
 
-  /// The database closes under its key, the key goes, then the file - in
-  /// this order a crash leaves either a database whose key is gone, which the
-  /// next start retires ([openLocalData]), or nothing; and the stores were
-  /// emptied before, so nobody's messages outlive the logout either way. A
-  /// read that reaches for the database meanwhile finds no key and opens
-  /// nothing. Best effort, like the file cache: loud in the log, never a
-  /// reason to leave the person signed in.
+  /// The database closes under its key, the key goes, then the files - every
+  /// database the key sealed, the other environment's too, this one's last
+  /// (`AppDatabase.clearEntireDatabase`). In this order a crash leaves either
+  /// a database whose key is gone, which the next start retires
+  /// ([openLocalData]), or nothing; and the stores were emptied before, so
+  /// nobody's messages outlive the logout either way. A read that reaches for
+  /// the database meanwhile finds no key and opens nothing. Best effort, like
+  /// the file cache: loud in the log, never a reason to leave the person
+  /// signed in.
   Future<void> _wipeLocalData() async {
     final database = getIt<AppDatabase>();
     try {
@@ -524,7 +526,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   }
 
   /// The local data can never be read again: it goes - file by file, since
-  /// none of it opens - and with it the session, through the one forced
+  /// none of it opens, every database the data folder holds among them
+  /// (the other environment's too: once the key goes, nothing it sealed
+  /// opens, and one left here would keep the logout below from opening the
+  /// queue it empties) - and with it the session, through the one forced
   /// logout, to the pairing screen. The conversation comes back from the
   /// server after the pairing.
   Future<RepositoryResult<bool>> _retireLocalData() async {

@@ -31,7 +31,22 @@ abstract final class AppDataRoot {
   /// The database files, one per environment that keeps one on disk. A key
   /// that is gone while one of these is here means data nothing can open any
   /// more (`DeviceVault`).
+  ///
+  /// Both environments of a build share this folder and the one local-data
+  /// key: the flavour is a Dart define only, with one app id, one data folder
+  /// and one secure store. Whatever ends the key therefore ends every
+  /// database here, and the wipe deletes them all
+  /// (`AppDatabase.clearEntireDatabase`).
   static const List<String> databaseFiles = <String>['app.db', 'app_dev.db'];
+
+  /// Every file a database of either environment occupies in the data folder:
+  /// each of [databaseFiles], and beside it the compaction file Sembast writes
+  /// and then renames into place (`~<name>`). With the database itself gone,
+  /// Sembast opens that file as the database - so it is one, to count and to
+  /// delete.
+  static Future<List<String>> databasePaths() async => <String>[
+    for (final name in databaseFiles) ...<String>[await pathOf(name), await pathOf('~$name')],
+  ];
 
   /// The folder under `%LOCALAPPDATA%` on Windows.
   static const String windowsFolder = 'NOX';

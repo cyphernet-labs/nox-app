@@ -22,6 +22,7 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_tor/vault.dart';
+import 'package:sembast/sembast.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../utils/sealed_files.dart';
@@ -38,17 +39,36 @@ void main() {
   late Directory root;
 
   /// A launch: a fresh container over what is on the disk and in the store,
-  /// with the database the app keeps on the disk.
-  Future<void> launch({FlutterSecureStorage? store}) async {
+  /// with the database the app keeps on the disk - stage's, or with [prod]
+  /// the one a build without its define keeps beside it.
+  Future<void> launch({FlutterSecureStorage? store, bool prod = false}) async {
     await getIt.reset();
     NoxVault.clear();
     await configureDependencies(Environment.test);
-    await getIt<AppConfigRepository>().initialize(flavorType: AppFlavorType.stage);
+    await getIt<AppConfigRepository>().initialize(flavorType: prod ? AppFlavorType.prod : AppFlavorType.stage);
     getIt.allowReassignment = true;
     if (store != null) getIt.registerSingleton<FlutterSecureStorage>(store);
-    getIt.registerSingleton<AppDatabase>(AppDatabaseDev(getIt<DeviceVault>()));
+    final vault = getIt<DeviceVault>();
+    getIt.registerSingleton<AppDatabase>(prod ? AppDatabaseProd(vault) : AppDatabaseDev(vault));
     (getIt<AuthRepository>() as AuthRepositoryImpl).unreadablePause = (_) => Duration.zero;
   }
+
+  /// What a run of the other environment leaves on this device: both share
+  /// one app id, so one data folder, one secure store and one key, and a
+  /// build without its define is prod. Its database, sealed under the same
+  /// key, with something in it - and the compaction file a crash left beside
+  /// it.
+  Future<void> otherEnvironmentRan() async {
+    final prod = AppDatabaseProd(getIt<DeviceVault>());
+    await StoreRef<String, String>.main().record('ran').put(await prod.db, 'prod');
+    await prod.close();
+    File(await AppDataRoot.pathOf('~app.db')).writeAsStringSync('{"version":1,"sembast":1}\n');
+  }
+
+  Future<List<String>> databasesLeft() async => [
+    for (final path in await AppDataRoot.databasePaths())
+      if (File(path).existsSync()) path.split(Platform.pathSeparator).last,
+  ];
 
   /// A device that is paired and has a conversation: a chat, sealed on the disk.
   Future<void> pairedWithAChat() async {
@@ -170,6 +190,65 @@ void main() {
     expect(await const FlutterSecureStorage().readAll(), isEmpty, reason: 'neither key, nor anything of the session');
     expect(() => NoxVault.seal(Uint8List(1)), throwsA(isA<VaultException>()), reason: 'the module holds no key either');
     expect(picked.existsSync(), isTrue, reason: "the person's own file is theirs");
+  });
+
+  group('the other environment on the same device', () {
+    test("a logout takes the other environment's database with it, and pairing again works at once", () async {
+      // Prod ran once beside stage, under the same key; stage logs out. The
+      // key goes - and with it every database it sealed, or the one left
+      // behind reads as data whose key is lost, to both environments, for good.
+      await pairedWithAChat();
+      await otherEnvironmentRan();
+      await launch();
+      expect((await authRepository.openLocalData()).data, isFalse);
+
+      expect((await authRepository.logout()).hasData, isTrue);
+
+      expect(await databasesLeft(), isEmpty, reason: 'nothing a key would have to open (SC-005)');
+      expect(await const FlutterSecureStorage().read(key: storageKey), isNull);
+
+      // Paired again in the same process: the database opens under a new key.
+      expect((await authRepository.signIn(identifier: link)).hasData, isTrue);
+      expect((await authRepository.completeOnboarding(label: 'Alice')).hasData, isTrue);
+      expect((await getIt<ChatRepository>().createChat(name: 'After the logout')).hasData, isTrue);
+      expect(await chatNames(), contains('After the logout'));
+      await getIt<AppDatabase>().close();
+
+      // And the next launch of either environment opens what it finds.
+      await launch();
+      expect((await authRepository.openLocalData()).data, isFalse, reason: 'nothing retired');
+      expect(await chatNames(), contains('After the logout'));
+      await launch(prod: true);
+      expect((await authRepository.openLocalData()).data, isFalse, reason: 'prod finds nothing it cannot open either');
+      expect((await sessionRepository.readSession()).data?.identifier, isNotNull);
+    });
+
+    test("no key and the other environment's database left behind: the start retires every database, and the device pairs again", () async {
+      // The state a logout that deleted only its own database left: the key
+      // gone with the session, the other environment's database still here.
+      // Its forced logout could not open the queue it empties - the start
+      // retired the data at every launch and the pairing never took.
+      await pairedWithAChat();
+      await otherEnvironmentRan();
+      await const FlutterSecureStorage().deleteAll();
+      File(await AppDataRoot.pathOf('app_dev.db')).deleteSync();
+
+      await launch();
+      final out = await authRepository.openLocalData();
+
+      expect(out.data, isTrue, reason: 'retired, through a forced logout that went through');
+      expect(await databasesLeft(), isEmpty);
+      await appStateRepository.fetchAppState();
+      expect(appStateRepository.currentState, AppStateType.unauthorized, reason: 'the pairing screen');
+
+      expect((await authRepository.signIn(identifier: link)).hasData, isTrue);
+      expect((await authRepository.completeOnboarding(label: 'Alice')).hasData, isTrue);
+      expect((await getIt<ChatRepository>().createChat(name: 'Paired again')).hasData, isTrue);
+      await getIt<AppDatabase>().close();
+      await launch();
+      expect((await authRepository.openLocalData()).data, isFalse);
+      expect(await chatNames(), contains('Paired again'));
+    });
   });
 }
 

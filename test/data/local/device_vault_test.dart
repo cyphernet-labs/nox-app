@@ -58,15 +58,15 @@ void main() {
     NoxVault.clear();
     store = _KeyStore();
     vault = DeviceVault(store);
-    for (final name in AppDataRoot.databaseFiles) {
-      final file = File(await AppDataRoot.pathOf(name));
+    for (final path in await AppDataRoot.databasePaths()) {
+      final file = File(path);
       if (file.existsSync()) file.deleteSync();
     }
   });
 
   tearDown(() async {
-    for (final name in AppDataRoot.databaseFiles) {
-      final file = File(await AppDataRoot.pathOf(name));
+    for (final path in await AppDataRoot.databasePaths()) {
+      final file = File(path);
       if (file.existsSync()) file.deleteSync();
     }
     NoxVault.clear();
@@ -129,6 +129,20 @@ void main() {
     expect(vault.isOpen, isFalse);
     expect(moduleHasKey(), isFalse);
     expect(await vault.hasLocalData(), isTrue);
+  });
+
+  test("either environment's database, or the compaction file Sembast left of one, is data a key would have to open", () async {
+    // Both environments of a build share the data folder and the one key; and
+    // with a database itself gone, Sembast opens its compaction file as it.
+    final paths = await AppDataRoot.databasePaths();
+    expect(paths.map((p) => p.split(Platform.pathSeparator).last), ['app.db', '~app.db', 'app_dev.db', '~app_dev.db']);
+
+    for (final path in paths) {
+      final file = File(path)..writeAsStringSync('{"version":1,"sembast":1}\n');
+      expect(await DeviceVault(_KeyStore()).open(), LocalDataOpening.lost, reason: path.split(Platform.pathSeparator).last);
+      file.deleteSync();
+    }
+    expect(await DeviceVault(_KeyStore()).open(), LocalDataOpening.created, reason: 'and with none of them here, a new key');
   });
 
   test('a store that does not answer is unreadable: nothing decided, nothing written, nothing deleted', () async {

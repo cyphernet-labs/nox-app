@@ -99,10 +99,14 @@ class DeviceVault {
     if (!dropped.hasData) logRepository.debug(target: this, message: 'vault: the key stayed in the secure store');
   }
 
-  /// Whether the disk holds a database a key would have to open.
+  /// Whether the disk holds a database a key would have to open: either
+  /// environment's - both are sealed under the one key of this device - or
+  /// the compaction file Sembast left of one ([AppDataRoot.databasePaths]).
+  /// The wipe deletes exactly these, so a logout in one environment leaves
+  /// nothing here that would read as lost data to the other.
   Future<bool> hasLocalData() async {
-    for (final name in AppDataRoot.databaseFiles) {
-      if (File(await AppDataRoot.pathOf(name)).existsSync()) return true;
+    for (final path in await AppDataRoot.databasePaths()) {
+      if (File(path).existsSync()) return true;
     }
     return false;
   }
