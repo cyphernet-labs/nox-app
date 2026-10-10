@@ -36,7 +36,7 @@ window.NOX_SPECS = [
     "num": "2.1",
     "title": "Login",
     "group": "Onboarding",
-    "purpose": "Sign in by pasting / typing an existing account ID, or jump to QR scan.",
+    "purpose": "Take a pairing link — pasted or typed — or jump to QR scan; a readable link goes on to Connect (2.4).",
     "states": [
       {
         "key": "empty",
@@ -47,41 +47,27 @@ window.NOX_SPECS = [
         "label": "Filled"
       },
       {
-        "key": "loading",
-        "label": "Submitting"
-      },
-      {
         "key": "error-format",
-        "label": "Format error"
-      },
-      {
-        "key": "error-server",
-        "label": "Wrong server"
-      },
-      {
-        "key": "error-net",
-        "label": "Network error"
+        "label": "Not a pairing link"
       }
     ],
-    "anatomy": "App bar (NOX wordmark + splash hairline). Multiline mono ID field with a paste affordance (suffix). Pinned bottom: primary “Sign in”, secondary “Scan QR”.",
+    "anatomy": "App bar (NOX wordmark + splash hairline). Multiline mono “Pairing link” field with a paste affordance (suffix). Pinned bottom: primary “Sign in”, secondary “Scan QR”.",
     "behavior": [
-      "ID field is monospace, multiline (min 120), wraps break-all so a long ID never overflows.",
+      "The field is monospace, multiline (min 120), and wraps break-all so a long link never overflows.",
       "Empty: Sign in disabled, paste icon at 38%. As soon as there is a value → enabled.",
-      "Submitting: button shows an inline spinner (onPrimary); field + Scan QR disabled.",
-      "Format error: inline errorText “Invalid identifier” (client-side check before submit).",
-      "Network/5xx on submit: inline errorText “Could not sign in. Check your connection and try again.”"
+      "Sign in reads the link on the device and dials nothing; there is no spinner here. A link that will not parse → inline errorText “This isn't a pairing link”; a link from a newer app (version above 3) → “This link needs a newer version of NOX. Update the app and try again.”",
+      "A readable link opens Connect (2.4) at once (phase 045): pairing, the path and the server's answer about the token are said there. Coming back keeps the link in the field. A scan on 2.2 takes the same path."
     ],
     "navigation": [
-      "Success → Set username (2.3) for new IDs, else Chats (5.1).",
-      "Scan QR → QR scan (2.2).",
-      "Fatal/unexpected → Error (3.1)."
+      "Readable link → Connect (2.4).",
+      "Scan QR → QR scan (2.2)."
     ],
     "copy": [
-      "Label: Your ID",
-      "Placeholder: Paste or enter your ID",
+      "Label: Pairing link",
+      "Placeholder: Paste the link from your server",
       "Primary: Sign in",
       "Secondary: Scan QR",
-      "Errors: “Invalid identifier” · “Could not sign in. Check your connection and try again.”"
+      "Errors: “This isn't a pairing link” · “This link needs a newer version of NOX. Update the app and try again.”"
     ],
     "ds": [
       "AppBar (wordmark)",
@@ -96,7 +82,7 @@ window.NOX_SPECS = [
     "num": "2.2",
     "title": "QR scan",
     "group": "Onboarding",
-    "purpose": "Scan another device’s ID QR with the camera.",
+    "purpose": "Scan a pairing link's QR code with the camera.",
     "states": [
       {
         "key": "scan",
@@ -111,11 +97,11 @@ window.NOX_SPECS = [
     "behavior": [
       "App bar over the feed has no surface fill and no splash hairline (splash=false).",
       "Reticle stroke is brand white (3dp), corners radius m; mask is #000 at 55% (brand-fixed, not themed).",
-      "Detecting a valid code signs in immediately (same outcome as Login success).",
+      "Detecting a pairing link closes the scanner: the link goes into the Login field and Login opens Connect (2.4) at once — the same path as a pasted link (phase 045). A code with no pairing link → snackbar “This QR code is invalid. Try another one.”; scanning goes on.",
       "Permission denied → opaque surface screen (NOT over the camera) with no_photography glyph + “Open settings”."
     ],
     "navigation": [
-      "Valid scan → Set username (2.3) / Chats (5.1).",
+      "Valid scan → Login (2.1), which opens Connect (2.4) at once.",
       "Back → Login (2.1).",
       "Enter manually → Login (2.1).",
       "Open settings → OS settings."
@@ -307,8 +293,9 @@ window.NOX_SPECS = [
       "Unread emphasis: name w600, preview onSurface, time primary, badge shown (caps 99+, hidden at 0).",
       "A chat made on this device that the server does not have yet (phase 041): waiting — a clock (schedule, onSurfaceVariant) in place of the time, screen-reader name “Waiting to be created”, preview kept; refused — the error glyph (error colour) in place of the time and the reason in place of the preview, in the error colour: “Name already taken” or “Couldn't create”. Ordered with the rest by last activity; the row reads a refusal once.",
       "Loading: the chats already on the device show at once and the server's page arrives in the background; a centered spinner only when the device holds no chats and the server is being asked. Empty: forum empty-state.",
-      "Offline: persistent “No connection” MaterialBanner at top. Load error: banner “Could not load chats. Pull to refresh.”",
+      "Offline: a persistent MaterialBanner at top once a whole round of path finding found nothing — “No connection”, or the cause when the app can tell (phase 045), with the same wifi_off glyph: “Can't reach the server directly. Turn on Use Tor to connect through Tor.” · “No server answers at this onion address. Check the address and that Tor is running on the server.” · “Your server isn't answering through Tor right now. Check that it is running.” · “Can't connect to the Tor network. Check your internet connection.” · “This isn't a valid onion address.” Load error: banner “Could not load chats. Pull to refresh.”",
       "Try again on No connection (phase 042): It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
+      "Wrong server: the server behind the ONION address proved another key — the strip “This onion address belongs to a different server.” with Try again and the error glyph, INSTEAD of the offline one.",
       "Tapping the SearchBar opens the full search view (back + query + caret, clear); results filter live; no match → “No chats found”.",
       "Transient one-off feedback appears as a Snackbar floating above the bottom bar."
     ],
@@ -323,7 +310,9 @@ window.NOX_SPECS = [
       "Load error: Could not load chats. Pull to refresh.",
       "Search empty: No chats found",
       "Waiting chat, clock (screen-reader name): Waiting to be created",
-      "Refused chat, status line: Name already taken · Couldn't create"
+      "Refused chat, status line: Name already taken · Couldn't create",
+      "Offline strip: No connection, or its cause when known · Try again",
+      "Wrong-server strip: This onion address belongs to a different server. · Try again"
     ],
     "ds": [
       "AppBar (wordmark)",
@@ -370,12 +359,12 @@ window.NOX_SPECS = [
       "Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry). An own message that came from the server is sent, including one typed on another device of the same person.",
       "A message with a file shows its bytes going up: a ring on a contrasting disc over a picture; “Sending… 45%” over a bar in any other file's chip. Before the first byte the ring spins and the bar runs without a percent; the ring gives way to the tick once the server has the message, and starts again with a retried attempt. A received picture's placeholder spinner fills the same way while its bytes come in.",
       "Date separators: Today / Yesterday / 12 May. A system line marks chat creation.",
-      "Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.",
+      "Empty: chat_bubble_outline empty-state. Offline: top banner — “No connection”, or its cause when known (as 5.1) — and queued messages show pending.",
       "Try again on No connection (phase 042): It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
       "The connection never holds the thread: messages already on the device show at once, the server's newest window arrives in the background; a spinner only when the device holds nothing for the chat and the server is being asked. Writing works offline: a message waits with its clock and goes out over whichever path comes up first.",
       "Invite a person: an app-bar action that is PERMANENTLY disabled (037). Pressing it does nothing at all - no screen, no snackbar, no error. Its screen-reader name is the action alone; the caption explaining it lives in 5.4, where there is room.",
       "Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.",
-      "A chat the server does not have yet (phase 041): its messages wait with their clock, never as errors, and its window and files are never asked of the server. ONE notice over the thread, in this order: wrong server → name taken (Rename) → refused (Try again) → waiting (only while the channel is not current, INSTEAD of “No connection”) → “No connection”."
+      "A chat the server does not have yet (phase 041): its messages wait with their clock, never as errors, and its window and files are never asked of the server. ONE notice over the thread, in this order: wrong server (“This onion address belongs to a different server.” + Try again) → name taken (Rename) → refused (Try again) → waiting (only while the channel is not current, INSTEAD of “No connection”) → “No connection”, or its cause when known."
     ],
     "navigation": [
       "Back → Chats list (5.1).",
@@ -390,7 +379,9 @@ window.NOX_SPECS = [
       "Invite action (screen-reader name): Invite a person",
       "Waiting notice: This chat isn't on your server yet. It will be once NOX connects.",
       "Name-taken notice: Another chat already has this name. Rename this one to finish creating it. · Rename",
-      "Refused notice: This chat couldn't be created on your server. · Try again"
+      "Refused notice: This chat couldn't be created on your server. · Try again",
+      "Offline strip: No connection, or its cause when known (as 5.1) · Try again",
+      "Wrong-server strip: This onion address belongs to a different server. · Try again"
     ],
     "ds": [
       "AppBar (title)",
@@ -468,7 +459,8 @@ window.NOX_SPECS = [
     "behavior": [
       "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
       "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all.",
-      "No connection: the strip at the top, as in the thread. It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
+      "No connection: the strip at the top, as in the thread, saying the cause in place of “No connection” when the app can tell (phase 045). It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
+      "Wrong server: “This onion address belongs to a different server.” with Try again and the error glyph, at the top of the card, INSTEAD of the offline strip.",
       "List rows: file glyph + name (ellipsis) + size + chevron. Grid: square type cells.",
       "Segmented control switches List ⇄ Grid (single-select).",
       "Empty: folder_open empty-state."
@@ -483,7 +475,9 @@ window.NOX_SPECS = [
       "Button (disabled): Invite a person",
       "Caption: Available in a future version",
       "Section: Files",
-      "Empty: No files yet / Files sent in this chat will appear here."
+      "Empty: No files yet / Files sent in this chat will appear here.",
+      "Offline strip: No connection, or its cause when known · Try again",
+      "Wrong-server strip: This onion address belongs to a different server. · Try again"
     ],
     "ds": [
       "AppBar (title)",
@@ -569,16 +563,17 @@ window.NOX_SPECS = [
         "label": "Logging out"
       }
     ],
-    "anatomy": "App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination, each with a bare leading glyph and a chevron: Devices, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own. Bottom bar.",
+    "anatomy": "App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination, each with a bare leading glyph and a chevron: Devices, Connection, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own. Bottom bar.",
     "behavior": [
       "Identity card: avatar + name (edit inline) + the full public ID, with Edit name and Copy ID as named tonal buttons. No QR action - adding a device is 7.8's own screen.",
+      "Connection (phase 045): the row under Devices (glyph lan) opens 7.10 - the server address, the onion address and Use Tor.",
       "Phase 037 removed the Server owner badge and its 'ownership not stated' state: the machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart.",
       "Editing: name becomes an inline TextField with counter.",
       "Phase 032 removed the mask, the reveal and the account QR: the ID stopped being a secret. Show QR leads to Devices, where an invite is minted with a one-shot token.",
       "Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state."
     ],
     "navigation": [
-      "Rows → 7.2 / 7.3 / 7.4 / Terms / About.",
+      "Rows → Devices (7.8) / Connection (7.10) / 7.2 / 7.3 / 7.4 / Terms / About.",
       "Log out (confirmed) → Login (2.1)."
     ],
     "copy": [

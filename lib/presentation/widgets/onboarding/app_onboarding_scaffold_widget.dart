@@ -6,10 +6,11 @@ import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.da
 import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
-/// Shared onboarding page scaffold for 2.1 Login and 2.3 Set username — the two
-/// screens are the same layout, a [field] that scrolls above a pinned [actions]
-/// block, differing only in the field, the actions, the desktop titlebar [subtitle],
-/// and the mobile actions padding. Mobile: an `AppBar` (wordmark + splash hairline)
+/// Shared onboarding page scaffold for 2.1 Login, 2.3 Set username and the
+/// connection screen (phase 045) — the screens are the same layout, a [field]
+/// that scrolls above a pinned [actions] block, differing only in the field, the
+/// actions, the desktop titlebar [subtitle], the mobile actions padding and, for
+/// a screen pushed over another, the mobile app bar's [leading]. Mobile: an `AppBar` (wordmark + splash hairline)
 /// with the field in a scroll view and the actions pinned at the bottom. Desktop
 /// (`>= Constants.railBreakpoint`): a window titlebar over a centered
 /// [AppOnboardCardWidget] holding the field and actions.
@@ -20,6 +21,7 @@ class AppOnboardingScaffoldWidget extends StatelessWidget {
     required this.field,
     required this.actions,
     this.mobileActionsPadding,
+    this.leading,
   });
 
   /// Desktop titlebar screen label (e.g. 'Sign in', 'Set up').
@@ -35,6 +37,11 @@ class AppOnboardingScaffoldWidget extends StatelessWidget {
   /// Login overrides it to add breathing room at the very bottom.
   final EdgeInsets? mobileActionsPadding;
 
+  /// The mobile app bar's leading action - a back button drawn with the
+  /// app's own glyph on a screen pushed over another. Null keeps the app
+  /// bar's default.
+  final Widget? leading;
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -47,7 +54,7 @@ class AppOnboardingScaffoldWidget extends StatelessWidget {
 
   Widget _narrow(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget()),
+      appBar: AppBar(centerTitle: true, leading: leading, title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget()),
       body: SafeArea(
         child: Column(
           children: [

@@ -3,9 +3,9 @@
 //
 // It exists because the flow crosses two devices and a real socket, which no
 // unit test reaches end to end and no person wants to click through twice
-// before a demo. Point it at the claim link a fresh server printed and it
-// claims the machine, adds a second device of the same person, and has the two
-// of them exchange a message.
+// before a demo. Point it at the claim link on a fresh server's service page
+// and it claims the machine, adds a second device of the same person, and has
+// the two of them exchange a message.
 //
 // It talks to the wire directly rather than through the app - the channel
 // included: TCP, TLS 1.3 that checks no certificate, then the channel check
@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,8 +38,12 @@ import (
 const usage = `usage: smoke <pairing link>
        smoke -check <host:port> <server key, base64>
 
-Give it the claim link a freshly started noxd printed, or the one on its
-service page. The server must have no owner yet.
+Give it the claim link on the service page of a freshly started noxd (the
+server's log says where the page is, never what the link is). The server must
+have no owner yet. The link's direct addresses
+are tried in its order - the public one first, when it has one - and the run
+goes on with the first that proves the key; an onion address in the link is
+reported and not tried, because this program has no Tor.
 
 With -check it only opens the channel - TLS and the channel check, with a
 throwaway device key - and says whether the machine at that address is the one
@@ -80,15 +85,40 @@ func check(addr, serverKey string) error {
 	return channel.Close()
 }
 
+// reach picks the link's first direct address that opens a channel proving
+// the link's key - the order the app tries them in. A throwaway device key is
+// enough: the channel says which machine answered before anything is paired.
+func reach(target link) (link, error) {
+	var tried []string
+	for _, addr := range target.addrs {
+		if err := check(addr, base64.StdEncoding.EncodeToString(target.serverKey)); err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", addr, err))
+			continue
+		}
+		target.addr = addr
+		return target, nil
+	}
+	return link{}, fmt.Errorf("no direct address in the link reaches the server it names: %s", strings.Join(tried, "; "))
+}
+
 func run(rawLink string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	target, err := parseLink(rawLink)
+	parsed, err := parseLink(rawLink)
+	if err != nil {
+		return err
+	}
+	target, err := reach(parsed)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("\nserver %s, key %s\n", target.addr, base64.StdEncoding.EncodeToString(target.serverKey))
+	if target.onion {
+		// Named, never printed: the address is in the link already, and this
+		// program has no Tor to try it with.
+		fmt.Println("the link also names an onion service - not tried here, there is no Tor in this program")
+	}
 
 	step(1, "The owner claims the server")
 	owner := newDevice()
@@ -161,15 +191,21 @@ func addDevice(ctx context.Context, target link, owner *conn, ownerID string) (d
 	if err != nil {
 		return device{}, err
 	}
-	if _, err := server.ParsePairingLink(fmt.Sprint(invite["link"])); err != nil {
+	inviteLink, err := server.ParsePairingLink(fmt.Sprint(invite["link"]))
+	if err != nil {
 		return device{}, fmt.Errorf("the invite link does not read back: %w", err)
 	}
-	// Pairing through the onion service waits for 045, so no invite may say
-	// it does.
-	if invite["onion"] != false {
-		return device{}, fmt.Errorf("the invite says onion=%v, want false", invite["onion"])
+	// The two flags say what the link carries (045): an onion address, a
+	// public one. Both are always there, and the onion one must match the link.
+	onion, okOnion := invite["onion"].(bool)
+	public, okPublic := invite["public"].(bool)
+	if !okOnion || !okPublic {
+		return device{}, fmt.Errorf("the invite reply lacks its onion/public flags: %v", invite)
 	}
-	ok("device invite issued (10 minutes), a version-3 link")
+	if onion != (inviteLink.Onion != nil) {
+		return device{}, fmt.Errorf("the invite says onion=%v, and its link says otherwise", onion)
+	}
+	ok("device invite issued (10 minutes), a version-3 link: onion=%v public=%v", onion, public)
 
 	dev := newDevice()
 	c, err := dial(ctx, target, dev)
@@ -231,8 +267,13 @@ func talk(desktop, phone *conn, ownerID string) error {
 type data = map[string]any
 
 type link struct {
-	// addr is the first direct address of the link - where a device at home
-	// starts.
+	// addrs are the link's direct addresses in its order: the public address
+	// first when the link carries one, then the direct one (045).
+	addrs []string
+	// onion says the link names an onion service as well.
+	onion bool
+	// addr is the address this run talks to: the first of addrs that proved
+	// the key, or the one -check was given.
 	addr string
 	// serverKey is the machine's Ed25519 key: the only answer to the channel
 	// check this smoke run accepts.
@@ -248,9 +289,9 @@ func parseLink(raw string) (link, error) {
 		return link{}, err
 	}
 	if len(parsed.Direct) == 0 {
-		return link{}, errors.New("the link names no direct address, and pairing works only at home")
+		return link{}, errors.New("the link names no direct address, and this program has no Tor to try the onion one with")
 	}
-	return link{addr: parsed.Direct[0], serverKey: parsed.ServerKey, token: parsed.Token}, nil
+	return link{addrs: parsed.Direct, onion: parsed.Onion != nil, serverKey: parsed.ServerKey, token: parsed.Token}, nil
 }
 
 type conn struct {

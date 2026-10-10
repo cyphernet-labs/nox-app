@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,7 +10,6 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -106,7 +104,7 @@ void main() {
       factory = FakeSocketFactory();
       client = NoxSocketClient(factory, sync);
       starter = MockLiveSessionStarter();
-      handshake = LiveIdentityHandshake(client, starter, getIt<AccessKeyRepository>());
+      handshake = LiveIdentityHandshake(client, starter);
     });
 
     tearDown(() async {
@@ -251,7 +249,7 @@ void main() {
       expect(settled!.created, isTrue);
     });
 
-    test('pairing carries the link token and this device\'s onion access key, and no device key (phase 044)', () async {
+    test('pairing carries the link token - no device key (phase 044) and no access key (phase 045)', () async {
       when(starter.restart()).thenAnswer((_) async {
         await client.stop();
         await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
@@ -262,10 +260,8 @@ void main() {
       await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
 
       final sent = factory.latest.commandNamed('pair')!['data'] as Map<String, dynamic>;
-      final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
       expect(sent['token'], PairingLink.parse(kTestLink).token);
-      expect(sent['access_key'], own.publicBase64);
-      expect(sent['access_key'], isNot(contains(base64Encode(own.privateKey))), reason: 'only the public half travels');
+      expect(sent.containsKey('access_key'), isFalse, reason: 'the onion address opens for no key');
       expect(sent.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection');
     });
   });

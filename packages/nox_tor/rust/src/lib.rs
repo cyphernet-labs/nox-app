@@ -3,9 +3,12 @@
 //! `nox_tor_*`) the channel takes to the onion service.
 //!
 //! The contracts are `specs/044-secure-channel/contracts/ffi-channel.md` and
-//! `specs/040-tor-app/contracts/ffi.md`. No function blocks and none lets a
-//! panic cross into the app: each body runs under `catch_unwind`, and a panic
-//! comes back as the INTERNAL code of its contract.
+//! `specs/040-tor-app/contracts/ffi.md`, less what
+//! `specs/045-tor-service-addresses/contracts/ffi-tor.md` takes out: the
+//! client holds no keys, and an onion channel goes by the address alone. No
+//! function blocks and none lets a panic cross into the app: each body runs
+//! under `catch_unwind`, and a panic comes back as the INTERNAL code of its
+//! contract.
 
 pub mod channel;
 pub mod engine;
@@ -59,30 +62,6 @@ pub extern "C" fn nox_tor_stop() {
         engine::stop();
         0
     });
-}
-
-/// # Safety
-/// `onion_host` is NUL-terminated; `client_key32` points at 32 bytes.
-#[no_mangle]
-pub unsafe extern "C" fn nox_tor_set_target(onion_host: *const c_char, port: u16, client_key32: *const u8) -> i32 {
-    guarded(|| {
-        let Some(host) = read_str(onion_host) else {
-            return error::RET_INVALID_ARGUMENT;
-        };
-        if client_key32.is_null() || !host.ends_with(".onion") {
-            return error::RET_INVALID_ARGUMENT;
-        }
-        // Straight from the caller's bytes into a heap buffer that wipes
-        // itself: no copy of the key is left on this stack.
-        let mut key = Box::new(Zeroizing::new([0u8; 32]));
-        key.copy_from_slice(std::slice::from_raw_parts(client_key32, 32));
-        engine::set_target(host, port, key)
-    })
-}
-
-#[no_mangle]
-pub extern "C" fn nox_tor_clear_target() -> i32 {
-    guarded(engine::clear_target)
 }
 
 #[no_mangle]
@@ -174,7 +153,7 @@ pub unsafe extern "C" fn nox_chan_open(
             _ => return invalid,
         };
         // Straight from the caller's bytes into a heap buffer that wipes
-        // itself, as the client key: no copy of the seed is left on this stack.
+        // itself: no copy of the seed is left on this stack.
         let mut seed = Box::new(Zeroizing::new([0u8; 32]));
         seed.copy_from_slice(std::slice::from_raw_parts(device_seed32, 32));
         // No real seed is all zero, and ec25519 would panic on one.
@@ -291,19 +270,6 @@ mod tests {
     }
 
     #[test]
-    fn set_target_rejects_what_is_not_an_onion_service_or_a_key() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        let key = [1u8; 32];
-        let host = CString::new("example.com").unwrap();
-        assert_eq!(unsafe { nox_tor_set_target(host.as_ptr(), 443, key.as_ptr()) }, error::RET_INVALID_ARGUMENT);
-        let onion = CString::new("25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion").unwrap();
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, std::ptr::null()) }, error::RET_INVALID_ARGUMENT);
-        // A well-formed target before start is refused, not silently kept.
-        engine::reset_for_test();
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, error::RET_NOT_STARTED);
-    }
-
-    #[test]
     fn onion_from_pubkey_writes_a_terminated_string_and_checks_the_room() {
         let mut out = [0 as c_char; 63];
         let key = [0u8; 32];
@@ -374,95 +340,6 @@ mod tests {
         assert!(state_dir.exists());
         engine::reset_for_test();
         let _ = std::fs::remove_dir_all(dir);
-        let _ = std::fs::remove_file(blocker);
-    }
-
-    #[test]
-    fn a_rebuild_keeps_the_target_the_app_set() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("carried");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        let key = [1u8; 32];
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
-        // Rebuilt - and failing again, which is beside the point here.
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(engine::target_host_for_test().as_deref(), Some(ONION));
-        engine::reset_for_test();
-        let _ = std::fs::remove_file(blocker);
-    }
-
-    /// The key goes into Arti's keystore and nowhere else: no listener, so no
-    /// port in the status, and nothing on the loopback for another app to dial.
-    #[test]
-    fn a_target_opens_no_port() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("no_port");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, [1u8; 32].as_ptr()) }, 0);
-        assert_eq!(status_now().port, 0);
-        assert_eq!(nox_tor_clear_target(), 0);
-        assert_eq!(status_now().port, 0);
-        engine::reset_for_test();
-        let _ = std::fs::remove_file(blocker);
-    }
-
-    /// The app starts its clock on a refusal when the error ENTERS it. One left
-    /// over from the previous key would never enter again.
-    #[test]
-    fn a_new_target_drops_a_key_refusal_and_nothing_else() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("refusal");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        let key = [1u8; 32];
-        for refusal in [error::WRONG_CLIENT_AUTH, error::MISSING_CLIENT_AUTH] {
-            engine::set_error_for_test(refusal);
-            assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
-            assert_eq!(status_now().error, error::NONE, "refusal {refusal} outlived the target change");
-        }
-        engine::set_error_for_test(error::TIMEOUT);
-        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
-        assert_eq!(status_now().error, error::TIMEOUT, "only a refusal of the key is about the key");
-        engine::reset_for_test();
-        let _ = std::fs::remove_file(blocker);
-    }
-
-    /// The group a hedge was won in stays for the service and key it won for,
-    /// and goes with them.
-    #[test]
-    fn the_connect_group_goes_with_its_target() {
-        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        engine::reset_for_test();
-        let (blocker, bad) = unusable_dir("group");
-        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
-        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
-        let onion = CString::new(ONION).unwrap();
-        let other = CString::new(onion::onion_from_pubkey(&[0u8; 32])).unwrap();
-        let (key, other_key) = ([1u8; 32], [2u8; 32]);
-        let won = arti_client::IsolationToken::new();
-        let set = |host: &CString, key: &[u8; 32]| unsafe { nox_tor_set_target(host.as_ptr(), 443, key.as_ptr()) };
-
-        assert_eq!(set(&onion, &key), 0);
-        engine::connect_group_won_for_test(won);
-        assert_eq!(set(&onion, &key), 0);
-        assert_eq!(engine::connect_group_for_test(), Some(won), "the same target again keeps it");
-        assert_eq!(set(&onion, &other_key), 0);
-        assert_eq!(engine::connect_group_for_test(), None, "another key forgets it");
-        engine::connect_group_won_for_test(won);
-        assert_eq!(set(&other, &other_key), 0);
-        assert_eq!(engine::connect_group_for_test(), None, "another service forgets it");
-        engine::connect_group_won_for_test(won);
-        assert_eq!(nox_tor_clear_target(), 0);
-        assert_eq!(engine::connect_group_for_test(), None, "clearing the target forgets it");
-        engine::reset_for_test();
         let _ = std::fs::remove_file(blocker);
     }
 
@@ -607,5 +484,19 @@ mod tests {
             })
             .expect("arti-client in Cargo.lock");
         assert_eq!(VERSION.to_str().unwrap(), format!("arti-client {pinned}"));
+    }
+
+    /// The client solves an onion service's proof of work (045, FR-018). Gone,
+    /// the feature would not show at run time - tor-hsclient builds a stub that
+    /// never offers a solution - so the manifest itself is checked.
+    #[test]
+    fn the_tor_client_is_built_to_solve_proof_of_work() {
+        let manifest = include_str!("../Cargo.toml");
+        let features = manifest
+            .split_once("arti-client = {")
+            .and_then(|(_, rest)| rest.split_once("] }"))
+            .map(|(features, _)| features)
+            .expect("arti-client in Cargo.toml");
+        assert!(features.lines().any(|line| line.trim() == r#""hs-pow-full","#), "{features}");
     }
 }

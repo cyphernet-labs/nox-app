@@ -2,16 +2,19 @@ package server
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
-	"fmt"
 	"html/template"
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
-	"nox.app/client-backend/internal/tor"
+	"nox.app/client-backend/internal/store"
 )
+
+// maxAddressFormBytes bounds the body of POST /addresses: a token, a kind and
+// one address fit many times over.
+const maxAddressFormBytes = 4096
 
 // statusPage is the service page: two states, one template, and exactly one
 // script - see copyScript for what it is allowed to be and why.
@@ -20,10 +23,14 @@ import (
 // and changes freely; the machine-readable answer is GET /health beside it and
 // stays exactly what it was. This is said out loud in contract §1 for one
 // reason: to stop anybody starting to parse it.
+//
+// Neither state refreshes itself any more (045). Both carry the address forms,
+// and a page that reloads every few seconds wipes an address halfway through
+// being pasted; the numbers on the claimed page are as current as the moment
+// it was opened, and a reload brings them up to date.
 var statusPage = template.Must(template.New("status").Parse(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-{{if .Refresh}}<meta http-equiv="refresh" content="10">{{end}}
 <title>NOX server</title>
 <style>
 :root { color-scheme: light dark; }
@@ -34,10 +41,10 @@ p.lead { margin: 0 0 2rem; opacity: .75; }
 code.link { display: block; margin: 1.25rem 0 0; padding: .75rem 1rem; border-radius: .5rem;
   background: rgba(127,127,127,.14); word-break: break-all; font-size: .95rem; }
 .copyrow { display: flex; align-items: center; gap: .75rem; margin: .6rem 0 0; }
-button.copy { font: inherit; font-size: .9rem; padding: .4rem .9rem; border-radius: .4rem;
+button.copy, button.set { font: inherit; font-size: .9rem; padding: .4rem .9rem; border-radius: .4rem;
   border: 1px solid rgba(127,127,127,.4); background: rgba(127,127,127,.1);
   color: inherit; cursor: pointer; }
-button.copy:hover { background: rgba(127,127,127,.22); }
+button.copy:hover, button.set:hover { background: rgba(127,127,127,.22); }
 .copied { font-size: .85rem; opacity: .75; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1.5rem; margin: 0; }
 dt { opacity: .7; }
@@ -46,7 +53,15 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   background: rgba(200,120,0,.16); }
 footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
 h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
-p.torline { margin: 1.5rem 0 0; font-size: .9rem; opacity: .75; }
+p.found { margin: 0; opacity: .7; }
+ul.found { margin: .3rem 0 0; padding-left: 1.25rem; }
+form.addr { margin: 1.25rem 0 0; }
+form.addr label { display: block; margin: 0 0 .35rem; opacity: .7; }
+.addrrow { display: flex; gap: .6rem; }
+.addrrow input { flex: 1; min-width: 0; font: inherit; font-size: .95rem; padding: .4rem .7rem;
+  border-radius: .4rem; border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }
+p.note { margin: .6rem 0 0; padding: .5rem .8rem; border-radius: .4rem; font-size: .9rem; }
+p.saved { background: rgba(0,150,90,.16); }
 </style></head><body>
 
 {{if eq .State 0}}
@@ -94,13 +109,30 @@ first.</p>{{end}}
   <dt>Chats</dt><dd>{{.Chats}}</dd>
   <dt>Messages</dt><dd>{{.Messages}}</dd>
 </dl>
-<h2>Tor</h2>
-<p class="{{if .Tor.Warn}}warn{{else}}lead{{end}}">{{.Tor.Line}}</p>
-{{if .Tor.Rows}}<dl>
-{{range .Tor.Rows}}  <dt>{{.Label}}</dt><dd>{{.Value}}</dd>
-{{end}}</dl>{{end}}
-{{else}}
-<p class="torline">Tor: {{.Tor.Line}}{{if .Tor.Reason}} ({{.Tor.Reason}}){{end}}</p>
+{{end}}
+
+<h2>Addresses</h2>
+<p class="found">Found on this machine's networks</p>
+{{if .Found}}<ul class="found">{{range .Found}}<li><code>{{.}}</code></li>{{end}}</ul>{{else}}<p>&mdash;</p>{{end}}
+{{range .Forms}}
+<form class="addr" method="post" action="/addresses">
+<label for="addr-{{.Kind}}">{{.Label}}</label>
+<div class="addrrow">
+<input id="addr-{{.Kind}}" name="value" value="{{.Value}}" autocomplete="off" autocapitalize="off" spellcheck="false">
+<button type="submit" class="set">Set</button>
+</div>
+<input type="hidden" name="kind" value="{{.Kind}}">
+<input type="hidden" name="token" value="{{$.FormToken}}">
+{{- with .Saved}}
+<p class="note saved" role="status">{{.}}</p>
+{{- end}}
+{{- with .Invalid}}
+<p class="note warn" role="alert">{{.}}</p>
+{{- end}}
+{{- with .Warning}}
+<p class="note warn">{{.}}</p>
+{{- end}}
+</form>
 {{end}}
 
 <footer>This page is only reachable from this machine. It is for people, not for programs &mdash;
@@ -170,8 +202,11 @@ const copyScript = `(function () {
 //
 // A page with no link carries no script, and then says so - `script-src` is
 // absent entirely and `default-src 'none'` forbids the lot.
+//
+// `form-action 'self'` is spelled out because `default-src` does not cover it:
+// the address forms may post here and nowhere else.
 func contentSecurityPolicy(withScript bool) string {
-	policy := "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'"
+	policy := "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; form-action 'self'"
 	if !withScript {
 		return policy
 	}
@@ -182,10 +217,9 @@ func contentSecurityPolicy(withScript bool) string {
 // statusView is what the template sees. A flat struct on purpose: the template
 // must not be able to reach anything that was not deliberately handed to it.
 type statusView struct {
-	State   int
-	Refresh bool
-	QR      template.HTML
-	Link    string
+	State int
+	QR    template.HTML
+	Link  string
 	// CopyScript is the script below the page, typed so the escaper leaves it
 	// alone. Emitted only with a link, because that is the only thing it acts on.
 	CopyScript template.JS
@@ -199,96 +233,75 @@ type statusView struct {
 	Messages   int64
 	Owned      bool
 	HasPerson  bool
-	Tor        torView
+	// Found are the addresses the machine finds on its networks; Forms are the
+	// two it stores, each with its Set; FormToken is what both forms carry.
+	Found     []string
+	Forms     []addressForm
+	FormToken string
 }
 
-// torView is the Tor part of the page (039): words only, already chosen, so
-// nothing in the template can reach the onion address or a key (FR-030).
-type torView struct {
-	// Line is the one-line state, shown in both page states.
-	Line string
-	// Warn marks a state the person should act on.
-	Warn bool
-	// Reason is tor's own last error for the unclaimed page's single line, set
-	// only where the line does not already say why - a tor that stopped or is
-	// still connecting. The claimed page shows the same under "Last error".
-	Reason string
-	// Rows are the details of the claimed page.
-	Rows []torRow
+// addressForm is one stored address on the page: its field, and what the page
+// has to say about it - the outcome of the last Set, and a start parameter
+// that was not applied.
+type addressForm struct {
+	Kind    string
+	Label   string
+	Value   string
+	Saved   string
+	Invalid string
+	Warning string
 }
 
-type torRow struct {
-	Label, Value string
+// addressForms words the stored addresses for a person (contract
+// service-page-addresses). saved and invalid are the kinds the redirect after a
+// Set named; anything else in them is ignored. The values themselves never
+// travel in that redirect, so a URL in a browser's history names no address.
+func addressForms(stored store.Addresses, warnings []addressWarning, saved, invalid string) []addressForm {
+	forms := make([]addressForm, 0, 2)
+	for _, kind := range []store.AddressKind{store.AddressPublic, store.AddressOnion} {
+		f := addressForm{Kind: string(kind), Value: stored.Value(kind)}
+		f.Label = "Public address"
+		if kind == store.AddressOnion {
+			f.Label = "Onion address"
+		}
+		if saved == string(kind) {
+			// Read back rather than carried in the redirect: an empty field is
+			// a deletion, and "carry it" would be the wrong thing to say.
+			f.Saved = "Saved. New links carry it, and connected devices get it now."
+			if f.Value == "" {
+				f.Saved = "Removed. New links no longer carry it, and connected devices learn it now."
+			}
+		}
+		if invalid == string(kind) {
+			f.Invalid = "That isn't a valid address. Use host:port, like nox.example.org:8443. Nothing was changed."
+			if kind == store.AddressOnion {
+				f.Invalid = "That isn't a valid onion address. Nothing was changed."
+			}
+		}
+		for _, w := range warnings {
+			if w.Kind == kind {
+				f.Warning = parameterWarning(kind, f.Value)
+			}
+		}
+		forms = append(forms, f)
+	}
+	return forms
 }
 
-// buildTorView words the supervisor's snapshot for a person. The English is
-// the page's microcopy (data-model, "Строки страницы").
-func buildTorView(st tor.Status, accessDevices int, devices int64) torView {
-	if !st.Enabled {
-		return torView{Line: "Tor is turned off (-tor=false)"}
+// parameterWarning says a start parameter was not applied and what the server
+// runs with instead - the address it holds NOW, so an address set on this page
+// since the start is what the warning names.
+func parameterWarning(kind store.AddressKind, current string) string {
+	if kind == store.AddressOnion {
+		if current == "" {
+			current = "no onion address"
+		}
+		return paramFlag(kind) + " is not a valid onion address. The server keeps " + current + "."
 	}
-	v := torView{}
-	switch st.Phase {
-	case tor.PhaseBinaryMissing:
-		v.Line, v.Warn = "tor not found — install tor 0.4.9 or newer", true
-	case tor.PhaseBinaryTooOld:
-		// A distribution's own package is the usual way to end up here: LTS
-		// releases still ship series the network no longer accepts.
-		v.Line, v.Warn = "tor "+st.Version+" is too old — install 0.4.9 or newer from the Tor Project's repository", true
-	case tor.PhaseBinaryUnusable:
-		// Found, and would not even print its version: on macOS that is an
-		// unsigned tor, killed at launch. The reason says which.
-		v.Line, v.Warn = "tor was found but did not run", true
-		v.Reason = tor.Scrub(st.LastError)
-	case tor.PhaseUnavailable:
-		v.Line, v.Warn = "Tor could not be set up on this server", true
-		v.Reason = tor.Scrub(st.LastError)
-	case tor.PhaseRunning:
-		v.Line = "Connected to the Tor network"
-	case tor.PhaseWaitingRetry:
-		v.Line, v.Warn = "tor stopped — retrying in "+st.RetryIn.Round(time.Second).String(), true
-		v.Reason = tor.Scrub(st.LastError)
-	default:
-		v.Line = fmt.Sprintf("Connecting to the Tor network (%d%%)", st.Bootstrap)
-		v.Reason = tor.Scrub(st.LastError)
+	if current == "" {
+		current = "no public address"
 	}
-
-	verdict := map[tor.Verdict]string{
-		tor.VerdictRecommended: "recommended by the network",
-		tor.VerdictOutdated:    "outdated — update tor",
-		tor.VerdictObsolete:    "no longer accepted by the network — update tor",
-	}[st.Verdict]
-	if verdict == "" {
-		verdict = "not known yet"
-	}
-	if st.Verdict == tor.VerdictOutdated || st.Verdict == tor.VerdictObsolete {
-		v.Warn = true
-	}
-	publication := map[tor.Publication]string{
-		tor.PublicationPublished:  "Published",
-		tor.PublicationPublishing: "Publishing…",
-		tor.PublicationNoKeys:     "Not published: no device has access yet",
-		tor.PublicationTorDown:    "Not published: tor is not running",
-		// Taken down on purpose: a list nobody can read may still name a
-		// revoked device.
-		tor.PublicationKeysUnreadable: "Not published: the access keys could not be read",
-	}[st.Publication]
-	version := st.Version
-	if version == "" {
-		version = "—"
-	}
-	v.Rows = []torRow{
-		{"Version", version},
-		{"Network verdict", verdict},
-		{"Onion address", publication},
-		{"Devices with access from anywhere", fmt.Sprintf("%d of %d", accessDevices, devices)},
-	}
-	if st.LastError != "" {
-		// Scrubbed by the supervisor already; once more here, because this is
-		// the last door before a page.
-		v.Rows = append(v.Rows, torRow{"Last error", tor.Scrub(st.LastError)})
-	}
-	return v
+	return paramFlag(kind) + " is not a valid address. The server keeps " + current + "."
 }
 
 // handleStatusPage serves the service page.
@@ -313,11 +326,9 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	query := r.URL.Query()
 	view := statusView{
-		State: int(status.State),
-		// Only the claimed page refreshes. Redrawing a QR under the camera
-		// reading it breaks the one scenario this page exists for.
-		Refresh:    status.State != stateNeedsClaim,
+		State:      int(status.State),
 		Link:       status.Link,
 		CopyScript: template.JS(copyScript), //nolint:gosec // our own constant, admitted by its hash
 		Version:    status.Version,
@@ -330,10 +341,12 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Messages:   status.Counts.Messages,
 		Owned:      status.Owned,
 		HasPerson:  status.HasPerson,
-		Tor:        buildTorView(status.Tor, status.AccessDevices, status.Counts.Devices),
+		Found:      status.Found,
+		Forms:      addressForms(status.Stored, s.addrWarnings, query.Get("saved"), query.Get("invalid")),
+		FormToken:  s.formToken,
 	}
 	// The code is drawn only when something other than this machine could dial
-	// the address in it. The LINK is shown either way: pasting it into the app
+	// an address in it. The LINK is shown either way: pasting it into the app
 	// on this machine is how a loopback-bound server is claimed.
 	if status.Link != "" && status.Scannable {
 		svg, err := qrSVG(status.Link, 6)
@@ -346,13 +359,8 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	pageHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// The page carries a claim link. Nothing may keep a copy of it, embed it in
-	// another page, or guess at its type.
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(view.Link != ""))
 	var out strings.Builder
 	if err := statusPage.Execute(&out, view); err != nil {
@@ -361,6 +369,92 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write([]byte(out.String()))
+}
+
+// pageHeaders are the headers every answer of the page carries. The page holds
+// a claim link and the form token: nothing may keep a copy of it, embed it in
+// another page, or guess at its type.
+//
+// The referrer policy is same-origin and NOT no-referrer, and that is
+// load-bearing for the forms. Under no-referrer a browser sends `Origin: null`
+// on a form's POST (Fetch, "append a request Origin header"), and the Origin
+// check below would refuse every honest Set. same-origin hands a referrer to
+// this page alone - which has nothing to learn from it - and to no other site.
+func pageHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "same-origin")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
+// handleSetAddress is the page's Set (045, FR-004): it writes one stored
+// address, and the address reaches new links at once and greeted devices
+// within moments.
+//
+// Only the page's own form may write, and three checks decide that, in this
+// order, each answered 403 without a word about the others:
+//
+//   - Host names this machine - the same check as the page, against a site
+//     rebound to 127.0.0.1 by DNS;
+//   - Origin is present and is this page's own - a form on another site,
+//     opened in a browser on this machine, posts here with ITS origin, and the
+//     loopback socket cannot tell;
+//   - the form token matches this process's, compared in constant time - the
+//     one thing a page from elsewhere cannot read off this one.
+//
+// Only then is the form believed: an unknown kind is a 400, an address that
+// does not check out sends the person back with nothing written, and an empty
+// value deletes. The redirect names the kind and never the value.
+func (s *Server) handleSetAddress(w http.ResponseWriter, r *http.Request) {
+	pageHeaders(w)
+	if !localHost(r.Host) {
+		http.Error(w, "this page is only served to this machine", http.StatusForbidden)
+		return
+	}
+	// Compared without regard to case, like the host names in it; a browser
+	// writes both in lower case anyway.
+	if origin := r.Header.Get("Origin"); origin == "" || !strings.EqualFold(origin, "http://"+r.Host) {
+		http.Error(w, "this form is only accepted from this page", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAddressFormBytes)
+	// The body only: a token in the URL would be one a link can carry.
+	// A body that cannot be read has no token in it.
+	if err := r.ParseForm(); err != nil || !s.formTokenMatches(r.PostForm.Get("token")) {
+		http.Error(w, "this form is only accepted from this page", http.StatusForbidden)
+		return
+	}
+	kind := store.AddressKind(r.PostForm.Get("kind"))
+	if kind != store.AddressPublic && kind != store.AddressOnion {
+		http.Error(w, "unknown address kind", http.StatusBadRequest)
+		return
+	}
+	value, err := normalizeAddress(kind, strings.TrimSpace(r.PostForm.Get("value")))
+	if err != nil {
+		http.Redirect(w, r, "/?invalid="+string(kind), http.StatusSeeOther)
+		return
+	}
+	if err := s.store.SetAddress(r.Context(), kind, value); err != nil {
+		s.logger.Error("set address", "kind", kind, "err", err)
+		http.Error(w, "could not save the address", http.StatusInternalServerError)
+		return
+	}
+	// The kind and whether it was cleared - never the value: an onion address
+	// does not reach the log (FR-022), and the public one has no reason to.
+	s.logger.Info("address set on the service page", "kind", kind, "cleared", value == "")
+	// The watcher reads the new address and tells every greeted connection.
+	s.pokeAddresses()
+	http.Redirect(w, r, "/?saved="+string(kind), http.StatusSeeOther)
+}
+
+// formTokenMatches compares a posted token with this process's in constant
+// time. An empty one never matches, not even an empty expected one: a Server
+// built without a token must refuse every form rather than accept every one.
+func (s *Server) formTokenMatches(got string) bool {
+	if s.formToken == "" || got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.formToken)) == 1
 }
 
 // localHost reports whether a Host header names this machine.
@@ -387,7 +481,7 @@ func localHost(host string) bool {
 }
 
 // StatusHandler is the service page's own mux, served on its own listener,
-// and the home of /health since 044.
+// and the home of /health since 044 and of the address forms since 045.
 //
 // /health moved here because the main port answers nothing before the channel
 // check, and a service manager or a tunnel probing liveness proves no device
@@ -397,5 +491,6 @@ func (s *Server) StatusHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /", s.handleStatusPage)
+	mux.HandleFunc("POST /addresses", s.handleSetAddress)
 	return mux
 }

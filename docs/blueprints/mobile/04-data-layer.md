@@ -54,6 +54,7 @@ lib/data/
     outbox_service.dart          # слив очереди исходящих — единственный отправитель (027)
     retry_ladder.dart            # одна лестница пауз и предел отказов для всего, что повторяется само (043)
     attachment_download_service_impl.dart  # скачивание вложений с продолжением и повторами (043)
+    connection/connection_path_selector.dart  # выбор пути перед каждой попыткой и причина неудачи раунда (040, 045), см. 14 §6
   remote/
     api_client.dart              # тонкая Dio-обёртка байтов вложений, env: [dev], + initBase(address:) (см. §7а)
     interceptor/auth_interceptor.dart   # Bearer-заголовок из шва auth_id_token; ошибки, 401 включительно, только пробрасывает (019/S5)
@@ -68,6 +69,7 @@ lib/data/
     socket/nox_socket_client.dart        # клиент конверта: корреляция, фазы, реконнект, keepalive (026)
     socket/socket_channel_factory.dart   # узкий порт сокета + IOWebSocketChannel(pingInterval: 25s)
     socket/server_frame.dart
+    socket/server_addresses_parser.dart  # объект addresses приветствия и server.addresses: {direct, public?, onion?} (040, 045)
     api/item/get_items_api.dart  # mock-генератор верификационного среза (FR-013)
     # --- TARGET-форма request-builder-обвязки REST (ещё не построена) ---
     # api/base/base_api_repository.dart
@@ -76,6 +78,8 @@ lib/data/
     # request_builder/item/get_items_api_request_builder.dart
   repository/
     app_config/app_config_repository_impl.dart
+    connection/server_addresses_repository_impl.dart  # настройки связи в защищённом хранилище (§6в)
+    connection/connection_storage.dart  # имена записей настроек связи и устаревших ключей; удаление по имени (§6в)
     item/item_repository_impl.dart
     log_repository_impl.dart
 ```
@@ -428,7 +432,7 @@ mixin BaseRepositoryHelper {
 
 ## 6. Sembast DAO (реактивный)
 
-> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты сессии: технический идентификатор `session.identifier`, семя ключа устройства `session.device_secret`, ключ сервера из ссылки спаривания `session.server_key`; ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя нет** — соединение аутентифицирует канал, токенов контракт v0 не несёт). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
+> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты сессии: технический идентификатор `session.identifier`, семя ключа устройства `session.device_secret`, ключ сервера из ссылки спаривания `session.server_key`, настройки связи `session.server_addresses` (§6в); ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя нет** — соединение аутентифицирует канал, токенов контракт v0 не несёт). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
 
 DAO используют `StoreRef<String, Map<String, dynamic>>`, отдают реактивные потоки через `onSnapshots()` / `onSnapshot()` и поддерживают атомарные записи через `db.transaction()`. **Типизированного `DaoException` нет** — при сбое хранилища исключения самого Sembast **пробрасываются наружу** (DAO их не оборачивает в свой тип), а ловит их catch-all ветка `execute()` репозитория → `RepositoryException.unknown`. Cache-miss / not-found — это **не** забота DAO: DAO просто отдаёт `null` / пустой список, а проверку отсутствия и `RepositoryException.notFound` решает callback репозитория (полная форма, §8). Битые записи **пропускаются** при декодировании (`_tryDecode` → `null`), а не убивают поток.
 
@@ -615,6 +619,35 @@ Future<void> mutate({
 **У каждого ждущего чата своя пауза**, по той же лестнице, что у сообщений (`min(30s, 1s × 2^(attempts − 1))` ±20%), и проход из-за неё **не останавливается**: остановка всей очереди заставила бы сообщения других чатов ждать чужой паузы. Попытки — на строке (лестница переживает перезапуск), сама пауза — в памяти: после перезапуска первая попытка идёт сразу. Новый текущий канал снимает все паузы. Отказов **сервера** — не больше десяти, затем `failed`; обрыв канала отказом не считается, как и у сообщений. Пауза чата, который перестал ждать (сервер прислал его событие, его переименовали), снимается, чтобы не будить очередь впустую.
 
 Событие сервера `chat.created` / `chat.updated` с этим id снимает состояние, где бы оно ни пришло первым: `SyncService._applyChat` пишет строку из провода, а в ней состояния создания нет. Окно сообщений и файлы такого чата у сервера не запрашиваются (`MessageRepositoryImpl` проверяет строку чата перед `_fetchWindow`) — ответ мог бы быть только `not_found`. Выход и смена мира стирают ждущие чаты вместе с остальными строками. В логах — только id и коды, имена чатов — никогда.
+
+### 6в. Настройки связи — одна запись в защищённом хранилище (040, 045)
+
+Где сервер можно найти и как человек хочет до него ходить — не Sembast, а одна JSON-запись `session.server_addresses` в `flutter_secure_storage`: onion-адрес позволяет спросить сеть Tor, в сети ли сервер. Доменная модель — `ServerAddresses` (`lib/domain/model/connection/server_addresses.dart`), репозиторий — `ServerAddressesRepository` / `ServerAddressesRepositoryImpl` (`repository/connection/`, одна реализация во всех трёх окружениях).
+
+| Поле модели | Ключ JSON | Что |
+|---|---|---|
+| `direct` | `direct` | адреса, которые сервер нашёл в своих локальных сетях, в его порядке; пробуются, не показываются |
+| `public` | `public` | публичный `host:port`, если он задан на сервере |
+| `onion` | `onion` | `<56>.onion:443`, если сервер его назвал |
+| `manualAddress` | `manual_address` | адрес, вписанный человеком; нет — поле не правили |
+| `manualOnion` | `manual_onion` | onion-адрес, вписанный человеком; пустая строка — поле очищено, onion-адреса нет |
+| `useTor` | `use_tor` | `Use Tor`; по умолчанию `false`, пишется только `true` |
+| `lastGood` | `last_good` | последний прямой адрес, где ответил этот сервер |
+| `viaTorLast` | `via_tor` | последнее приветствие пришло через Tor; пишется только `true` |
+
+Запись, которую эта сборка не может прочесть, читается как пустая: следующее приветствие пишет годную.
+
+**Два источника и одно правило.** Слово сервера — `direct`, `public`, `onion`; правка человека — `manualAddress`, `manualOnion`. Сервер — источник истины о своих адресах: `saveFromServer({direct, public, onion})` заменяет правку того поля, значение которого сервер назвал, а поле, которого сервер не назвал, правку оставляет и прежнее значение сервера стирает. `lastGood` и `useTor` он не трогает. Остальные записи:
+
+- `saveFromLink({direct, onion, manualAddress, manualOnion, useTor})` — вход по ссылке: запись заводится заново (это новый сервер), адреса ссылки — как слово сервера, изменённые на экране подключения поля — как правка, `useTor` — как отмечено;
+- `saveManual({manualAddress, manualOnion})` — раздел «Связь»: `null` — поле показывает слово сервера, пустой `manualOnion` — onion-адреса нет;
+- `setUseTor`, `recordLastGood` (заодно снимает `viaTorLast`), `recordGreetedViaTor`;
+- `watch()` — сохранённое при подписке, затем каждая записанная перемена: подписка ставится до первого чтения, так что запись между ними не теряется (в худшем случае одно значение приходит дважды);
+- `clear()` — после всех записей, уже стоящих в очереди: стирание при выходе не обгоняет приветствие, записанное за миг до остановки канала.
+
+Записи — чтение-изменение-запись, поэтому идут **строго по одной** через общую очередь (`_writes`): приветствие и удачное прямое соединение иначе потеряли бы одну из двух; запись, которая ничего не меняет, не пишется. Действующие значения считает модель: поле «адрес сервера» — `fieldAddress(linkAddress)` (`manualAddress ?? public ?? linkAddress`, где `linkAddress` — `session.server_address`, первый прямой адрес ссылки), onion-адрес — `effectiveOnion` (`manualOnion ?? onion`), прямые кандидаты — `candidates(linkAddress)` (последний работавший, правка, публичный, найденные сервером, адрес ссылки — без повторов). Кто и когда пишет — [14-networking-and-auth.md](14-networking-and-auth.md) §6.4.
+
+**Имена записей — в одном месте**, `ConnectionStorage` (`repository/connection/connection_storage.dart`): удаление идёт по имени и с теми же параметрами, с какими запись была сделана, — иначе запись, сделанная с другими параметрами, переживает удаление молча. `ConnectionStorage.delete` стирает `session.server_addresses` (выход, неудачный вход, новый сервер — `SessionRepository.clear` / `discardSignIn` / `saveServer`). `ConnectionStorage.sweepLegacy` стирает то, что держали сборки фаз 040–044 и больше никто не читает, — ключ доступа к onion-сервису `session.access_key` (с параметрами `unlocked_this_device` на iOS и старой связки ключей на macOS) и отметку `session.access_key_registered`; его зовёт `SessionRepository.sweepLegacyKeys` при каждом запуске (`main.dart`).
 
 ---
 
@@ -1201,6 +1234,8 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 | `ItemRemoteDataSource` / `MockItemRemoteDataSource` | `remote/datasource/item_remote_data_source.dart`, `datasource/mock/...` | `@LazySingleton(as: ItemRemoteDataSource, env: [dev, prod, test])` |
 | `GetItemsApi` (mock-генератор, заморожен) | `remote/api/item/get_items_api.dart` | `@lazySingleton` |
 | `ItemRepositoryImpl` | `repository/item/item_repository_impl.dart` | `@LazySingleton(as: ItemRepository, env: [dev, prod, test])` |
+| `ServerAddressesRepositoryImpl` | `repository/connection/server_addresses_repository_impl.dart` | `@LazySingleton(as: ServerAddressesRepository, env: [dev, prod, test])` (инжектирует `FlutterSecureStorage`) |
+| `ConnectionStorage` | `repository/connection/connection_storage.dart` | без DI — статические имена записей и удаление |
 | `BaseApiRepository` (TARGET) | `remote/api/base/base_api_repository.dart` | абстрактный базовый (ещё нет в коде) |
 | `RequestBuilder` / `RequestBuilderHelper` (TARGET) | `remote/request_builder/base/...` | базовый / mixin (ещё нет в коде) |
 | `GetItemsApiRequestBuilder` (TARGET) | `remote/request_builder/item/get_items_api_request_builder.dart` | `@lazySingleton` (ещё нет в коде) |
@@ -1228,4 +1263,5 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] **Кэш-first — форма по умолчанию; carve-out «пагинированный список = network-only» ретайрен.** Список чатов и история сообщений — кэш-first (013): один seed в Sembast, дальше срезы/поиск/`PageMetadata` из DAO. Network-only (без DAO, без subject) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage`/`watchItems` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
 - [ ] **Очередь исходящих построена (027)**: store `outbox` (`local/chat/outbox_dao.dart`), где **ключ записи = `client_message_id`** контракта — повторная постановка физически не даёт дубля; `ordinal` назначается `max + 1` **внутри одной транзакции** с записью (сортировка по времени не годится); фильтрация и сортировка — в Dart по декодированным сущностям, не `Finder`'ом по camelCase-ключу (`field_rename: snake`); в `OutboxStatus` ровно `{pending, error}` — состояния `sending` на диске **нет**. `data/sync/outbox_service.dart` — **единственный отправитель**: проходы сериализованы цепочкой `Future _queue`, идут по `ordinal` по одной записи, запись удаляется **только после** персиста сообщения репозиторием; отказ классифицируется — `connection`/`rateLimited`/`internal`/`unknown`/нераспознанный повторяемы (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся у записи), прочие окончательны (`error`, проход идёт дальше). Экран очередь **проецирует**, а не хранит (`ChatThreadBloc.outgoing` из `watchQueue(chatId:)`).
 - [ ] **Чат создаётся на устройстве (041)**: `createChat` не ходит на сервер — id `c_` + 32 hex из `Random.secure()`, строка с `creation: pending`; очередь создаёт ждущие чаты раньше сообщений и **удерживает** сообщения чата, которого нет на сервере (без попытки и без ошибки); у каждого ждущего чата своя пауза, проход не останавливается; исходы `name_taken` → `nameTaken` (переименование на устройстве), окончательный отказ → `failed` (`retryCreation`), другой id → `moveChat` + `adoptServerChat`; окно и файлы ждущего чата у сервера не запрашиваются.
+- [ ] **Настройки связи (§6в)**: одна JSON-запись `session.server_addresses` в защищённом хранилище за `ServerAddressesRepository` (все три окружения); поля `direct`/`public`/`onion` (слово сервера), `manualAddress`/`manualOnion` (правка; пустой `manualOnion` — onion-адреса нет), `useTor` (по умолчанию `false`), `lastGood`, `viaTorLast`; названное сервером значение заменяет правку того же поля, неназванное — правку оставляет; записи строго по одной; `watch()` без потери записи между подпиской и чтением; имена и удаление — только через `ConnectionStorage`, устаревшие `session.access_key` и `session.access_key_registered` стирает `sweepLegacy` при каждом запуске.
 - [ ] `build_runner` перезапущен один раз в корне пакета после изменений аннотаций.

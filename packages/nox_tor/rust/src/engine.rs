@@ -1,27 +1,23 @@
-//! The one Tor client of the process, its runtime and its target.
+//! The one Tor client of the process and its runtime.
 //!
 //! Every C ABI call takes the engine lock for a moment and never waits on the
 //! network: the work runs on a tokio runtime this module owns, and its results
 //! land in the status snapshot the app polls. Onion channels (`channel`) run on
-//! that runtime too, through `onion_context`.
+//! that runtime too, through `onion_context`, and reach a service by its
+//! address alone: since 045 the client holds no keys, and nothing about a
+//! service is set up in it ahead of a connect.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
-use arti_client::config::TorClientConfigBuilder;
-use arti_client::{DormantMode, HsId, KeystoreSelector, TorClient};
+use arti_client::config::{BoolOrAuto, TorClientConfigBuilder};
+use arti_client::{DormantMode, TorClient, TorClientConfig};
 use futures::StreamExt;
-use subtle::ConstantTimeEq;
 use tokio::runtime::Runtime;
-use tor_config::ExplicitOrAuto;
-use tor_hscrypto::pk::HsClientDescEncSecretKey;
-use tor_keymgr::config::ArtiKeystoreKind;
-use tor_llcrypto::pk::curve25519;
 use tor_rtcompat::PreferredRuntime;
-use zeroize::Zeroizing;
 
-use crate::channel::target::{ConnectGroup, OnionContext};
+use crate::channel::target::{ConnectGroups, OnionContext};
 use crate::status::{classify, error, state, NoxTorStatus, StatusCell};
 
 /// First start of the client, from nothing, until it is ready for traffic.
@@ -29,35 +25,14 @@ const BOOTSTRAP_BUDGET: Duration = Duration::from_secs(90);
 
 pub type Client = TorClient<PreferredRuntime>;
 
-/// The client key of a target. Wiped when dropped, and boxed so that moving a
-/// `Target` moves a pointer rather than leaving copies of the key behind.
-pub type ClientKey = Box<Zeroizing<[u8; 32]>>;
-
-/// The onion service the client holds a key for, and that key: Arti keeps it in
-/// its keystore, and a channel to the service opens with it. Not `Clone`: the
-/// key has one home, the target slot.
-pub struct Target {
-    pub host: String,
-    pub hsid: HsId,
-    pub port: u16,
-    pub key: ClientKey,
-}
-
-impl Target {
-    /// The same service and the same key: what Arti keeps a connection record
-    /// by, and so what a connect group stays good for.
-    fn same_service_and_key(&self, other: &Target) -> bool {
-        self.hsid == other.hsid && bool::from(self.key[..].ct_eq(&other.key[..]))
-    }
-}
-
 /// State shared between the C ABI and the runtime's tasks.
 #[derive(Default)]
 pub struct Shared {
     pub status: StatusCell,
     pub client: Mutex<Option<Arc<Client>>>,
-    pub target: Mutex<Option<Target>>,
-    pub connect_group: ConnectGroup,
+    /// The group each onion service's connects go in. Lives as long as this
+    /// client: a rebuilt one has no attempt left over to stay clear of.
+    pub connect_groups: ConnectGroups,
 }
 
 struct Engine {
@@ -127,10 +102,10 @@ pub fn start(state_dir: &str, cache_dir: &str) -> i32 {
             Ok(rt) => rt,
             Err(_) => return -(error::INTERNAL as i32),
         };
-    let shared = Arc::new(Shared::default());
-    if let Some(failed) = guard.take() {
-        carry_over(failed, &shared);
+    if let Some(mut failed) = guard.take() {
+        take_down(&mut failed);
     }
+    let shared = Arc::new(Shared::default());
     shared.status.update(|s| *s = NoxTorStatus { state: state::BOOTSTRAPPING, ..NoxTorStatus::default() });
     let task_shared = Arc::clone(&shared);
     let (state_dir, cache_dir) = (state_dir.to_owned(), cache_dir.to_owned());
@@ -139,25 +114,27 @@ pub fn start(state_dir: &str, cache_dir: &str) -> i32 {
     0
 }
 
-/// Takes a failed engine down the way `stop` does, except for what the app
-/// still holds: the target, which moves to `shared` and goes into the new
-/// client as soon as it is built (see run_client).
-fn carry_over(mut failed: Engine, shared: &Shared) {
-    let target = lock(&failed.shared.target).take();
-    *lock(&shared.target) = target;
-    lock(&failed.shared.client).take();
-    if let Some(rt) = failed.runtime.take() {
+/// Ends what `engine` runs: its client, and its runtime with every task on it
+/// - onion channels included - without waiting for them.
+fn take_down(engine: &mut Engine) {
+    lock(&engine.shared.client).take();
+    if let Some(rt) = engine.runtime.take() {
         rt.shutdown_background();
     }
 }
 
-fn build_client(state_dir: &str, cache_dir: &str) -> Result<Arc<Client>, u8> {
+/// Arti's defaults under the app's own directories, with the keystore off:
+/// since 045 the client holds no keys, so nothing is looked up for a service
+/// and nothing is kept for one, in memory or on disk. Left to Arti, it would
+/// keep one under the state directory.
+fn client_config(state_dir: &str, cache_dir: &str) -> Result<TorClientConfig, u8> {
     let mut builder = TorClientConfigBuilder::from_directories(state_dir, cache_dir);
-    // The key that opens the onion service lives in the app's secure storage
-    // and is handed in on every start. Arti's default on-disk store would write
-    // it out unencrypted.
-    builder.storage().keystore().primary().kind(ExplicitOrAuto::Explicit(ArtiKeystoreKind::Ephemeral));
-    let config = builder.build().map_err(|_| error::INTERNAL)?;
+    builder.storage().keystore().enabled(BoolOrAuto::Explicit(false));
+    builder.build().map_err(|_| error::INTERNAL)
+}
+
+fn build_client(state_dir: &str, cache_dir: &str) -> Result<Arc<Client>, u8> {
+    let config = client_config(state_dir, cache_dir)?;
     TorClient::builder().config(config).create_unbootstrapped().map_err(|e| classify(&e))
 }
 
@@ -167,18 +144,6 @@ async fn run_client(shared: Arc<Shared>, state_dir: String, cache_dir: String) {
         Err(code) => return fail(&shared, code),
     };
     *lock(&shared.client) = Some(Arc::clone(&client));
-    // A target set while the client was still being built. Applied under the
-    // target's lock, as every key change is: a set_target or clear_target
-    // landing meanwhile either finds this client or waits for this apply,
-    // never slips between the read and the insert.
-    {
-        let target = lock(&shared.target);
-        if let Some(target) = target.as_ref() {
-            if apply_key(&client, target).is_err() {
-                shared.status.update(|s| s.error = error::INTERNAL);
-            }
-        }
-    }
 
     let mut events = client.bootstrap_events();
     let progress = Arc::clone(&shared);
@@ -219,69 +184,6 @@ fn fail(shared: &Shared, code: u8) {
     });
 }
 
-/// Puts the target's key in the client. Insert never overwrites, so whatever
-/// key this service had goes first: switching from an invite's one-time key to
-/// the device's own is remove-then-insert.
-fn apply_key(client: &Client, target: &Target) -> Result<(), ()> {
-    let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, target.hsid);
-    let key = HsClientDescEncSecretKey::from(curve25519::StaticSecret::from(**target.key));
-    client.insert_service_discovery_key(KeystoreSelector::Primary, target.hsid, key).map(|_| ()).map_err(|_| ())
-}
-
-pub fn set_target(host: &str, port: u16, key: ClientKey) -> i32 {
-    let hsid: HsId = match host.parse() {
-        Ok(h) => h,
-        Err(_) => return error::RET_INVALID_ARGUMENT,
-    };
-    if port == 0 {
-        return error::RET_INVALID_ARGUMENT;
-    }
-    let guard = engine();
-    let Some(engine) = guard.as_ref().filter(|e| e.runtime.is_some()) else {
-        return error::RET_NOT_STARTED;
-    };
-    let shared = &engine.shared;
-    {
-        // The slot and the keystore change together, under the target's lock
-        // (see run_client).
-        let mut slot = lock(&shared.target);
-        let previous = slot.replace(Target { host: host.to_owned(), hsid, port, key });
-        if !previous.as_ref().zip(slot.as_ref()).is_some_and(|(prev, now)| prev.same_service_and_key(now)) {
-            // The group a hedge was won in belongs to the target it won for.
-            shared.connect_group.forget();
-        }
-        let client = lock(&shared.client).clone();
-        if let (Some(client), Some(target)) = (client, slot.as_ref()) {
-            if let Some(prev) = previous.filter(|prev| prev.hsid != target.hsid) {
-                let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, prev.hsid);
-            }
-            if apply_key(&client, target).is_err() {
-                return -(error::INTERNAL as i32);
-            }
-        }
-    }
-    // A refusal of the key so far was about the previous key.
-    shared.status.update(|s| s.forget_key_refusal());
-    0
-}
-
-pub fn clear_target() -> i32 {
-    let guard = engine();
-    let Some(engine) = guard.as_ref() else {
-        return error::RET_NOT_STARTED;
-    };
-    let shared = &engine.shared;
-    {
-        // Under the target's lock, like every key change (see run_client).
-        let mut slot = lock(&shared.target);
-        if let (Some(prev), Some(client)) = (slot.take(), lock(&shared.client).clone()) {
-            let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, prev.hsid);
-        }
-        shared.connect_group.forget();
-    }
-    0
-}
-
 pub fn set_dormant(dormant: bool) {
     let guard = engine();
     let Some(engine) = guard.as_ref() else { return };
@@ -298,11 +200,7 @@ pub fn set_dormant(dormant: bool) {
 pub fn stop() {
     let mut guard = engine();
     if let Some(mut engine) = guard.take() {
-        lock(&engine.shared.client).take();
-        lock(&engine.shared.target).take();
-        if let Some(rt) = engine.runtime.take() {
-            rt.shutdown_background();
-        }
+        take_down(&mut engine);
         if OBSOLETE.load(Ordering::SeqCst) {
             // Keep reporting OBSOLETE after a stop: the app must keep knowing.
             engine.shared.status.force_obsolete();
@@ -349,34 +247,30 @@ pub(crate) fn set_state_for_test(to: u8) {
 }
 
 #[cfg(test)]
-pub(crate) fn set_error_for_test(code: u8) {
-    if let Some(e) = engine().as_ref() {
-        e.shared.status.update(|s| s.error = code);
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn connect_group_won_for_test(group: arti_client::IsolationToken) {
-    if let Some(e) = engine().as_ref() {
-        e.shared.connect_group.won(group);
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn connect_group_for_test() -> Option<arti_client::IsolationToken> {
-    engine().as_ref()?.shared.connect_group.current()
-}
-
-#[cfg(test)]
-pub(crate) fn target_host_for_test() -> Option<String> {
-    let guard = engine();
-    let target = lock(&guard.as_ref()?.shared.target);
-    target.as_ref().map(|t| t.host.clone())
-}
-
-#[cfg(test)]
 pub(crate) fn reset_for_test() {
     stop();
     OBSOLETE.store(false, Ordering::SeqCst);
     engine().take();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The key manager is in the build whatever this crate asks for
+    /// (tor-chanmgr brings it), so only the configuration keeps the keystore
+    /// off - and with it, the directory Arti would make for one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_client_keeps_no_keystore() {
+        let dir = std::env::temp_dir().join(format!("nox_tor_keystore_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (state, cache) = (dir.join("state"), dir.join("cache"));
+        let (state, cache) = (state.to_str().unwrap(), cache.to_str().unwrap());
+        assert!(client_config(state, cache).expect("the configuration builds").keystore().primary_kind().is_none());
+        let client = build_client(state, cache).expect("the client builds");
+        assert!(dir.join("state").is_dir(), "the client was built where the test looks");
+        assert!(!dir.join("state").join("keystore").exists());
+        drop(client);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

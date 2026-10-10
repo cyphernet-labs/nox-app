@@ -23,6 +23,7 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
@@ -119,9 +120,19 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// would otherwise show at once, and "no connection" is simply false here.
   bool _isServerMismatch() => _status.isServerMismatch || _phase.isServerMismatch || _scenario == ChatThreadScenario.pinRefused;
 
+  /// The debug scenarios that play a channel that is down.
+  bool get _scenarioOffline => _scenario == ChatThreadScenario.offline || _scenario == ChatThreadScenario.turnOnTor;
+
   /// The offline BANNER: a whole round of path finding found nothing, or the
   /// debug scenario forces it.
-  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatThreadScenario.offline);
+  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenarioOffline);
+
+  /// Why, when that is known (phase 045) - or the debug scenarios' stand-ins.
+  ConnectionProblem? _problem() {
+    if (_scenario == ChatThreadScenario.pinRefused) return ConnectionProblem.otherServer;
+    if (_scenario == ChatThreadScenario.turnOnTor) return ConnectionProblem.turnOnTor;
+    return _isOffline() || _isServerMismatch() ? _status.problem : null;
+  }
 
   /// The server refuses this build (phase 042): the strip stays, its action
   /// does not - trying again cannot change the answer.
@@ -130,13 +141,12 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// Whether a send may go out at all: only on a current channel, never to a
   /// refused server, and never while the debug scenario plays offline. None of
   /// these marks anything as failed: a queued message waits, it is not lost.
-  bool _isHeld() => _isServerMismatch() || !_phase.isCurrent || _scenario == ChatThreadScenario.offline;
+  bool _isHeld() => _isServerMismatch() || !_phase.isCurrent || _scenarioOffline;
 
   /// Whether a read reaches the server now. Once the greeting is done - the
   /// catch-up included - the socket lets reads out, so the spinner for an
   /// empty thread follows this, not the stricter hold on sends.
-  bool _canRead() =>
-      !_isServerMismatch() && _scenario != ChatThreadScenario.offline && (_phase == SessionPhase.live || _phase == SessionPhase.catchingUp);
+  bool _canRead() => !_isServerMismatch() && !_scenarioOffline && (_phase == SessionPhase.live || _phase == SessionPhase.catchingUp);
 
   /// Numbers the background reads of the newest window, so an older one
   /// finishing late cannot clear the spinner a newer one is holding.
@@ -251,6 +261,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
               isOffline: false,
               isServerMismatch: false,
               isUnsupported: false,
+              problem: null,
               isHeld: false,
             ),
           );
@@ -312,6 +323,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
                 isUnsupported: _isUnsupported(),
+                problem: _problem(),
                 isHeld: _isHeld(),
               ),
             );
@@ -682,14 +694,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final offline = _isOffline();
     final mismatch = _isServerMismatch();
     final unsupported = _isUnsupported();
+    final problem = _problem();
     final held = _isHeld();
     if (current.isOffline == offline &&
         current.isServerMismatch == mismatch &&
         current.isUnsupported == unsupported &&
+        current.problem == problem &&
         current.isHeld == held) {
       return;
     }
-    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch, isUnsupported: unsupported, isHeld: held));
+    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch, isUnsupported: unsupported, problem: problem, isHeld: held));
   }
 
   /// One more attempt, asked for by the person.

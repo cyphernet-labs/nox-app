@@ -39,7 +39,7 @@
 
 **Порядок:** 0 → 044 → 045 → 046 → 047 → 048 → 049.
 
-**Сделано 2026-10-09:** шаг 0 (конституция 1.4.0) и спецификации всех фич — `specs/044-secure-channel`, `specs/045-tor-service-addresses`, `specs/046-pairing-devices`, `specs/047-server-data-at-rest`, `specs/048-device-data-at-rest`, `specs/049-server-install`; уточнения владельца внесены в 044, 045 и 047. 044 реализована (ветка `044-secure-channel`, PR в `security-rework`); 045–049 — спецификации уточнены, планы, задачи и analyze готовы в своих ветках.
+**Сделано 2026-10-09:** шаг 0 (конституция 1.4.0) и спецификации всех фич — `specs/044-secure-channel`, `specs/045-tor-service-addresses`, `specs/046-pairing-devices`, `specs/047-server-data-at-rest`, `specs/048-device-data-at-rest`, `specs/049-server-install`; уточнения владельца внесены в 044, 045 и 047. 044 реализована (ветка `044-secure-channel`, PR в `security-rework`); 045 реализована 2026-10-10 (ветка `045-tor-service-addresses`, PR в `security-rework`); 046–049 — спецификации уточнены, планы, задачи и analyze готовы в своих ветках.
 
 | Шаг | Что | Темы | Зависит от |
 |---|---|---|---|
@@ -130,7 +130,7 @@
 
 ### 049 — Установка сервера
 
-- Скрипты для Linux (systemd), macOS (launchd) и Windows (служба): сервер; tor не старше 0.4.9 — пакет дистрибутива или Tor Project, на macOS — сборка Tor Project, на Windows — Tor Expert Bundle; настройки tor с onion-сервисом и PoW; пароль при первом запуске; адреса — параметрами запуска; в конце — ссылка для первого устройства.
+- Скрипты для Linux (systemd), macOS (launchd) и Windows (служба): сервер; tor не старше 0.4.9 — пакет дистрибутива или Tor Project, на macOS — сборка Tor Project, на Windows — Tor Expert Bundle; настройки tor с onion-сервисом, PoW и пределом в 16 потоков на цепочку (`HiddenServiceMaxStreams 16`, `HiddenServiceMaxStreamsCloseCircuit 1` — PoW не ограничивает потоки на построенной цепочке); пароль при первом запуске; адреса — параметрами запуска; в конце — ссылка для первого устройства.
 - Проверка: macOS — здесь, Linux и Windows — у владельца.
 
 ### Для всех фич

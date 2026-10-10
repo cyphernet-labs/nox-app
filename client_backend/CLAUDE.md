@@ -3,32 +3,39 @@
 Self-hosted messenger backend for ONE person and the devices they own:
 one WebSocket command channel (JSON envelope, global `seq` event log,
 cursor replay) plus a small REST surface (file upload/download), both behind
-the channel check of feature 044, embedded SQLite, single static CGO-free binary - and, since 039, a tor
-process beside it that the server starts, supervises and stops, and that
-never opens the database. Different people never
-share a machine and their machines never talk to each other — everything
-between people goes through a relay whose protocol does not exist yet
-(Q13).
+the channel check of feature 044, embedded SQLite, single static CGO-free
+binary. tor, when the machine has one, is a separate OS service run by the
+owner or the install script (049): it publishes the onion service and
+forwards it to the main port. The server spawns no process, holds none of
+tor's keys and only stores its own addresses - the public one and the onion
+one (045). Different people never share a machine and their machines never
+talk to each other — everything between people goes through a relay whose
+protocol does not exist yet (Q13).
 
 **The contract is law:** `docs/client-backend/protocol/contract-draft.md`
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
 **Who connects is decided by the channel (feature 044).** Every connection -
-the WebSocket and every file transfer alike - is TCP (or a stream from tor),
-then TLS 1.3 on a THROWAWAY certificate the server mints in memory at every
-start and nobody checks, then the Eidolon exchange over the TLS 1.3 exporter
+the WebSocket and every file transfer alike - is TCP (straight from the
+device, or from the tor service forwarding the onion service), then TLS 1.3
+on a THROWAWAY certificate the server mints in memory at every start and
+nobody checks, then the Eidolon exchange over the TLS 1.3 exporter
 (RFC 9266, `internal/eidolon`): the device sends its Ed25519 key with a
 signature over the key and one over the binding, the server checks both and
 answers with the machine's own Ed25519 key the same way. Only then does
 `http.Server` see the connection, carrying the device key it proved
 (`channelPeer`). The server accepts ANY key that proves itself and grants
 rights by the store: a paired device gets everything, an unknown key only
-`pair`; `session.hello` with an unknown key is `unauthenticated` (the device
-reads it as a revocation), and `/files` refuses an unpaired key with `401`
-before it looks at the token. The greeting has no challenge, `session.hello`
-and `pair` carry no device key, and the pairing link is `nox://pair/`
-version 3 (contract §8A). People come into being only through `pair`; the
+`pair` - within two minutes, on one of at most 32 such connections
+(`unpaired.go`); `session.hello` with an unknown key is `unauthenticated`
+(the device reads it as a revocation), and `/files` refuses an unpaired key
+with `401` before it looks at the token. Off `/ws` an unknown key gets one
+request per connection: the door in front of the mux (`limitStrangers`)
+ends the connection with every answer but a WebSocket upgrade. The greeting
+has no challenge, `session.hello` and `pair` carry no device key, and the
+pairing link is `nox://pair/` version 3 (contract §8A). People come into
+being only through `pair`; the
 machine belongs to ONE person (037) and `owner_user_id` survives only as the
 "this machine has been claimed" marker. Still out of scope and blocked:
 `recover` and the recovery phrase (Q16), the protocol to the relay (Q13), and
@@ -66,13 +73,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Architecture invariants (MUST hold after every change)
 
-1. **Exactly one OS process opens the database file.** No sidecars that
-   touch the database, no cron, no second node. The ONE other process is
-   tor (039): the server starts it with its own empty config and its own
-   state directory `<db>-tor`, commands it over the control port, owns it
-   (`__OwningControllerProcess` + `TAKEOWNERSHIP`, so it dies with the
-   server) and hands it the onion key on every start - tor never opens the
-   database and never persists the key.
+1. **Exactly one OS process opens the database file, and the server spawns
+   NO process at all.** No sidecars that touch the database, no cron, no
+   second node, no child process of any kind. tor is a separate OS service
+   (045): it never opens the database, the server never starts, commands or
+   stops it, and all the server knows of it is the onion address stored in
+   `server_identity`. `run_test.go` holds that `Run` starts no tor even with
+   one on the PATH.
 2. **Two pools, one writer.** All writes go through `internal/store`
    using the write handle (`SetMaxOpenConns(1)` + `_txlock=immediate`);
    reads use the read pool. Never `Exec` a mutation on the read handle;
@@ -92,8 +99,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    it may still do, not what happened in the shared world, which is why a
    disconnect may lose them and nothing breaks.
    `server.addresses` (039) is the fourth: it says where this machine can be
-   reached, has ONE sender - the address watcher - and the greeting reply is
-   its reliable half.
+   reached - the addresses found on its networks plus the stored public and
+   onion address (045) - has ONE sender, the address watcher, and the
+   greeting reply is its reliable half. A `Set` on the service page only
+   writes the store and pokes the watcher; it never sends the event itself.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
    sends, no sleeping between `BeginTx` and `Commit`.
 5. **`seq` is a strictly increasing total order** (single writer +
@@ -113,7 +122,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    `transfers` too - the `/files` requests under way, each registered under
    the key its connection proved - because a revocation on one connection
    cuts another device's transfers, which since 044 run on connections of
-   their own. The device key needs no lock: the channel fixes it before the
+   their own. It guards `unpaired` as well - the /ws connections of keys
+   nobody paired, oldest first, each holding its own place in the list
+   (`unpaired.go`) - because a newcomer's handler takes the oldest of them
+   out to make room, and each one's deadline fires on a timer's goroutine.
+   The device key needs no lock: the channel fixes it before the
    connection is registered, and it never changes.
    `Server.claim`, the transfer-token store (`internal/server/tokens.go`),
    the upload-writer registry (043, `internal/server/writers.go`: which
@@ -121,17 +134,19 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    connection died silently instead of writing beside it) and each channel
    listener's registry of handshakes under way (`internal/server/channel.go`:
    which connections are still proving a key, oldest first and counted per
-   source, so the accept loop can cut the oldest - of one source, or of all -
-   without ever waiting) hold the only other four. The mutex inside each PUT's
+   source - this machine being one source with a share of its own - so the
+   accept loop can cut the oldest - of one source, or of all - without ever
+   waiting) hold the only other four. The mutex inside each PUT's
    `stallReader` (`files.go`) is NOT a fifth: it lives and dies with one
    request, guards nothing another request or connection reads, and only
    orders that request's read-deadline renewal against an interrupt, so the
    interrupt is never pushed back by a whole stall timeout. Since 039 the
    connection registry also carries `greeted`
    and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
-   reply is queued - which is what keeps `server.addresses` behind it. Tor
-   state reaches readers as an immutable snapshot behind `atomic.Pointer`,
-   not under a lock.
+   reply is queued - which is what keeps `server.addresses` behind it. The
+   address snapshot (`addressSet`: the found addresses plus the stored public
+   and onion address) reaches readers behind `atomic.Pointer`, not under a
+   lock; there is no Tor state in the process.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
@@ -139,17 +154,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    BESIDE the writer - Ping waits a whole round trip, which over Tor is
    seconds, and a writer parked on it lets live frames overflow the queue.
    `SetReadLimit(max_frame_bytes)`.
-9. **Shutdown order:** the HTTP servers drain (onion FIRST - an onion
-   connection accepted after the main server closed the registered ones would
-   never be told to go - then main, then the status page, each on its OWN
-   deadline) →
-   registered WS conns get `Close(StatusGoingAway)`, IN PARALLEL - one close
-   handshake can take 10 s, and over Tor it does (Shutdown does NOT wait for
-   hijacked conns — keep the conn registry wired via `RegisterOnShutdown`) →
-   wait for the handlers, up to 15 s → the address watcher and the tor
-   supervisor stop (the supervisor on its OWN context, so tor outlives the
-   drain the onion clients are still saying goodbye through) → hub stops →
-   DB closes. Preserve it.
+9. **Shutdown order:** the HTTP servers drain (main, then the status page,
+   each on its OWN deadline) → registered WS conns get
+   `Close(StatusGoingAway)`, IN PARALLEL - one close handshake can take 10 s,
+   and over Tor it does (Shutdown does NOT wait for hijacked conns — keep the
+   conn registry wired via `RegisterOnShutdown`) → wait for the handlers, up
+   to 15 s → the address watcher stops (on its OWN context, so it still
+   reaches the connections being told goodbye) → hub stops → DB closes.
+   Preserve it. There is no tor to stop: it is not the server's process.
 10. **Idempotency:** `message.send` is keyed by `(author_id,
     client_message_id)`; a replayed command returns the original echo,
     never a duplicate row. The key keeps `author_id` because that is the
@@ -205,17 +217,30 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   conditional UPDATE whose affected-row count settles a two-device race
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
   device is indistinguishable from an unknown one), rename
-- `internal/store/accesskeys.go` — onion access keys (039): one per device,
-  the active set read in one transaction (the one-time invite keys left with
-  044; the rest leaves with 045)
-- `internal/tor/`        — everything that knows about tor (039): finding and
-  versioning the binary, the control-protocol client, the onion key and
-  address, the supervisor that owns the process and publishes the service,
-  and the log scrubber. The onion seed never leaves this package once handed
-  in at startup
+- `internal/store/addresses.go` — the two stored addresses (045):
+  `public_address` and `onion_address` on the single `server_identity` row,
+  each with the start parameter it was last written from (`*_address_param`);
+  a parameter is applied together with its value in ONE statement. The store
+  checks nothing - the server does, before it writes
 - `internal/server/addresses.go` — where this machine can be reached: the
-  versioned snapshot, the watcher that is the only sender of
+  versioned snapshot (the addresses found on its networks plus the stored
+  public and onion address) and the watcher that is the only sender of
   `server.addresses`
+- `internal/server/address_settings.go` — the checks both roads to the stored
+  addresses go through (045): a v3 onion address (base32, SHA3-256 checksum,
+  version byte) and a public `host:port`; the start parameters
+  `-public-addr`/`-onion-addr`, applied when they appeared or changed and
+  turned into page warnings when malformed; `onionHost`, the one sign left
+  that a request came through tor
+- `internal/server/logscrub.go` — the ONE slog handler every line of the
+  process goes through (`ScrubLogs`: main wraps the process handler, `Run` and
+  `New` wrap whatever logger they get, net/http's error log is routed through
+  it): onion addresses become `[onion]` and pairing links `[link]`, whatever
+  the text came from - a call site covers only the text its author thought of
+- `internal/server/status_page.go` — the service page's own mux on its
+  loopback listener: the claim link and QR, the address forms (`POST
+  /addresses` checks `Host`, `Origin` and the per-process form token; CSP
+  `form-action 'self'`) and `GET /health`
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
@@ -224,17 +249,52 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   shared vectors with the app's Rust module in `testdata/vectors.json`
 - `internal/server/channel.go` — the front door: a listener wrapper that takes
   every connection through TLS and the check on a goroutine of its own, under
-  one deadline from accept (10 s direct, 30 s onion), and hands `http.Server`
-  only the ones that passed, with the proved connection - and its key - in the
-  request context. Its accept loop never waits and never turns a newcomer
-  away: a source (an IPv4 address, an IPv6 /64) has at most 8 handshakes under
-  way and its oldest is cut for the next from it, a peer off loopback gets 5 s
-  to send its first byte, and past 256 in all the oldest handshake is cut for
-  the newcomer; loopback - tor - is held to neither of the first two
+  ONE deadline from accept - 30 s, the slow-path budget, for every connection,
+  since one from the tor service arrives on this same port and looks like any
+  other (045) - and hands `http.Server` only the ones that passed, with the
+  proved connection - and its key - in the request context. Its accept loop
+  never waits and never turns a newcomer away: a source (an IPv4 address, an
+  IPv6 /64) has at most 8 handshakes under way and its oldest is cut for the
+  next from it; THIS MACHINE - loopback, or the very address a connection
+  reached, which is where tor connects from when its onion service points at
+  the bound address (unforgeable: the SYN-ACK to a forged source goes to the
+  server itself) - is one source with a share of 64, held the same way and
+  to no first-byte limit, bounded because since 045 anybody who knows the
+  onion address arrives from here; a peer from anywhere else gets 5 s to
+  send its first byte; and past 256 in all the oldest handshake is cut for
+  the newcomer. The cuts are logged as counts, once a minute at most -
+  `evicted_local` is this machine's share
+- `internal/server/unpaired.go` — what a key nobody paired may hold (045).
+  The door (`limitStrangers`, in front of the mux) looks the key up on every
+  request and holds a stranger to one request per connection: whatever the
+  answer, it says `Connection: close` (`strangerWriter` sets it again over
+  the `Connection: Upgrade` the WebSocket library writes onto its own
+  refusals), and a request that declared a body gets a read deadline already
+  past (`endWithAnswer`), so net/http waits for that body neither before the
+  answer nor after it. A 101 goes on as a session. The door decides only
+  whether the connection outlives the request; rights are still decided by
+  `admitTransfer` and `handleWS`, whose 401 ends the connection too. On /ws
+  the key is looked up AFTER the connection joins the registry (a revocation
+  from then on drops it, as for a transfer); a stranger's session is closed
+  with 1008 if it has not paired within 2 minutes, and at most 32 are open
+  at once - the OLDEST is closed with 1013 for a newcomer, never the
+  newcomer. `pair` or `session.hello` succeeding on it settles it; a paired
+  device's connection is never held to either limit. The main `http.Server`
+  (`configureMain`, shared by `Run` and the test stack) closes a connection
+  idle for 2 minutes between requests (only a paired device's is ever
+  kept), hands `OPTIONS *` to the handler instead of answering it itself
+  past the door, and gives a body nothing of ours reads 30 s past the
+  headers (`boundRequestBody`, a ConnState hook): net/http answers an
+  unsupported `Expect` before any handler runs and then reads what is left
+  of a declared body, with no deadline of its own. A body a handler reads is
+  held to the handler's own deadlines, and net/http lifts the deadline itself
+  when it reads behind a request with no body left, so no transfer is
+  bounded by it
 - `internal/server/tls.go` — the technical certificate: a fresh ECDSA P-256 key
   in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
 - `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
-  addresses, shared vectors with the app in `testdata/link-vectors.json`
+  addresses in the order public → direct → onion (045), shared vectors with the
+  app in `testdata/link-vectors.json`
 - `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
   with its continuation (`file_id` in, `received` out), the PUT that keeps
   whatever arrives and carries the rest of the file from the offset its token
@@ -267,11 +327,26 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   `httptest.NewTLSServer`: a stock TLS server skips the check this server is
   built around.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
-- Tests through the REAL Tor network are named `TestOnion*` and run only
-  when `NOX_TOR_TEST_BIN` points at a tor binary (0.4.9+); without it they
-  skip, because the network is minutes away and not always reachable.
-  Everything else about tor is tested on fakes of the control connection and
-  the process launcher.
+- Nothing in the server runs tor, so no test needs one. `run_test.go` holds
+  that `Run` starts no process even with a tor on the PATH and that the
+  removed tor flags stop the start with a hint; `oneport_test.go` holds the
+  one-port rules - every connection gets the slow-path timeouts and the idle
+  timeout, a claim or an invite through the onion service is like any other,
+  access keys are gone from the wire; `channel_test.go` holds the entry's
+  limits, this machine's share among them (a flood from it cuts only its own,
+  loopback and the address a connection reached count as one) and a pipe
+  listener whose connections report both of their ends; `unpaired_test.go`
+  holds a stranger's deadline and cap, and that a stranger's connection ends
+  with every answer but an upgrade - a body declared and never sent and
+  net/http's own answers included - while a paired device's stays for the
+  next request; the addresses are
+  `address_settings_test.go`, `status_addresses_test.go` and
+  `internal/store/addresses_test.go`; the log
+  is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -
+  parameters, `Set`, a claim, an invite, a refused upgrade through the onion
+  service - and finds no onion address, link, token or key in it. The path
+  through the real Tor network is checked by hand, with tor run as the
+  separate service it is.
 - Always `go test -race ./...`.
 
 ## Operational constraints
@@ -284,17 +359,46 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
   local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
-- Tor (039) is ON by default: `-tor=false` turns it off. The binary comes
-  from `-tor-bin` (final - an explicit path that holds no tor is "not
-  found", never a reason to look elsewhere), else next to `noxd`, else
-  `PATH`; 0.4.9 is the floor. Linux distribution packages are often older -
-  use the Tor Project repository. The official macOS tor is UNSIGNED and
-  killed at launch on Apple Silicon until signed (ad-hoc is enough for dev).
-  Its state lives in `<db>-tor` (a cache, outside backups; it holds the
-  control cookie, so never commit it). tor runs in a process group of its
-  own, so a terminal's Ctrl+C reaches only the server, which drains and then
-  stops tor; a systemd unit needs `KillMode=mixed`, because the default
-  `control-group` signals every process of the unit at once.
+- **tor is a separate service** (045). The server spawns no process and has
+  no tor flags: `-tor`, `-tor-bin` and `-tor-dir` stop the start with a hint.
+  tor's own torrc holds the onion service: `SocksPort 0`, a `DataDirectory`
+  and a `HiddenServiceDir` of its own (mode 700; the service's key lives
+  there and nowhere else - lose it and the address changes),
+  `HiddenServicePort 443 127.0.0.1:<port>` with noxd bound to every
+  interface or to loopback (a noxd bound to ONE network address does not
+  answer on loopback: tor then points at that address, connects from it, and
+  the channel counts it as this machine all the same),
+  `HiddenServicePoWDefensesEnabled 1`, and `HiddenServiceMaxStreams 16` with
+  `HiddenServiceMaxStreamsCloseCircuit 1`: PoW prices introductions, never the
+  streams on a circuit already built, so without the cap one circuit opens
+  as many connections to the main port as it likes. The app keeps no cap of
+  its own under it: one socket and a handful of transfers share a circuit
+  (the prefetch fetches one picture at a time, the outbox sends one upload at
+  a time, a download runs once per file), and a circuit closed past the cap
+  is a reconnect for the socket and a resume for the transfers (043). A cap on
+  dart:io's per-host pool would add a failure of its own - Dio counts the wait
+  for a free connection into its connect timeout and leaves the request it
+  gave up on queued, holding the next free connection with nothing sent - and
+  a working one would need a limiter above Dio (specs/045 research R21).
+  0.4.9 is the floor;
+  Linux distribution packages are often older - use the Tor Project
+  repository; the official macOS tor is UNSIGNED and killed at launch
+  on Apple Silicon until signed (ad-hoc is enough for dev). The address tor
+  writes to `<HiddenServiceDir>/hostname` reaches the server by
+  `-onion-addr` or by `Set` on the service page. With no child process
+  there is nothing for a service manager to stop in order: a systemd unit
+  needs no `KillMode` of its own.
+- **Address flags** (045): `-public-addr` / `NOX_PUBLIC_ADDR` (`host:port`)
+  and `-onion-addr` / `NOX_ONION_ADDR` (`<56>.onion`, `:443` allowed) write
+  an address into the database only when the parameter appeared or changed
+  since the value last applied (`*_address_param`), so an address set on the
+  service page survives a restart with the old parameter still in the unit.
+  A malformed one is not applied and does not stop the start: the server
+  keeps the stored address, logs an error and the page names the parameter
+  on every start until it is fixed. An empty one changes nothing; only the
+  page deletes an address. The variables are read after the flags are
+  parsed, never as their defaults: the usage text a mistyped flag prints goes
+  to the journal, and a default there would carry the onion address.
 
 ## Known deliberate omissions (do not "fix" silently)
 
@@ -346,9 +450,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   `http://127.0.0.1` and `http://localhost` are potentially trustworthy origins;
   measured in a browser, not assumed. The fallback still exists: if the API is
   missing or refuses, the script selects the link so one keystroke finishes it.
-- **One claim token per process.** The page shows the token the startup
-  announcement already minted; minting per request would leave an unrevocable
-  door behind every browser refresh, because a claim token has no expiry.
+- **One claim token per process.** Startup mints it while nobody can get in
+  (`announceClaim`) and seeds it into the page (`seedClaimToken`); minting per
+  request would leave an unrevocable door behind every browser refresh, because
+  a claim token has no expiry.
 - **A loopback bind draws no CODE, but still shows the LINK.** Two questions, and
   conflating them cost the page once: "can a phone dial this" decides the QR, and
   nothing decides whether a link exists. The default `-addr` is `127.0.0.1:8080`,
@@ -374,10 +479,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   between two page loads - somebody claims, the owner later revokes their last
   device - and handing back the burnt one would point the only recovery tool
   there is at a door that no longer opens.
-- **The QR's address is NOT `listenAddress`.** That falls back to loopback under
-  a wildcard bind, which is right for the line printed in the terminal and
-  useless for the phone reading the code off the screen. The page resolves a
-  dialable address instead, and shows no code at all when the machine has none.
+- **The claim link's address is NOT `listenAddress`.** That falls back to
+  loopback under a wildcard bind, which nothing but this machine can dial - and
+  the page's reader is a phone reading the code off the screen. The page
+  resolves a dialable address instead (`dialableHost`). Only when the machine
+  has none does the link carry loopback, and then no code is drawn - unless the
+  link also carries a public or onion address, which a phone reaches wherever
+  the bind is.
 - **The page decides between its two states on the SAME ownership predicate**
   the startup announcement uses. A second definition of "claimed" is how phase
   033's one fact would go back to living in two records - and this one would
@@ -439,25 +547,55 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **A failed check is answered with silence.** The server writes nothing - not
   even its own message - and closes the connection; a peer that did not prove a
   key learns nothing, including which machine it reached.
-- **An unpaired key may hold a `/ws` connection open without greeting.** There
-  is no greeting deadline (pre-existing); the cost is a goroutine per idle
-  stranger, bounded by `maxPendingChannels` only while the check runs. Recorded,
-  not fixed.
+- **A key nobody paired gets one request per connection, and on `/ws` two
+  minutes and 32 such sessions at once** (045: the onion service is open to
+  anybody who knows its address, and a key made for the occasion passes the
+  channel check). Off `/ws` every answer ends the connection, and a body it
+  declared is not awaited past an answer of ours (an answer net/http gives
+  itself, to an unsupported Expect, waits for it 30 s at most): kept open, a
+  connection would stay a stranger's for as long as it asked again within
+  each idle timeout - or, with a body declared and never sent, for good
+  without another byte. On `/ws`, past the cap the OLDEST is closed for the
+  newcomer, never the newcomer: a refusal
+  would let 32 connections renewed every two minutes keep every new device
+  from pairing, where closing the oldest makes a stranger open 32 within each
+  of a device's round trips. **046 must extend or exempt the deadline** for a
+  pairing that waits on the person's approval (up to an invite's ten
+  minutes), and keep such a connection from being the oldest a flood closes,
+  or every slow approval fails. What stays open: within its two minutes a
+  stranger may send `pair` as often as it likes, each failed attempt one
+  short write transaction on the single writer; and the connections past the
+  check are not capped as a whole - a stranger may open them one after
+  another, each held for one request's budgets (30 s for its headers) at the
+  price of a full handshake, so what bounds how many it holds is how fast it
+  can complete handshakes.
+- **This machine is one source on the channel's entry, and its share is
+  bounded** (64 of 256). tor is not told apart from any other process here:
+  the app running on the server's own machine shares the share and the
+  first-byte exemption with every device away from home. A flood through the
+  onion service can therefore cut the handshakes of an app ON the machine
+  too - never those of a device at home.
 - **No migration for a database from before 044** and there will not be one:
   `001_init.sql` was edited in place, the schema check refuses an old file, and
   the cure is a new database and every device paired again.
-- The claim link goes to the log AND to the service page (035), which is why
-  that page listens on loopback only and refuses to start anywhere else. The
-  pre-035 rule was "the log and nowhere else", on the reasoning that a page
-  serving the QR would hand ownership to everyone on the network. TLS (036) does
-  NOT retire that reasoning: encryption stops somebody reading the link off the
+- The claim link goes to the service page and NOWHERE else (045). The startup
+  line says where the page is (`service_page`), never what the link is: the
+  link carries the claim token and, packed, the onion service's key, and a log
+  is copied to places neither may go - a bug report, a support thread, a
+  collector. With `-status-addr` empty that line is a warning that nothing
+  shows the link. Which is why the page listens on loopback only and refuses
+  to start anywhere else: encryption stops somebody reading the link off the
   wire, and does nothing about a page that hands it to whoever asks. The
   loopback bind is what answers that, and `assertLoopback` checks the socket
   rather than the string somebody typed.
-- The CLAIM link falls back to loopback under a wildcard bind (it is read on the
-  machine), while an INVITE link uses the address the requesting device dialled
-  (its `Host` header). The two differ because an invite is carried to another
-  device, and loopback there is a link nothing can dial.
+- The CLAIM link carries a dialable address of this machine (the page's choice
+  above), while an INVITE link uses the address the requesting device dialled
+  (its `Host` header) - or, for a request through the onion service, where
+  `Host` is the onion name, the head of the direct list
+  (`inviteDirectAddress`). An invite is carried to another device, so it names
+  the address a device of this person has just reached the machine at. Both
+  carry the stored public address first and the onion address last when they
+  are set.
 - `users.label` is neither unique nor validated (owner, 2026-09-02): a
   greeting may never be refused because of a name, since the client
   retries a refused greeting forever.

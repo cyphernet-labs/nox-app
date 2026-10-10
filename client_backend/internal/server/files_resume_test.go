@@ -386,6 +386,9 @@ func TestAStalledUploadIsCutAndKeepsWhatArrived(t *testing.T) {
 func TestASlowButMovingUploadIsNeverCut(t *testing.T) {
 	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "slow.db"), nil, func(s *Server) {
 		s.stallTimeout = 200 * time.Millisecond
+		// Nor by the deadline on a body nothing reads (boundRequestBody):
+		// the handler reads this one, under deadlines of its own.
+		s.bodyTimeout = 100 * time.Millisecond
 	})
 	t.Cleanup(closeAll)
 	c := greeted(t, ts, srv)
@@ -677,6 +680,10 @@ func storeFile(t *testing.T, srv *Server, payload []byte) string {
 func TestASlowButMovingDownloadIsNeverCut(t *testing.T) {
 	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "slowget.db"), nil, func(s *Server) {
 		s.stallTimeout = 300 * time.Millisecond
+		// Nor by the deadline on a body nothing reads (boundRequestBody): a
+		// GET has none, and net/http lifts the deadline to watch for the
+		// peer hanging up while the handler writes.
+		s.bodyTimeout = 100 * time.Millisecond
 	})
 	t.Cleanup(closeAll)
 	c := greeted(t, ts, srv)

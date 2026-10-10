@@ -12,7 +12,8 @@ import 'package:nox_tor/channel.dart';
 /// device key it proves itself with (phase 044).
 ///
 /// The first two come out of ONE `--dart-define=link=<pairing link>` - the
-/// version-3 link a fresh `noxd` prints - because the address and the server
+/// version-3 link a fresh `noxd` shows on its service page (its log names the
+/// page and never the link, phase 045) - because the address and the server
 /// key are two halves of one fact and passing them separately is how they
 /// come to disagree. The device key is new for every run, as a fresh install
 /// has; [pair] makes it known to the server with the link's token.
@@ -42,7 +43,7 @@ class LiveTarget {
   static LiveTarget? orSkip() {
     final target = fromDefine();
     if (target == null) {
-      stdout.writeln('SKIP: pass --dart-define=link=<pairing link printed by noxd>');
+      stdout.writeln('SKIP: pass --dart-define=link=<the claim link on noxd\'s service page>');
     }
     return target;
   }
@@ -51,7 +52,8 @@ class LiveTarget {
   /// by both transports of the probe exactly as the app shares one.
   ChannelHttpClient client() => ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: deviceSeed);
 
-  /// The link's first direct address: pairing goes there until phase 045.
+  /// The link's first direct address - what the connection screen shows in
+  /// its address field (phase 045). These probes dial it directly.
   String get address => link.directAddresses.first;
 
   /// The command channel.

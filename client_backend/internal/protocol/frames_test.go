@@ -106,7 +106,6 @@ func TestTheOffJournalEventNamesAreTheOnesInTheContract(t *testing.T) {
 		{EventIdentityUpdated, "identity.updated"},
 		{EventDevicePaired, "device.paired"},
 		{EventServerAddresses, "server.addresses"},
-		{CmdDeviceSetAccessKey, "device.setAccessKey"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("wire name = %q, want %q (contract §8A)", tc.got, tc.want)

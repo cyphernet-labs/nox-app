@@ -39,12 +39,6 @@ external int noxTorStart(Pointer<Utf8> stateDir, Pointer<Utf8> cacheDir);
 @Native<Void Function()>(symbol: 'nox_tor_stop', isLeaf: true)
 external void noxTorStop();
 
-@Native<Int32 Function(Pointer<Utf8>, Uint16, Pointer<Uint8>)>(symbol: 'nox_tor_set_target', isLeaf: true)
-external int noxTorSetTarget(Pointer<Utf8> onionHost, int port, Pointer<Uint8> clientKey32);
-
-@Native<Int32 Function()>(symbol: 'nox_tor_clear_target', isLeaf: true)
-external int noxTorClearTarget();
-
 @Native<Void Function(Bool)>(symbol: 'nox_tor_set_dormant', isLeaf: true)
 external void noxTorSetDormant(bool dormant);
 

@@ -7,8 +7,6 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
 
 	"nox.app/client-backend/internal/db"
@@ -124,79 +122,5 @@ func TestAServerKeyThatIsNotOnePairIsRefused(t *testing.T) {
 				t.Fatal("ServerKey handed out a key the row does not hold together")
 			}
 		})
-	}
-}
-
-// The onion key is minted with the machine and never changes: a backup is one
-// file, and the address it restores has to be the one every device already
-// knows (039, FR-008).
-func TestTheOnionSeedIsMintedOnceAndSurvivesAReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "onion.db")
-	ctx := context.Background()
-
-	first := openStoreAt(t, path)
-	if _, err := first.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	seed, err := first.OnionSeed(ctx)
-	if err != nil {
-		t.Fatalf("OnionSeed: %v", err)
-	}
-	if len(seed) != 32 || bytes.Equal(seed, make([]byte, 32)) {
-		t.Fatalf("seed = %x, want 32 random bytes", seed)
-	}
-	again, err := first.OnionSeed(ctx)
-	if err != nil || !bytes.Equal(again, seed) {
-		t.Fatalf("a second read gave %x (err %v), want the same seed", again, err)
-	}
-
-	second := openStoreAt(t, path)
-	if _, err := second.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity after reopen: %v", err)
-	}
-	reopened, err := second.OnionSeed(ctx)
-	if err != nil || !bytes.Equal(reopened, seed) {
-		t.Fatalf("after reopen the seed is %x (err %v), want %x", reopened, err, seed)
-	}
-}
-
-// The identity handed to the status page and device.invite must not be able to
-// carry the onion key: a private key one field away from a page is how it ends
-// up on one.
-func TestTheServerIdentityHasNoOnionField(t *testing.T) {
-	for i := range reflect.TypeFor[ServerIdentity]().NumField() {
-		name := reflect.TypeFor[ServerIdentity]().Field(i).Name
-		if strings.Contains(strings.ToLower(name), "onion") {
-			t.Fatalf("ServerIdentity has field %s; the onion key must stay behind OnionSeed", name)
-		}
-	}
-}
-
-// A backup is the database file and nothing else, so restoring it - anywhere -
-// brings back the same onion address (SC-003). VACUUM INTO is how this project
-// takes a backup of a live database.
-func TestABackupRestoresTheSameOnionKey(t *testing.T) {
-	dir := t.TempDir()
-	ctx := context.Background()
-	live := openStoreAt(t, filepath.Join(dir, "live.db"))
-	if _, err := live.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	want, err := live.OnionSeed(ctx)
-	if err != nil {
-		t.Fatalf("OnionSeed: %v", err)
-	}
-	backup := filepath.Join(dir, "backup.db")
-	if _, err := live.write.ExecContext(ctx, "VACUUM INTO ?", backup); err != nil {
-		t.Fatalf("VACUUM INTO: %v", err)
-	}
-
-	restored := openStoreAt(t, backup)
-	if _, err := restored.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity on the restored copy: %v", err)
-	}
-	got, err := restored.OnionSeed(ctx)
-	if err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("restored seed = %x (err %v), want %x", got, err, want)
 	}
 }

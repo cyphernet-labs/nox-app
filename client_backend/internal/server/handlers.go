@@ -59,10 +59,11 @@ type helloReply struct {
 	JournalID string           `json:"journal_id"`
 	Limits    config.Limits    `json:"limits"`
 	Identity  greetingIdentity `json:"identity"`
-	// Addresses is where this machine can be reached now (039, contract §3).
-	// Always present - `direct` possibly empty - and its presence is the
-	// capability signal: a client sends device.setAccessKey only to a server
-	// that sent this.
+	// Addresses is where this machine can be reached now (039, 045, contract
+	// §3): the addresses it finds on its networks, and its public and onion
+	// address when they are set. Always present - `direct` possibly empty -
+	// and its presence is the capability signal for what 039 put on the wire,
+	// server.addresses first of all.
 	Addresses *addressSet `json:"addresses"`
 }
 
@@ -128,6 +129,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
 		return
 	}
+	// A key unknown when this connection opened may have paired on another
+	// connection since; it is a paired device's now either way, so the
+	// connection leaves a stranger's limits (unpaired.go). A no-op for every
+	// other greeting.
+	c.srv.settleUnpaired(c)
 	c.srv.setIdentity(c, id)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)

@@ -11,11 +11,6 @@ class NoxTorApi {
 
   void stop() => NoxTor.stop();
 
-  void setTarget({required String onionHost, required int port, required Uint8List clientKey}) =>
-      NoxTor.setTarget(onionHost: onionHost, port: port, clientKey: clientKey);
-
-  void clearTarget() => NoxTor.clearTarget();
-
   void setDormant(bool dormant) => NoxTor.setDormant(dormant);
 
   NoxTorSnapshot status() => NoxTor.status();

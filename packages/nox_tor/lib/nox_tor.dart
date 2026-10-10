@@ -17,6 +17,10 @@ import 'src/nox_tor_bindings.dart';
 enum NoxTorState { stopped, bootstrapping, ready, dormant, failed, obsolete }
 
 /// `NoxTorStatus.error` - the last failure, as a kind and never as text.
+///
+/// [missingClientAuth] and [wrongClientAuth] keep their places in the ABI's
+/// numbering and are never produced since phase 045: the client holds no
+/// onion access keys.
 enum NoxTorError { none, missingClientAuth, wrongClientAuth, timeout, network, internal, softwareDeprecated }
 
 /// One status snapshot.
@@ -52,8 +56,8 @@ abstract final class NoxTor {
   static bool? _supported;
 
   /// Whether the native module loaded. It is built on all five platforms
-  /// (phase 044: the secure channel needs it everywhere); whether Tor itself
-  /// is offered on a platform is the app's decision, not this one.
+  /// (phase 044: the secure channel needs it everywhere), and Tor is offered
+  /// on all five since phase 045.
   static bool get isSupported => _supported ??= _probe();
 
   static bool _probe() {
@@ -72,27 +76,6 @@ abstract final class NoxTor {
   }
 
   static void stop() => noxTorStop();
-
-  /// Registers the client-authorization key of one onion service with the
-  /// client (until phase 045), for the channels opened to it. [clientKey] is
-  /// the 32-byte x25519 private key; it is copied and the native copy is
-  /// wiped with the arena.
-  static void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
-    if (clientKey.length != 32) throw ArgumentError.value(clientKey.length, 'clientKey', 'must be 32 bytes');
-    _check(
-      using((arena) {
-        final key = arena<Uint8>(32);
-        key.asTypedList(32).setAll(0, clientKey);
-        try {
-          return noxTorSetTarget(onionHost.toNativeUtf8(allocator: arena), port, key);
-        } finally {
-          key.asTypedList(32).fillRange(0, 32, 0);
-        }
-      }),
-    );
-  }
-
-  static void clearTarget() => _check(noxTorClearTarget());
 
   static void setDormant(bool dormant) => noxTorSetDormant(dormant);
 

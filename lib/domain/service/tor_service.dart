@@ -6,12 +6,13 @@ import 'package:nox_app/domain/model/connection/tor_status.dart';
 /// it. The real one is a Rust module behind `package:nox_tor`; the test
 /// environment gets a fake, so no widget or BLoC test loads the library.
 ///
-/// It no longer carries connections itself (phase 044): a connection through
-/// Tor is a channel of the same module, opened by the transport like any
-/// other. What stays here is the client's lifecycle and the access key the
-/// onion service asks for.
+/// It carries no connections itself (phase 044): a connection through Tor is
+/// a channel of the same module, opened by the transport like any other, to
+/// the onion address alone - no target is set in advance and no access key is
+/// held (phase 045). What stays here is the client's lifecycle.
 abstract class TorService {
-  /// False on Linux, and wherever the native library is absent.
+  /// Whether the native library is there - on all five platforms since phase
+  /// 045; false only where it failed to load.
   bool get isSupported;
 
   /// Starts the client from its directories. Returns at once: progress shows
@@ -23,13 +24,6 @@ abstract class TorService {
 
   /// Stops it and deletes its directories - logout.
   Future<void> wipe();
-
-  /// Gives the client the key that opens one onion service (the device's
-  /// x25519 access key, until phase 045); replaces any previous one. False
-  /// when the client would not take it - not started, say.
-  bool setTarget({required String onionHost, required int port, required Uint8List clientKey});
-
-  void clearTarget();
 
   void setDormant(bool dormant);
 

@@ -4,9 +4,12 @@
 package server
 
 import (
+	"container/list"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,24 +31,44 @@ import (
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
-	"nox.app/client-backend/internal/tor"
 )
 
 const (
+	// slowPathTimeout is the budget of every wait a round trip through Tor can
+	// stretch: one frame write, one ping's wait for its pong, the request
+	// headers, and TLS with the channel check (channel.go). It is every
+	// connection's budget, not only the onion ones' (045, FR-009): tor
+	// forwards the onion service to the main port, and a connection from it
+	// looks like any other. A round trip through Tor can take seconds; 30 s
+	// covers a 10 s one three times over.
+	slowPathTimeout     = 30 * time.Second
 	defaultPingInterval = 25 * time.Second
-	defaultWriteTimeout = 5 * time.Second
-	shutdownTimeout     = 5 * time.Second
-	readHeaderTimeout   = 5 * time.Second
-	// onionTimeout is the write and pong timeout of a connection that came in
-	// over onion, the onion entry's header timeout (039, FR-012), and its
-	// budget for TLS and the channel check together (044). A round trip
-	// through Tor can take seconds; the 5 s of the direct path would cut
-	// healthy connections. 30 s covers a 10 s round trip three times over.
-	onionTimeout = 30 * time.Second
+	// defaultWriteTimeout bounds one frame write and one ping's wait for its
+	// pong.
+	defaultWriteTimeout = slowPathTimeout
+	// readHeaderTimeout bounds the request headers that follow the channel
+	// check on the main port.
+	readHeaderTimeout = slowPathTimeout
+	// defaultIdleTimeout bounds how long a connection kept for its next HTTP
+	// request may wait for it. Only a paired device's connection is kept - a
+	// stranger's ends with its answer (limitStrangers) - but a device can be
+	// revoked while its connection sits idle, and without a limit that
+	// connection would stay for as long as its holder liked. Well above the
+	// 15 s after which dart:io's client lets an idle connection go by default,
+	// so the server never closes one the app still means to use.
+	defaultIdleTimeout = 2 * time.Minute
+	// defaultBodyTimeout bounds a request's body where nothing of ours reads
+	// it (boundRequestBody): the slow path's budget, like the headers before
+	// it.
+	defaultBodyTimeout = slowPathTimeout
+	// pageReadHeaderTimeout is the service page's: a browser on this same
+	// machine, never a path through Tor.
+	pageReadHeaderTimeout = 5 * time.Second
+	shutdownTimeout       = 5 * time.Second
 	// drainTimeout bounds the wait for connection handlers at shutdown. Longer
-	// than one onion close handshake (5 s write + 5 s wait for the peer), so a
-	// goodbye still in flight through Tor is not cut off by the database
-	// closing under it.
+	// than one close handshake (the library's 5 s write + 5 s wait for the
+	// peer), which a connection through Tor can use whole, so a goodbye still
+	// in flight is not cut off by the database closing under it.
 	drainTimeout = 15 * time.Second
 	// outBuffer is the per-connection outbound queue (replies + replay +
 	// forwarded live events). Overflow on the LIVE path means a slow
@@ -77,17 +100,20 @@ type Server struct {
 
 	pingInterval time.Duration
 	writeTimeout time.Duration
-	// onionTimeout replaces writeTimeout for connections that came in over
-	// onion, and channelTimeout as their budget for proving themselves. A field
-	// so tests can scale it.
-	onionTimeout time.Duration
-	// channelTimeout is the main entry's budget for TLS and the channel check
-	// together (044). A field so tests can scale it.
+	// channelTimeout is the budget for TLS and the channel check together
+	// (044). A field so tests can scale it.
 	channelTimeout time.Duration
+	// idleTimeout is the main port's http.Server.IdleTimeout. A field so tests
+	// can scale it.
+	idleTimeout time.Duration
+	// bodyTimeout bounds a request's body where nothing of ours reads it
+	// (boundRequestBody). A field so tests can scale it.
+	bodyTimeout time.Duration
+	// maxUnpaired and unpairedTimeout bound the /ws connections of keys
+	// nobody paired (unpaired.go). Fields so tests can scale them.
+	maxUnpaired     int
+	unpairedTimeout time.Duration
 
-	// tor is the onion side (039): the supervisor, tor.Disabled() without
-	// Tor, a fake in tests. Never nil.
-	tor torService
 	// addrs is the current address snapshot. After startup only the watcher
 	// writes it; greetings read it.
 	addrs atomic.Pointer[addressSet]
@@ -116,6 +142,14 @@ type Server struct {
 	// process began. A person who closed that terminal has no other way to it.
 	schemaVersion int
 	startedAt     time.Time
+	// addrWarnings are the start parameters that were not applied (045). Set
+	// once at startup before anything serves, read by the page after.
+	addrWarnings []addressWarning
+	// formToken is what the service page's Set forms carry and POST
+	// /addresses checks: 32 random bytes per process, hex. A page from another
+	// site cannot read it, so it cannot forge the form even from this
+	// machine's own browser.
+	formToken string
 
 	// claim guards the one claim link this process ever hands out.
 	claim      sync.Mutex
@@ -125,8 +159,8 @@ type Server struct {
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns and transfers; wg tracks connection handlers so
-	// shutdown can wait for hijacked connections. Infrastructure-only
+	// mu guards conns, transfers and unpaired; wg tracks connection handlers
+	// so shutdown can wait for hijacked connections. Infrastructure-only
 	// synchronization (ws-rest-patterns §5); business state stays
 	// goroutine-owned.
 	mu    sync.Mutex
@@ -135,7 +169,16 @@ type Server struct {
 	// of its own since 044, which closing a device's socket does not touch, so
 	// a revocation walks this set beside conns (dropDevice).
 	transfers map[*transfer]struct{}
-	wg        sync.WaitGroup
+	// unpaired holds the connections in conns whose key no device row named
+	// when they connected - strangers, who may only pair - oldest first
+	// (unpaired.go). Under mu with conns: a newcomer's handler takes the
+	// oldest out to make room, and each one's deadline, on a timer's
+	// goroutine, takes it out if it is still there. unpairedCut and
+	// unpairedWarned space the warning about the ones taken out to make room.
+	unpaired       *list.List
+	unpairedCut    int
+	unpairedWarned time.Time
+	wg             sync.WaitGroup
 }
 
 // transfer is one /files request under way: the device key its connection
@@ -146,6 +189,8 @@ type transfer struct {
 }
 
 // New builds a Server over an opened store, a running hub and a blob store.
+// Its log goes through the scrubbing handler whatever logger it is handed
+// (logscrub.go).
 func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:              cfg,
@@ -153,7 +198,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		hub:              h,
 		blob:             bl,
 		tokens:           newTokenStore(),
-		logger:           logger,
+		logger:           scrubbedLogger(logger),
 		writers:          newUploadWriters(),
 		stallTimeout:     defaultStallTimeout,
 		checkpointBytes:  defaultCheckpointBytes,
@@ -161,18 +206,33 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		continuationWait: defaultContinuationWait,
 		pingInterval:     defaultPingInterval,
 		writeTimeout:     defaultWriteTimeout,
-		onionTimeout:     onionTimeout,
 		channelTimeout:   defaultChannelTimeout,
-		tor:              tor.Disabled(),
+		idleTimeout:      defaultIdleTimeout,
+		bodyTimeout:      defaultBodyTimeout,
+		maxUnpaired:      defaultMaxUnpaired,
+		unpairedTimeout:  defaultUnpairedTimeout,
 		addrKick:         make(chan struct{}, 1),
 		addressPoll:      defaultAddressPoll,
 		listIPs:          usableIPs,
 		resolveHost:      resolveHost,
 		startedAt:        time.Now(),
+		formToken:        newFormToken(),
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
 		transfers:        make(map[*transfer]struct{}),
+		unpaired:         list.New(),
 	}
+}
+
+// newFormToken mints the service page's form token.
+func newFormToken() string {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// The platform RNG failing is fatal-grade; mirrors tokenStore.issue. A
+		// guessable token would be worse than no page.
+		panic("crypto/rand: " + err.Error())
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 // kickDispatcher signals the dispatcher that new events are committed.
@@ -230,16 +290,39 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 	}
 }
 
-// Handler returns the HTTP surface both entries serve behind the channel:
+// Handler returns the HTTP surface the main port serves behind the channel:
 // the WebSocket and the file bytes, and nothing else. /health lives on the
 // service page's loopback listener (044): the main port answers nobody who has
 // not proved a key, and a probe that has not cannot ask it anything.
+//
+// Every request passes the door first (limitStrangers), unmatched ones
+// included: the 404 and 405 the mux writes end a stranger's connection like
+// any other answer.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
-	return s.logRequests(mux)
+	return s.logRequests(s.limitStrangers(mux))
+}
+
+// configureMain sets what the main port's http.Server holds a connection to
+// once it passed the channel: the connection - and the key it proved - in
+// every request's context; the slow path's 30 s for a request's headers, since
+// a connection from tor looks like any other (045), and bodyTimeout - the same
+// 30 s - for a body nothing of ours reads (boundRequestBody); and idleTimeout
+// between two requests. One place, so the test stack serves exactly what Run
+// serves.
+//
+// "OPTIONS *" goes to the handler like any other request. Answered by net/http
+// itself it would never reach the door, and a stranger could keep its
+// connection by asking it again within each idle timeout.
+func (s *Server) configureMain(hs *http.Server) {
+	hs.ConnContext = withChannelPeer
+	hs.ConnState = s.boundRequestBody
+	hs.ReadHeaderTimeout = readHeaderTimeout
+	hs.IdleTimeout = s.idleTimeout
+	hs.DisableGeneralOptionsHandler = true
 }
 
 // CloseConnections force-closes every live WebSocket with the going-away
@@ -247,8 +330,9 @@ func (s *Server) Handler() http.Handler {
 // waits for hijacked connections.
 //
 // In PARALLEL (039). One close handshake waits up to 5 s to write and 5 s for
-// the peer's answer, and over Tor it can use both; one after another, a few
-// onion devices would push the rest of the shutdown past every deadline.
+// the peer's answer, and a connection through Tor can use both; one after
+// another, a few devices away from home would push the rest of the shutdown
+// past every deadline.
 func (s *Server) CloseConnections() {
 	s.mu.Lock()
 	clients := make([]*client, 0, len(s.conns))
@@ -462,9 +546,12 @@ func (s *Server) track(c *client) {
 	s.mu.Unlock()
 }
 
+// untrack takes c out of the registry, and out of the unpaired connections if
+// it was still one: a connection that is gone holds no place.
 func (s *Server) untrack(c *client) {
 	s.mu.Lock()
 	delete(s.conns, c)
+	s.forgetUnpairedLocked(c)
 	s.mu.Unlock()
 }
 
@@ -506,6 +593,10 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // and the HTTP server, and shuts everything down in order on ctx
 // cancellation. It returns when the process is fully stopped.
 func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger) error {
+	// Every line of the process goes through the scrubbing handler, from the
+	// first one on: the address parameters are applied below, before anything
+	// listens (FR-022).
+	logger = scrubbedLogger(logger)
 	dbs, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -558,21 +649,34 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	// The machine's private key, read once: the channel listeners prove it on
+	// The machine's private key, read once: the channel listener proves it on
 	// every connection, and nothing else ever asks for it.
 	serverKey, err := st.ServerKey(ctx)
 	if err != nil {
 		return fmt.Errorf("read the server key: %w", err)
 	}
-	claimToken, err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger)
+	// The address parameters land before anything is announced, so the claim
+	// link the page shows already names them, and before any listener opens,
+	// so the first greeting does too (045, FR-003). A malformed one is a
+	// warning, never a reason to stay down.
+	addrWarnings, err := applyAddressParams(ctx, st, cfg, logger)
+	if err != nil {
+		return err
+	}
+	stored, err := st.Addresses(ctx)
+	if err != nil {
+		return fmt.Errorf("read addresses: %w", err)
+	}
+	claimToken, err := announceClaim(ctx, st, cfg, ownership, machine, configured(stored), logger)
 	if err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
-	// The page hands out the SAME right the terminal just printed. A second
-	// token would be a second unrevocable door, and the claim token has no
-	// expiry to close it.
+	srv.addrWarnings = addrWarnings
+	// The page hands out the token startup just minted. A second token would
+	// be a second unrevocable door, and the claim token has no expiry to close
+	// it.
 	srv.seedClaimToken(claimToken)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
@@ -593,25 +697,25 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// that already passed both layers (channel.go), each carrying the device
 	// key it proved. HTTP/2 cannot happen - the only TLS here offers
 	// http/1.1, and nothing serves h2 in the clear.
+	//
+	// ONE port for every path (045): tor runs as a separate service and
+	// forwards the onion service here, so a connection through Tor arrives
+	// like one from the next room and is held to the same rules - and to the
+	// same slow-path timeouts.
 	httpServer := &http.Server{
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: readHeaderTimeout,
-		ConnContext:       withChannelPeer,
+		Handler: srv.Handler(),
+		// net/http's own complaints - a handler's panic value above all - go
+		// through the same handler as every other line, scrubbed, instead of
+		// straight to stderr.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+	srv.configureMain(httpServer)
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
-	// The onion side (039): a loopback entry of its own behind the same
-	// channel, and the supervisor that runs tor. With or without Tor the first
-	// address snapshot is taken here, before any listener opens, so the very
-	// first greeting already carries a list (contract §3: `direct` is always
-	// there).
-	var onionServer *http.Server
-	var onionListener net.Listener
-	var supervisor *tor.Supervisor
-	if cfg.Tor {
-		supervisor, onionServer, onionListener = srv.setupOnion(ctx, logger)
-	}
-	srv.refreshAddresses()
+	// The first address snapshot is taken before any listener opens, so the
+	// very first greeting already carries a list (contract §3: `direct` is
+	// always there).
+	srv.refreshAddresses(ctx)
 
 	// The service page gets its OWN listener, on loopback, and the main one
 	// never serves it. That is the whole protection: a check on RemoteAddr
@@ -643,27 +747,25 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			// somewhere else at bind time, and the difference between those two
 			// moments is a claim link on a network.
 			_ = statusListener.Close()
-			statusListener = nil
-			if onionListener != nil {
-				_ = onionListener.Close()
-			}
 			return err
 		}
 		if statusListener != nil {
-			statusServer = &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+			statusServer = &http.Server{
+				Handler:           srv.StatusHandler(),
+				ReadHeaderTimeout: pageReadHeaderTimeout,
+				ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+			}
 		}
 	}
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
-	// The watcher and the supervisor get contexts of their OWN, like the hub:
-	// on the errgroup's they would stop the moment shutdown begins - tor
-	// included - while onion clients are still being told goodbye through it
-	// (invariant 9).
+	// The watcher gets a context of its OWN, like the hub: it sends to the
+	// connections that are still being told goodbye, and it reads the
+	// database, so it stops after the drain and before the database closes
+	// (invariant 9) rather than the moment shutdown begins.
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	defer stopWatch()
-	torCtx, stopTor := context.WithCancel(context.Background())
-	defer stopTor()
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -677,26 +779,6 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		srv.runAddressWatcher(watchCtx)
 		return nil
 	})
-	if supervisor != nil {
-		g.Go(func() error {
-			supervisor.Run(torCtx)
-			return nil
-		})
-		g.Go(func() error {
-			// No address in this line: the onion address never reaches a log.
-			logger.Info("onion entry listening on loopback for tor", "tls", "1.3")
-			// The same channel as the main entry, with Tor's longer budget: a
-			// connection that came through Tor proves itself exactly like one
-			// that did not, and the onion address earns it no trust (FR-013).
-			channel := srv.newChannelListener(onionListener, tlsConfig, serverKey, srv.onionTimeout, "onion")
-			if err := onionServer.Serve(channel); !errors.Is(err, http.ErrServerClosed) {
-				// Logged, not returned: the direct path is the product, and
-				// losing the onion entry must not take it down (FR-007).
-				logger.Error("onion entry stopped, serving the direct path only", "err", err)
-			}
-			return nil
-		})
-	}
 	g.Go(func() error {
 		raw, err := net.Listen("tcp", cfg.Addr)
 		if err != nil {
@@ -706,7 +788,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		// one in a link; the private half and every token stay out of this line.
 		logger.Info("listening", "addr", cfg.Addr, "tls", "1.3",
 			"server_key", base64.StdEncoding.EncodeToString(machine.PublicKey))
-		channel := srv.newChannelListener(raw, tlsConfig, serverKey, srv.channelTimeout, "direct")
+		channel := srv.newChannelListener(raw, tlsConfig, serverKey, srv.channelTimeout)
 		if err := httpServer.Serve(channel); !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 		}
@@ -734,27 +816,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	}
 	g.Go(func() error {
 		<-gctx.Done()
-		// The onion entry stops accepting FIRST: the main server's Shutdown
-		// closes its own listener and then closes every registered
-		// connection, and an onion connection accepted after that snapshot
-		// would never be told to go and would hold the drain to its deadline.
-		var err error
-		if onionServer != nil {
-			onionCtx, cancelOnion := context.WithTimeout(context.Background(), shutdownTimeout)
-			err = onionServer.Shutdown(onionCtx)
-			cancelOnion()
-		}
-		// The main server's deadline starts only now. A slow onion request -
-		// an upload over Tor - can hold the onion drain to its end, and a
-		// clock started before it would hand the main server an expired
-		// context: its listener would close with nothing drained, leaving
-		// requests it accepted meanwhile to race the database close.
 		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		mainErr := httpServer.Shutdown(shCtx)
+		err := httpServer.Shutdown(shCtx)
 		cancel()
-		if mainErr != nil && err == nil {
-			err = mainErr
-		}
 		if statusServer != nil {
 			// Down with the main one and BEFORE the database closes: a request
 			// arriving mid-shutdown would otherwise read a store being closed
@@ -773,18 +837,16 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		}
 		// Shutdown ignores hijacked connections; wait for their handlers so
 		// the going-away close frames flush and nothing touches the store
-		// after the database closes (invariant 9). Its own budget: an onion
-		// close handshake alone can take ten seconds.
+		// after the database closes (invariant 9). Its own budget: a close
+		// handshake through Tor alone can take ten seconds.
 		drainCtx, cancelDrain := context.WithTimeout(context.Background(), drainTimeout)
 		if waitErr := srv.WaitConnections(drainCtx); waitErr != nil {
 			logger.Warn("connections still draining at shutdown deadline", "err", waitErr)
 		}
 		cancelDrain()
-		// Then the watcher and tor: the supervisor hangs up its control
-		// connection, tor leaves (killed if it has not in ten seconds), and
-		// Run returns - the errgroup waits for it before the database closes.
+		// Then the watcher, and the hub; Run returns - the errgroup waits for
+		// both before the database closes.
 		stopWatch()
-		stopTor()
 		stopHub()
 		if err != nil {
 			return fmt.Errorf("shutdown: %w", err)
@@ -792,52 +854,6 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return nil
 	})
 	return g.Wait()
-}
-
-// setupOnion prepares the onion side: the loopback entry tor will forward to,
-// and the supervisor. Any failure here is logged and leaves the server on the
-// direct path alone - Tor is an addition to it, never a condition for it
-// (FR-007) - with a supervisor that says Tor is on and why it is not working,
-// rather than one that says it was turned off.
-//
-// The listener comes back raw; Run puts the channel in front of it when it
-// starts serving, exactly as it does for the main entry.
-func (s *Server) setupOnion(ctx context.Context, logger *slog.Logger) (*tor.Supervisor, *http.Server, net.Listener) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		logger.Error("onion entry unavailable, serving the direct path only", "err", err)
-		s.tor = tor.Unavailable("the onion entry could not listen: " + err.Error())
-		return nil, nil, nil
-	}
-	seed, err := s.store.OnionSeed(ctx)
-	if err != nil {
-		_ = ln.Close()
-		logger.Error("onion key unavailable, serving the direct path only", "err", err)
-		s.tor = tor.Unavailable("the onion key could not be read")
-		return nil, nil, nil
-	}
-	sup, err := tor.New(tor.Config{
-		Bin:       s.cfg.TorBin,
-		DataDir:   s.cfg.TorDir,
-		Seed:      seed,
-		Target:    ln.Addr().String(),
-		Keys:      s.activeKeys,
-		OnOffered: s.pokeAddresses,
-		Logger:    logger.With("component", "tor"),
-	})
-	if err != nil {
-		_ = ln.Close()
-		logger.Error("tor supervisor unavailable, serving the direct path only", "err", err)
-		s.tor = tor.Unavailable("the onion key is not usable")
-		return nil, nil, nil
-	}
-	s.tor = sup
-	onionServer := &http.Server{
-		Handler:           s.Handler(),
-		ReadHeaderTimeout: onionTimeout,
-		ConnContext:       onionConnContext,
-	}
-	return sup, onionServer, ln
 }
 
 // assertIdentitySchema refuses to start on a database written before the
@@ -892,32 +908,33 @@ func staleSchemaError(dbPath string) error {
 		dbPath, dbPath)
 }
 
-// announceClaim mints the server's own key on first start and, while nobody
-// owns this server yet, prints the pairing link.
+// announceClaim mints the claim token while nobody can get in, and says where
+// the link that carries it is: on the service page of this machine.
 //
-// The link goes to the log, and since 035 to the service page as well - which
-// is why that page binds to loopback and refuses to start anywhere else. What
-// the pre-035 rule guarded against (a page serving the QR to everyone on the
-// network while the transport is not TLS) is answered by the bind, checked on
-// the socket rather than on the address somebody typed. It is reprinted on
-// every start until somebody claims the server, because a terminal scrolls and
-// an unclaimed server has to stay claimable.
+// Where, and never the link itself (045, FR-022). The link carries the token -
+// the right to own this machine, from anywhere now that a claim through Tor is
+// a claim like any other - and, packed, the onion service's key; a log is
+// copied to places neither may go. The page shows the link, which is why it
+// binds to loopback and refuses to start anywhere else. The line is repeated
+// on every start until somebody claims the server, because a terminal scrolls
+// and an unclaimed server has to stay claimable.
 //
-// This is a place a token is deliberately written to output. It is the claim
-// mechanism itself, and it is only visible to whoever can already read
-// the machine's logs - which is whoever could take the database anyway.
+// The link is still BUILT here, once: a bind address no link can carry stops
+// the start, rather than surfacing later as a page with no link on it.
 func announceClaim(
 	ctx context.Context,
 	st *store.Store,
-	addr string,
+	cfg config.Config,
 	ownership store.OwnershipState,
 	machine store.ServerIdentity,
+	conf configuredAddresses,
 	logger *slog.Logger,
 ) (string, error) {
-	// Silent while a device can still reach this server. Not "while an owner is
-	// recorded": a store that lost its ownership marker still has a person who
-	// can get in, and printing a claim link there offers their machine to
-	// whoever reads the log.
+	// Silent while a device can still reach this server, and no token is
+	// minted: the page decides on the same predicate and shows no link. Not
+	// "while an owner is recorded": a store that lost its ownership marker
+	// still has a person who can get in, and a claim offered there offers
+	// their machine to whoever opens the page.
 	//
 	// The answer comes from the snapshot startup already took: re-deriving it
 	// here would evaluate the same rule twice against a store another
@@ -929,26 +946,31 @@ func announceClaim(
 	if err != nil {
 		return "", fmt.Errorf("issue claim token: %w", err)
 	}
-	// No onion address in it: tor has not started yet, and a machine nobody
-	// can reach has no device access key to publish a service with anyway.
-	link, err := BuildPairingLink(machine.PublicKey, token, []string{listenAddress(addr)}, nil)
-	if err != nil {
+	// The same addresses every link carries (045): the public one first when
+	// it is set, the bind address, then the onion service when it is set - a
+	// claim through Tor is a claim like any other.
+	if _, _, err := buildLink(machine.PublicKey, token, listenAddress(cfg.Addr), conf); err != nil {
 		return "", fmt.Errorf("build pairing link: %w", err)
 	}
 	// Three situations, and saying the wrong one tells the operator the wrong
 	// story about what is about to happen. The machine may never have been
 	// claimed; its owner may have run out of devices; or the ownership marker
 	// may be missing from a store that still holds a person and their whole
-	// conversation - in which case presenting this link signs the device in AS
+	// conversation - in which case presenting the link signs the device in AS
 	// that person rather than making it the owner of an empty machine.
+	msg := "this server has no owner yet - present the link from the service page in the app to claim it"
 	switch {
 	case ownership.Owned:
-		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
+		msg = "this server has an owner but no devices left - present the link from the service page in the app to get back in"
 	case ownership.HasPerson:
-		logger.Info("this server holds a conversation but records no owner - present this link to sign in as the person it belongs to", "link", link)
-	default:
-		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+		msg = "this server holds a conversation but records no owner - present the link from the service page to sign in as the person it belongs to"
 	}
+	if cfg.StatusAddr == "" {
+		// Nothing shows the link, and the log will not: say what would.
+		logger.Warn(msg, "service_page", "off - start the server with -status-addr to see the link")
+		return token, nil
+	}
+	logger.Info(msg, "service_page", "http://"+cfg.StatusAddr)
 	return token, nil
 }
 

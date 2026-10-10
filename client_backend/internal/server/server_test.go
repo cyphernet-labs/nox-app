@@ -35,6 +35,16 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	return newTestServerLogging(t, nil)
 }
 
+// newTestServerWith is newTestServer with tweaks applied to the Server before
+// anything serves - fixing the machine's interfaces, moving its bind address,
+// scaling a timeout.
+func newTestServerWith(t *testing.T, tweak ...func(*Server)) (*httptest.Server, *Server) {
+	t.Helper()
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"), nil, tweak...)
+	t.Cleanup(closeAll)
+	return ts, srv
+}
+
 // newTestServerLogging is newTestServer with somewhere to read the log from.
 // The logger is handed in BEFORE the stack starts: assigning srv.logger after
 // httptest is serving races the request middleware.
@@ -50,7 +60,7 @@ func newTestServerLogging(t *testing.T, logger *slog.Logger) (*httptest.Server, 
 // the whole stack against the same file.
 //
 // tweak runs on the Server after New and before anything serves - where a test
-// swaps in a fake tor, fixes the machine's interfaces or scales a timeout.
+// fixes the machine's interfaces or scales a timeout.
 func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Server)) (*httptest.Server, *Server, func()) {
 	t.Helper()
 
@@ -110,9 +120,10 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	// address list must not depend on the network of whoever runs the suite.
 	srv.listIPs = func() []net.IP { return nil }
 	srv.pingInterval = 50 * time.Millisecond
-	// Long write timeout keeps slow-consumer tests deterministic: the
-	// overflow drop (policy violation) must win over a ping/write timeout.
-	srv.writeTimeout = 30 * time.Second
+	// The write timeout stays the slow path's 30 s: slow-consumer tests rely
+	// on it, because the overflow drop (policy violation) must win over a
+	// ping or write timeout.
+	//
 	// Mirror Run's startup order: the orphan sweep runs before endpoints open.
 	if err := srv.sweepOrphans(context.Background(), time.Now().Add(-24*time.Hour).Unix()); err != nil {
 		t.Fatalf("startup sweep: %v", err)
@@ -122,7 +133,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	}
 	// Mirror Run again: the first address snapshot exists before anything
 	// serves, and the watcher - the only sender of server.addresses - runs.
-	srv.refreshAddresses()
+	srv.refreshAddresses(t.Context())
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	watchDone := make(chan struct{})
 	go func() {
@@ -145,7 +156,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	if err != nil {
 		t.Fatalf("channelTLSConfig: %v", err)
 	}
-	ts := serveChannel(t, srv, raw, tlsCfg, serverKey, srv.channelTimeout, "direct", withChannelPeer, &testDevices{})
+	ts := serveChannel(t, srv, raw, tlsCfg, serverKey, &testDevices{})
 	closeAll := func() {
 		ts.Close()
 		stopWatch()
@@ -160,18 +171,15 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 }
 
 // serveChannel serves srv's handler behind the channel on raw, the way Run
-// serves each entry, and returns an httptest.Server whose client dials the way
-// the app does. ts.URL is https: it names the TLS the channel carries, and the
-// client's transport is the one that knows how to open it.
-func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey,
-	budget time.Duration, entry string, connCtx func(context.Context, net.Conn) context.Context, devices *testDevices,
-) *httptest.Server {
+// serves the main port, and returns an httptest.Server whose client dials the
+// way the app does. ts.URL is https: it names the TLS the channel carries, and
+// the client's transport is the one that knows how to open it.
+func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey, devices *testDevices) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewUnstartedServer(srv.Handler())
 	_ = ts.Listener.Close()
-	ts.Listener = srv.newChannelListener(raw, cfg, key, budget, entry)
-	ts.Config.ConnContext = connCtx
-	ts.Config.ReadHeaderTimeout = readHeaderTimeout
+	ts.Listener = srv.newChannelListener(raw, cfg, key, srv.channelTimeout)
+	srv.configureMain(ts.Config)
 	// Transport-level complaints go nowhere: several tests break connections
 	// on purpose, and http.Server would print each one to stderr.
 	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
@@ -361,6 +369,71 @@ func readDB(t *testing.T, srv *Server) *sql.DB {
 	return d.Read
 }
 
+// readWriteDB is readDB's writing twin, for the one thing a test needs it for:
+// leaving the database the way a hand edit or a partial restore would.
+func readWriteDB(t *testing.T, srv *Server) *sql.DB {
+	t.Helper()
+	d, err := db.Open(srv.cfg.DBPath)
+	if err != nil {
+		t.Fatalf("db.Open for writing: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d.Write
+}
+
+// announceConfig is the configuration startup hands to announceClaim: a bind
+// address for the link it builds, and the service page that shows the link.
+var announceConfig = config.Config{Addr: "127.0.0.1:8080", StatusAddr: "127.0.0.1:8081"}
+
+// The startup line says where the claim link is and never what it is: the link
+// carries the claim token and, packed, the onion service's key, and a log is
+// copied to places neither may go (045, FR-022). With the page turned off it
+// says how to turn it on, because nothing else shows the link.
+func TestTheStartupLinePointsAtThePageAndNeverCarriesTheLink(t *testing.T) {
+	st := startStore(t)
+	ctx := context.Background()
+	stored := setAddressParams(t, st, testOnionAddr)
+
+	logs := &syncBuffer{}
+	token, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configured(stored),
+		slog.New(ScrubLogs(slog.NewTextHandler(logs, nil))))
+	if err != nil {
+		t.Fatalf("announceClaim: %v", err)
+	}
+	out := logs.String()
+	if token == "" || strings.Contains(out, token) || strings.Contains(out, "nox://pair/") || strings.Contains(out, "[link]") {
+		t.Fatalf("the line carries the link or its token (%q):\n%s", token, out)
+	}
+	if !strings.Contains(out, "service page") || !strings.Contains(out, "http://127.0.0.1:8081") {
+		t.Fatalf("the line does not say where the link is:\n%s", out)
+	}
+
+	off := &syncBuffer{}
+	cfg := announceConfig
+	cfg.StatusAddr = ""
+	if _, err := announceClaim(ctx, st, cfg, mustOwnership(t, st), mustIdentity(t, st), configured(stored),
+		slog.New(slog.NewTextHandler(off, nil))); err != nil {
+		t.Fatalf("announceClaim with the page off: %v", err)
+	}
+	if !strings.Contains(off.String(), "level=WARN") || !strings.Contains(off.String(), "-status-addr") {
+		t.Fatalf("with the page off the line does not say how to see the link:\n%s", off.String())
+	}
+}
+
+// setAddressParams stores onion the way a start parameter does and returns the
+// stored addresses.
+func setAddressParams(t *testing.T, st *store.Store, onion string) store.Addresses {
+	t.Helper()
+	if err := st.ApplyAddressParam(context.Background(), store.AddressOnion, onion, onion); err != nil {
+		t.Fatalf("ApplyAddressParam: %v", err)
+	}
+	got, err := st.Addresses(context.Background())
+	if err != nil {
+		t.Fatalf("Addresses: %v", err)
+	}
+	return got
+}
+
 // The startup line has to tell the two situations apart, because they ask
 // different things of the person reading it: a machine nobody has claimed is
 // about to get an owner, while one whose owner lost every device is about to
@@ -380,7 +453,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	ctx := context.Background()
 
 	fresh := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
+	if _, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
 		t.Fatalf("announceClaim on a fresh store: %v", err)
 	}
 	if !strings.Contains(fresh.String(), "no owner yet") {
@@ -392,7 +465,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := st.Pair(ctx, token, "dev-a", "test", store.PairOptions{}, 100); err != nil {
+	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
 	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {
@@ -400,7 +473,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	}
 
 	owned := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(owned, nil))); err != nil {
+	if _, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(owned, nil))); err != nil {
 		t.Fatalf("announceClaim on an owned store: %v", err)
 	}
 	if strings.Contains(owned.String(), "no owner yet") {
@@ -425,7 +498,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	_ = handle.Close()
 
 	stranded := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
+	if _, err := announceClaim(ctx, st, announceConfig, mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
 		t.Fatalf("announceClaim on a store with no marker: %v", err)
 	}
 	if !strings.Contains(stranded.String(), "sign in as the person it belongs to") {

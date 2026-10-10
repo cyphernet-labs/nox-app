@@ -32,7 +32,7 @@ func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	if _, err := s.Pair(ctx, invite, "dev-owner-2", "test", PairOptions{}, 410); err != nil {
+	if _, err := s.Pair(ctx, invite, "dev-owner-2", "test", 410); err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
 	// One chat, four messages.

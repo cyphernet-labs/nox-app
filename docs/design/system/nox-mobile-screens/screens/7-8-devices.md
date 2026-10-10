@@ -13,8 +13,8 @@ Detail scaffold (back + title). One group holding every device, the current one 
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
-- `invite` — QR card with a `nox://pair/…` link (version 3), valid for 10 minutes. Until 045 a new device pairs over the server's direct address only (the onion service opens only for a paired device's access key), so the server answers `"onion": false` and the card always carries the note under its message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`)
-- `invite-home-only` — the same card and note; kept as its own state because the note follows the server's answer, not a guess of the app
+- `invite` — QR card with a `nox://pair/…` link (version 3), valid for 10 minutes. The link carries every address the server has to offer: its public address when one is set, a direct address, and its onion address when one is set (feature 045). A new device pairs with it from wherever one of them answers — through Tor too, if it ticks Use Tor on Connect (2.4).
+- `invite-home-only` — the link carries neither the server's onion address nor its public address, so it works only on the home network, and the card says so under its message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`). The note follows the server's reply to `device.invite` — its `public` flag, and its `onion` flag counted only when the link itself carries the onion address — never a guess of the app
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior

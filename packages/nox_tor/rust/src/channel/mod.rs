@@ -60,6 +60,9 @@ pub mod code {
     pub const TOR_ONION_INVALID: i32 = 7;
     pub const TOR_ONION_NOT_FOUND: i32 = 8;
     pub const TOR_ONION_UNREACHABLE: i32 = 9;
+    /// Not produced since 045: the client holds no keys, and a service that
+    /// asks for one is TOR_ONION_UNREACHABLE. Keeps its number, so the codes
+    /// the app binds stay where they are.
     pub const TOR_CLIENT_AUTH: i32 = 10;
     pub const INTERNAL: i32 = 11;
 

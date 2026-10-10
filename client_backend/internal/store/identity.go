@@ -140,21 +140,7 @@ func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Ident
 // insertDevice authorises a key for a person. Called only from pairing: a
 // greeting can no longer bring a device into existence, which is the whole
 // point - an unknown key is refused, not enrolled.
-func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform, accessKey string, now int64) error {
-	// An empty access key is NULL, and COALESCE keeps the one the device
-	// already had: re-pairing without a key must not take its onion access
-	// away, and re-pairing with one replaces it - one key per device (039).
-	var access any
-	if accessKey != "" {
-		taken, err := accessKeyTaken(ctx, tx, deviceKey, accessKey)
-		if err != nil {
-			return err
-		}
-		if taken {
-			return ErrAccessKeyTaken
-		}
-		access = accessKey
-	}
+func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform string, now int64) error {
 	_, err := tx.ExecContext(ctx,
 		// The row is refreshed but NEVER re-bound to another person. Rebinding
 		// looks like the fix for "the reply and the row must say the same
@@ -164,12 +150,11 @@ func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform, 
 		// for themselves walk off with somebody else's paired device. The other
 		// way to make the two agree is to refuse the pair, and that is what
 		// Pair does (see deviceOwnerOf below).
-		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at, access_key) VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (device_key) DO UPDATE SET
 		     platform = excluded.platform,
-		     last_seen_at = excluded.last_seen_at,
-		     access_key = COALESCE(excluded.access_key, devices.access_key)`,
-		deviceKey, userID, platform, now, now, access)
+		     last_seen_at = excluded.last_seen_at`,
+		deviceKey, userID, platform, now, now)
 	if err != nil {
 		return fmt.Errorf("insert device: %w", err)
 	}

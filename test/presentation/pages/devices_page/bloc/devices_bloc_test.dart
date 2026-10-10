@@ -153,6 +153,20 @@ void main() {
   );
 
   blocTest<DevicesBloc, DevicesState>(
+    'an invite whose link carries the public address is not home-only (phase 045, T017)',
+    build: () {
+      when(devices.inviteDevice()).thenAnswer(
+        (_) async =>
+            const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#public', onion: false, public: true)),
+      );
+      return DevicesBloc();
+    },
+    act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
+    wait: const Duration(milliseconds: 100),
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#public' && !s.inviteHomeOnly)],
+  );
+
+  blocTest<DevicesBloc, DevicesState>(
     'hiding a home-only invite takes the note with it',
     build: () => DevicesBloc(),
     seed: () => const DevicesState(loading: false, invite: DeviceInvite(link: _link, onion: false)),

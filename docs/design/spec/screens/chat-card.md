@@ -60,8 +60,8 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Initial-loading | Список файлов грузится. Centered `CircularProgressIndicator`. |
 | Loaded | Header + People section + Files section отображаются. |
 | Empty (files) | Файлов нет. **Empty state** (глиф `folder_open`) + текст в области Files section. Header и People section при этом остаются видны. |
-| Offline / Inline-error | Не удалось загрузить — `MaterialBanner` сверху (persistent, см. [overview.md / Уровни ошибок](../overview.md#уровни-ошибок-и-обратной-связи)). Нет связи — плашка `No connection`, как в ленте. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
-| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This isn't the server you paired with` с действием `Try again`, там же, где и остальные — над Header'ом. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Файлы остаются перечисленными под плашкой. |
+| Offline / Inline-error | Не удалось загрузить — `MaterialBanner` сверху (persistent, см. [overview.md / Уровни ошибок](../overview.md#уровни-ошибок-и-обратной-связи)). Нет связи — плашка, как в ленте: текст причины, если она известна ([overview / Причины неудачи](../overview.md#причины-неудачи)), иначе `No connection`, глиф `wifi_off`. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This onion address belongs to a different server.` с глифом ошибки и действием `Try again`, там же, где и остальные — над Header'ом. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Файлы остаются перечисленными под плашкой. |
 | Fatal | Передача в 3.1 (embedded). |
 
 ## Взаимодействия
@@ -100,7 +100,10 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Files empty title | `No files yet` |
 | Files empty message | `Files sent in this chat will appear here.` |
 | Inline-error (network) | `Could not load chat info. Check your connection and try again.` |
-| Server-mismatch banner | `This isn't the server you paired with` |
+| Offline banner (причина неизвестна) | `No connection` |
+| Offline banner (причина известна) | текст причины, как в ленте 5.2 |
+| Offline action | `Try again` |
+| Server-mismatch banner | `This onion address belongs to a different server.` |
 | Server-mismatch action | `Try again` |
 
 ## Принятые решения (Q1–Q9)
@@ -118,6 +121,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Q9 | Stats / метаданные | Не показываем (creator/date — только inline-событием в 5.2) |
 | — | Секция `People` (фаза 037) | Представление, а не ростер: одна строка — сам человек, читается из резолвера личности; новой сущности и хранения не заводится |
 | — | Кнопка приглашения (фаза 037) | `Invite a person` **всегда disabled**, под ней подпись `Available in a future version`; нажатие не даёт ничего. Обе ширины |
+| — | Текст плашки «нет связи» (фаза 045) | Причина неудачи, когда она известна, вместо `No connection`; `Try again` остаётся. Обе ширины — на десктопе плашка стоит наверху side-sheet'а |
 
 ## Десктоп-раскладка (этап M4, сверено с корпусом)
 

@@ -90,6 +90,9 @@ class FakeSocket implements SocketConnection {
   /// The machine that answered proved a key other than the link's.
   void refuseServerKey() => refuseChannel(ChannelFailure.wrongServer);
 
+  /// The connection fails with [error], as the transport delivers it.
+  void failWith(Object error) => _incoming.addError(error);
+
   Map<String, dynamic>? commandNamed(String cmd) {
     for (final f in sent) {
       if (f['cmd'] == cmd) return f;
