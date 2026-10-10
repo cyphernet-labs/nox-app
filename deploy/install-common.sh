@@ -32,13 +32,26 @@ NOX_ONION_WAIT=60
 
 # --- output ------------------------------------------------------------------
 
-say() { printf '%s\n' "$*"; }
-step() { printf '\n==> %s\n' "$*"; }
-note() { printf '    %s\n' "$*"; }
-warn() { printf 'warning: %s\n' "$*" >&2; }
+say() { printf '%s\n' "$*" || output_lost; }
+step() { printf '\n==> %s\n' "$*" || output_lost; }
+note() { printf '    %s\n' "$*" || output_lost; }
+warn() { printf 'warning: %s\n' "$*" >&2 || output_lost; }
 die() {
-	printf 'error: %s\n' "$*" >&2
+	printf 'error: %s\n' "$*" >&2 || output_lost
 	exit 1
+}
+
+# output_lost sends all the script prints to /dev/null from here on, once a
+# write failed: the terminal is gone (a hangup), or the tee the output went
+# through died with a Ctrl+C. Printing is best effort and never stops the
+# script. bash keeps the text of a failed write in its buffer and writes it
+# into whatever it writes next - a command substitution among them, which
+# then reads the script's own messages back instead of a pid - so the buffer
+# is flushed to /dev/null at once.
+output_lost() {
+	exec >/dev/null 2>&1
+	printf ''
+	return 0
 }
 
 # q quotes one word for the undo record, which is read back by eval.
@@ -228,23 +241,26 @@ WORK=""
 
 on_exit() {
 	local status=$?
+	# Nothing may cut the taking back short - a second Ctrl+C, a hangup, a
+	# closed pipe, a write that fails: half of it would leave the machine in a
+	# state nobody chose. So the signals are ignored from here on, by the
+	# commands it runs too, and a failed command no longer ends the script:
+	# when the terminal is gone, or the tee it wrote through died with the
+	# Ctrl+C, what it prints is lost, and that is all.
+	trap '' INT TERM HUP QUIT PIPE
+	set +e
 	if [ -t 0 ]; then
-		stty echo 2>/dev/null || true
+		stty echo 2>/dev/null
 	fi
-	if [ "$status" -ne 0 ] && [ "$COMMITTED" = 0 ]; then
-		if [ ${#UNDO_TOR[@]} -gt 0 ] || [ ${#UNDO_MAIN[@]} -gt 0 ]; then
-			# A second Ctrl+C must not cut the taking back short: half of it
-			# would leave the machine in a state nobody chose.
-			trap '' INT TERM
-			printf '\n' >&2
-			warn "the installation did not finish; taking back what this run changed"
-			undo_run TOR
-			undo_run MAIN
-			if [ "$UNDO_FAILED" = 0 ]; then
-				say "This machine is as it was before the run."
-			else
-				warn "not everything could be taken back: see the lines above"
-			fi
+	if [ "$status" -ne 0 ] && [ "$COMMITTED" = 0 ] && { [ ${#UNDO_TOR[@]} -gt 0 ] || [ ${#UNDO_MAIN[@]} -gt 0 ]; }; then
+		printf '\n' >&2 || output_lost
+		warn "the installation did not finish; taking back what this run changed"
+		undo_run TOR
+		undo_run MAIN
+		if [ "$UNDO_FAILED" = 0 ]; then
+			say "This machine is as it was before the run."
+		else
+			warn "not everything could be taken back: see the lines above"
 		fi
 	fi
 	if [ -n "$WORK" ] && [ -d "$WORK" ]; then
@@ -253,10 +269,18 @@ on_exit() {
 	exit "$status"
 }
 
+# arm_traps makes every way a run can be stopped one that takes it back. A
+# signal with no trap of its own would end the script with the EXIT trap
+# seeing the last command's status - 0 - as if the run had finished: a closed
+# terminal or a dropped SSH connection (HUP), Ctrl+\ (QUIT), and the tee the
+# output goes through dying (PIPE).
 arm_traps() {
 	trap on_exit EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
+	trap 'exit 129' HUP
+	trap 'exit 131' QUIT
+	trap 'exit 141' PIPE
 }
 
 # make_work creates the run's scratch directory: under the prefix when
