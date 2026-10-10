@@ -561,3 +561,26 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - No push, no `chat.markRead`, message `body` is open text — all gated
   by open questions; see contract §8 before touching.
 - Cyrillic never appears in code, comments, or commit messages.
+
+## Installing on a machine (049)
+
+The owner's machine gets the server from `deploy/install-linux.sh`,
+`deploy/install-macos.sh` or `deploy/install-windows.ps1` (`deploy/README.md`):
+a service account and a data folder only it can read, the binary (built here
+with `CGO_ENABLED=0`, or `--binary`), tor as a separate OS service with the
+NOX onion service, the server as a systemd, launchd or Windows service, the
+first password and the first link. The scripts lean on these, so a change to
+any of them is a change to the scripts too:
+
+- The services start the server with `-addr 0.0.0.0:<port> -db <data>/nox.db
+  -status-addr 127.0.0.1:<port>`, plus `-onion-addr` and `-public-addr` when
+  there are addresses. A renamed or refused flag stops every installed
+  machine at its next start.
+- `/health` on the service page answers `locked` or `ok`: the scripts wait on it.
+- `noxd unlock` takes the first password as two lines of standard input, and
+  `noxd link -qr` prints the code and the link: no password ever reaches a
+  command line and no link a file.
+- The onion service's `HiddenServicePort 443` points at `127.0.0.1:<port>`, so
+  the server is bound where loopback reaches it.
+- On Windows the service control manager starts `noxd` itself
+  (`service_windows.go`).
