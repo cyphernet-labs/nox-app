@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File deploy\install-windows.ps1
 | `--public-addr H:P` | `-PublicAddr H:P` | публичный адрес машины, если он есть |
 | `--binary PATH` | `-Binary PATH` | готовый `noxd` вместо сборки; на macOS ставится его копия без карантина, который macOS вешает на файл, пришедший через AirDrop, почту или браузер |
 | `--no-tor` | `-NoTor` | без tor: устройства подключаются только напрямую |
-| `--tor-bin PATH` | `-TorBin PATH` | свой tor 0.4.9+ с PoW вместо скачанного (macOS, Windows; на Linux — только для проверки с `--prefix`) |
+| `--tor-bin PATH` | `-TorBin PATH` | свой tor 0.4.9+ с PoW вместо скачанного (macOS, Windows; на Linux — только для проверки с `--prefix`); на Windows он копируется вместе с библиотеками рядом в `C:\Program Files\NOX\tor\` — учётная запись службы tor не читает папки владельца |
 | `--prefix DIR` `--no-service` | `-Prefix DIR` `-NoService` | проверка скрипта без изменения системы, см. ниже |
 
 ## Что делает скрипт
@@ -137,7 +137,7 @@ macOS показывает уведомление о новом фоновом �
 
 ### Windows
 
-1. tor: Tor Expert Bundle с dist.torproject.org, проверка подписи — Gpg4win. Настройки — свой `torrc` (`SocksPort 0`, `DataDirectory`, строки выше; путь к журналу tor — без пробелов). Служба — `--nt-service` первым параметром:
+1. tor: Tor Expert Bundle с dist.torproject.org, проверка подписи — Gpg4win. `tor.exe` с библиотеками рядом — в `C:\Program Files\NOX\tor\`: учётная запись службы не читает папки владельца (рабочий стол, загрузки). Настройки — свой `torrc` (`SocksPort 0`, `DataDirectory`, строки выше; путь к журналу tor — без пробелов). Служба — `--nt-service` первым параметром:
 
    ```powershell
    New-Service -Name nox-tor -StartupType Automatic `

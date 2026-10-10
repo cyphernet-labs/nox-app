@@ -40,7 +40,9 @@ No tor: devices connect directly only.
 
 .PARAMETER TorBin
 Run this tor.exe (0.4.9 or newer, with proof of work) instead of the Tor
-Project's, which the script otherwise downloads and checks.
+Project's, which the script otherwise downloads and checks. It is copied,
+with the libraries beside it, into the install folder, where the tor
+service's own account can run it.
 
 .PARAMETER Prefix
 Check the script without changing the system; goes together with -NoService.
@@ -593,16 +595,34 @@ function Get-TorBundle {
     return $exe
 }
 
+# Install-TorFiles puts a tor.exe into the install folder, under that name,
+# with the libraries that sit beside it: the folder the tor service's account
+# may read and run from.
+function Install-TorFiles([string]$Exe) {
+    $dir = Split-Path -Parent $script:TorExeInstalled
+    New-Directory $dir
+    Install-File $Exe $script:TorExeInstalled
+    foreach ($lib in (Get-ChildItem -LiteralPath (Split-Path -Parent $Exe) -Filter '*.dll' -File -ErrorAction SilentlyContinue)) {
+        Install-File $lib.FullName (Join-Path $dir $lib.Name)
+    }
+}
+
 # Install-Tor puts tor and the NOX onion service in place and returns the
 # onion address. Every change goes on the tor record.
 function Install-Tor {
     Step 'tor'
     $fresh = ''
     if ($TorBin) {
-        $why = Get-TorUnsuitable $TorBin
+        $given = (Resolve-Path -LiteralPath $TorBin).Path
+        $why = Get-TorUnsuitable $given
         if ($why) { Fail "the tor at $TorBin cannot be used: $why" }
-        $script:TorExe = (Resolve-Path -LiteralPath $TorBin).Path
-        Note "using the tor at $($script:TorExe)"
+        # Run from the install folder, like a downloaded tor: the service runs
+        # as NT SERVICE\nox-tor, which may read Program Files but not the
+        # owner's own folders - where a tor.exe usually is (Tor Browser on the
+        # Desktop, a bundle unpacked in Downloads).
+        if ($given -ne $script:TorExeInstalled) { $fresh = $given }
+        $script:TorExe = $script:TorExeInstalled
+        Note "using the tor at $given ($(Get-TorVersion $given)), run from $(Split-Path -Parent $script:TorExeInstalled)"
     } elseif ((Test-Path -LiteralPath $script:TorExeInstalled) -and -not (Get-TorUnsuitable $script:TorExeInstalled)) {
         $script:TorExe = $script:TorExeInstalled
         Note "using the tor installed before ($(Get-TorVersion $script:TorExe))"
@@ -614,11 +634,10 @@ function Install-Tor {
         Note "Tor Expert Bundle ready ($(Get-TorVersion $fresh))"
     }
 
-    if (-not $Prefix) { Stop-ServiceForUpdate $TorService }
-    if ($fresh) {
-        New-Directory (Split-Path -Parent $script:TorExeInstalled)
-        Install-File $fresh $script:TorExeInstalled
-    }
+    # Stopped before its files are replaced: Windows does not let a running
+    # program's file be written over.
+    if ($Prefix) { Stop-Background 'tor' $script:TorPidFile } else { Stop-ServiceForUpdate $TorService }
+    if ($fresh) { Install-TorFiles $fresh }
     New-Directory $script:TorDir
     New-Directory $script:TorData
 
