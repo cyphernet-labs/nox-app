@@ -2,7 +2,8 @@ name: NOX Compile check
 
 # Five per-platform debug smoke builds (no secrets). Launch-verify today: macOS + iOS
 # + Android; Windows/Linux are compile-only (launch is a tracked follow-up). Desktop
-# flavor comes from config/<flavor>.json (no native --flavor). Packaging/signing: FUTURE.
+# flavor comes from config/<flavor>.json (no native --flavor). Packaging/signing: FUTURE;
+# the macOS build is signed by the team locally (phase 048) and built unsigned here.
 
 # ⏸ TEMPORARILY DISABLED (2026-06-26): see ci.yml — auto-runs off to conserve CI
 # minutes during active development. Manual only for now; re-enable by uncommenting
@@ -73,7 +74,13 @@ jobs:
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
+      # Unsigned: the build is signed by the team (phase 048 - the keychain
+      # of the data-protection kind needs its access group), and CI holds no
+      # certificate. Nothing here runs the app, so nothing needs the keychain.
       - run: flutter build macos --debug --dart-define-from-file=config/stage.json
+        env:
+          FLUTTER_XCODE_CODE_SIGNING_ALLOWED: 'NO'
+          FLUTTER_XCODE_CODE_SIGNING_REQUIRED: 'NO'
 
   compile-windows:
     runs-on: windows-latest
