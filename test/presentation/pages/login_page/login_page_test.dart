@@ -6,6 +6,8 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_app/presentation/pages/connect_page/connect_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
@@ -60,6 +62,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(QrScanPage), findsOneWidget);
+  });
+
+  testWidgets('a readable link goes on to the connection screen, which shows where it leads (FR-013)', (tester) async {
+    await pumpApp(tester, const LoginPage());
+
+    await tester.enterText(find.byType(TextField), PairingLink.demo);
+    await tester.pump();
+    await tester.tap(signInButton());
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConnectPage), findsOneWidget);
+    expect(find.text(l10nEn.connectTitle), findsOneWidget);
+    expect(find.text('192.168.1.20:8443'), findsOneWidget);
+  });
+
+  testWidgets('back from the connection screen the link is still in the field', (tester) async {
+    await pumpApp(tester, const LoginPage());
+    await tester.enterText(find.byType(TextField), PairingLink.demo);
+    await tester.pump();
+    await tester.tap(signInButton());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, l10nEn.actionCancel));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConnectPage), findsNothing);
+    expect(find.text(PairingLink.demo), findsOneWidget);
   });
 
   testWidgets('a link from a newer server says to update the app, apart from a broken one (FR-017)', (tester) async {

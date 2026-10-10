@@ -14,6 +14,7 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
@@ -68,7 +69,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// session back, because a stored identity with no settled outcome would
   /// strand the next launch in onboarding.
   @override
-  Future<RepositoryResult<bool>> signIn({required String identifier}) {
+  Future<RepositoryResult<bool>> signIn({required String identifier, ConnectionSettings? connection}) {
     return execute<bool>(() async {
       final PairingLink link;
       try {
@@ -84,20 +85,20 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           },
         );
       }
-      // Pairing goes over the direct addresses only until phase 045 (FR-019):
-      // a link with none has no way to its server from here - reported as the
-      // server being out of reach, which on the screen says pairing works at
-      // home.
+      // The connection starts at the link's first direct address - the one
+      // the connection screen showed - or, for a link with none, at the
+      // address the person typed there. Every address the link carries is
+      // stored with the server's, and what the person changed on the
+      // connection screen with them, so the path selector can try them all:
+      // directly first, and through Tor when the person allowed it (phase
+      // 045) - the pairing itself included.
       final direct = link.directAddresses;
-      if (direct.isEmpty) return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
-
-      // The connection starts at the link's first direct address; every
-      // address it carries is stored with the server's, so the path selector
-      // can try them all - and keep the onion address for the day this device
-      // is away from home.
-      final saved = await _sessionRepository.saveServer(address: direct.first, serverKey: link.serverKeyBase64);
+      final typed = connection?.serverAddress.trim();
+      final start = direct.isNotEmpty ? direct.first : typed;
+      if (start == null || start.isEmpty) return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
+      final saved = await _sessionRepository.saveServer(address: start, serverKey: link.serverKeyBase64);
       if (!saved.hasData) return saved;
-      await _storeLinkAddresses(link, direct);
+      await _storeLinkAddresses(link, direct, connection);
 
       final handshake = liveIdentityHandshake;
       if (handshake == null) {
@@ -212,16 +213,35 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// T053).
   static const Duration _greetingAfterPairing = Duration(seconds: 2);
 
-  /// Stores every address the link carries: the direct ones in its order, and
-  /// the onion address its service key derives - kept for the connection
-  /// through Tor after pairing; the greetings that follow replace them with
-  /// what the server says about itself. Best effort: without them the
-  /// session still starts at the link's first address.
-  Future<void> _storeLinkAddresses(PairingLink link, List<String> direct) async {
+  /// Stores every address the link carries - the direct ones in its order,
+  /// and the onion address its service key derives - with what the person
+  /// set on the connection screen (phase 045): a field changed from the
+  /// link's value is a hand edit, a cleared onion field means no onion
+  /// address, and `Use Tor` as ticked. The greetings that follow replace the
+  /// link's addresses with what the server says about itself. Best effort:
+  /// without them the session still starts at the link's first address.
+  Future<void> _storeLinkAddresses(PairingLink link, List<String> direct, ConnectionSettings? connection) async {
     if (!getIt.isRegistered<ServerAddressesRepository>()) return;
     final serviceKey = link.onionServiceKey;
     final host = serviceKey == null || !getIt.isRegistered<TorService>() ? null : getIt<TorService>().onionFromPublicKey(serviceKey);
-    final stored = await getIt<ServerAddressesRepository>().saveFromServer(direct: direct, onion: host == null ? null : '$host:443');
+    final linkOnion = host == null ? null : '$host:443';
+    String? manualAddress;
+    String? manualOnion;
+    if (connection != null) {
+      final typed = connection.serverAddress.trim();
+      // Only an edit of the link's own address: a link without one started
+      // the session at what was typed, which is no edit of anything.
+      if (direct.isNotEmpty && typed.isNotEmpty && typed != direct.first) manualAddress = typed;
+      final typedOnion = connection.onionAddress ?? '';
+      if (typedOnion != (linkOnion ?? '')) manualOnion = typedOnion;
+    }
+    final stored = await getIt<ServerAddressesRepository>().saveFromLink(
+      direct: direct,
+      onion: linkOnion,
+      manualAddress: manualAddress,
+      manualOnion: manualOnion,
+      useTor: connection?.useTor ?? false,
+    );
     if (!stored.hasData) logRepository.debug(target: this, message: 'sign-in: the link addresses were not stored, starting at its first');
   }
 
@@ -323,14 +343,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // clearing, leaving a logged-out device holding someone's messages.
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
         // Swept once more with the channel down. A greeting that landed
-        // between the wipe and the stop could have registered a freshly minted
-        // access key or stored the server's addresses again (FR-018). The
-        // addresses through their own queue, so a write already under way
-        // lands first and is wiped, rather than landing after.
+        // between the wipe and the stop could have stored the server's
+        // addresses again (FR-018). Through their own queue, so a write
+        // already under way lands first and is wiped, rather than landing
+        // after.
         if (getIt.isRegistered<ServerAddressesRepository>()) await getIt<ServerAddressesRepository>().clear();
         if (getIt.isRegistered<FlutterSecureStorage>()) {
           try {
-            await ConnectionStorage.delete(getIt<FlutterSecureStorage>(), includeDeviceAccessKey: true);
+            await ConnectionStorage.delete(getIt<FlutterSecureStorage>());
           } catch (error, stackTrace) {
             logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
           }

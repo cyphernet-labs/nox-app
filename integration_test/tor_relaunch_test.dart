@@ -19,14 +19,15 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:uuid/uuid.dart';
 
 /// A device that paired earlier starts again away from home (phase 040, US1,
-/// SC-001): no pairing, just the app's own start - the session it kept, its
-/// own key, and Tor. Run on a simulator or an emulator right after
-/// `tor_pairing_test.dart`, which leaves the session behind:
+/// SC-001): no pairing, just the app's own start - the session it kept, `Use
+/// Tor` as it was left on, and Tor; no access key (phase 045). Run on a
+/// simulator or an emulator right after `tor_pairing_test.dart`, which leaves
+/// the session behind:
 ///   fvm flutter test integration_test/tor_relaunch_test.dart -d DEVICE --dart-define=nox.forceTor=true
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('a paired device starts away from home and talks through Tor on its own key', (tester) async {
+  testWidgets('a paired device starts away from home and talks through Tor', (tester) async {
     await configureDependencies(Environment.dev);
     await getIt.allReady();
     await getIt<AppConfigRepository>().initialize(flavorType: AppFlavorType.stage);

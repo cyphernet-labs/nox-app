@@ -17,6 +17,7 @@ import 'package:nox_app/domain/model/session/server_identity.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// The client half of the contract-v0 envelope: one socket, greeted once,
 /// carrying correlated commands out and journal events in.
@@ -168,13 +169,9 @@ class NoxSocketClient {
   ServerLimits? limits;
 
   /// Where the server can be found, as the last greeting stated it (contract
-  /// §3, phase 039). Null before a greeting, and from a server older than 039.
+  /// §3, phases 039 and 045). Null before a greeting, and from a server older
+  /// than 039.
   ServerAddresses? addresses;
-
-  /// Whether the server reads what phase 039 added to the wire,
-  /// `device.setAccessKey` among it. The greeting carrying `addresses` is that
-  /// flag (contract §2.1).
-  bool get supportsAccessKeys => addresses != null;
 
   /// The address of the current connection; null between connections.
   Uri? get currentUrl => _connection == null ? null : _dialled;
@@ -280,10 +277,9 @@ class NoxSocketClient {
   /// not because it is a greeting, but because it shares the one property that
   /// matters here: it must not wait for one.
   ///
-  /// [accessKey] - the public half of this device's onion access key - goes
-  /// with every pairing (phase 040, until 045): the server registers it in the
-  /// same transaction, so a device that paired at home can come in through Tor
-  /// once it is away (contract §2.1, §8A).
+  /// No onion access key goes with it since phase 045: the onion address is
+  /// open to whoever knows it, and a pairing through Tor is as allowed as one
+  /// at home (contract §8A).
   ///
   /// A connection lost under the pairing does not lose the pairing: the token
   /// is presented again on the next connection, within ONE budget for the
@@ -292,8 +288,8 @@ class NoxSocketClient {
   /// identity (contract §8A) - and it is what keeps a dial that ran out its
   /// time through Tor, or a network change mid-pairing, from sending the
   /// person off to try again by hand.
-  Future<CommandReply> pair({required String token, required String platform, String? accessKey}) async {
-    final data = <String, dynamic>{'token': token, 'platform': platform, 'access_key': ?accessKey};
+  Future<CommandReply> pair({required String token, required String platform}) async {
+    final data = <String, dynamic>{'token': token, 'platform': platform};
     final waited = Stopwatch()..start();
     var slow = false;
     // The slow budget from the moment the slow path shows, and kept: between
@@ -308,7 +304,10 @@ class NoxSocketClient {
       try {
         return await _sendOnce(isGreeting: true, via: connection, 'pair', data, left: left);
       } on SocketUnavailableException {
-        if (!_started || left() <= Duration.zero) rethrow;
+        // A refusal for good - another server behind the onion address - is
+        // not a loss to wait out: no connection comes after it until the
+        // channel is started again (phase 045).
+        if (!_started || left() <= Duration.zero || _phase.value.isTerminal) rethrow;
         logRepository.debug(target: this, message: 'socket: the connection carrying pair went away, presenting it again');
       }
     }
@@ -390,10 +389,13 @@ class NoxSocketClient {
       final connection = _connection;
       if (connection != null) return connection;
       if (!_started) throw const SocketUnavailableException('no connection');
+      // Terminal: nothing will open until the channel is started again - a
+      // pairing waiting here would sit out its whole budget for nothing.
+      if (_phase.value.isTerminal) throw const SocketUnavailableException('refused for good');
       final wait = remaining();
       if (wait <= Duration.zero) throw const SocketUnavailableException('no connection');
       try {
-        await _opened.stream.first.timeout(wait);
+        await Rx.merge<Object?>([_opened.stream, _phase.stream.where((phase) => phase.isTerminal)]).first.timeout(wait);
       } on TimeoutException {
         // Looked at again: the slow path may have shown meanwhile.
       }
@@ -464,21 +466,46 @@ class NoxSocketClient {
           // the network, a timeout, TLS, a peer that does not speak the
           // channel or a machine in the middle (`protocol`), Tor. None of
           // them is ever a reason to log out.
-          final failure = channelFailureOf(e);
+          final failure = channelFailureOf(e) ?? (_timedOut(e) ? ChannelFailure.timeout : null);
           if (failure == ChannelFailure.wrongServer) {
             _wrongServer(target);
             return;
           }
+          _reportFailed(target, failure);
           _onDropped('stream error: ${failure?.name ?? e.runtimeType}');
         },
         onDone: () {
-          if (epoch == _connectionEpoch) _onDropped('closed by peer');
+          if (epoch != _connectionEpoch) return;
+          _reportFailed(target, null);
+          _onDropped('closed by peer');
         },
         cancelOnError: false,
       );
     } catch (e) {
+      _reportFailed(target, null);
       _onDropped('connect failed: ${e.runtimeType}');
     }
+  }
+
+  /// Tells the target provider an attempt ended before a greeting, and why
+  /// when the channel said (phase 045). Never allowed to cost the reconnect.
+  void _reportFailed(Uri url, ChannelFailure? failure) {
+    try {
+      _targets?.reportFailed(url, failure);
+    } on Object catch (e, st) {
+      logRepository.error(target: this, error: 'failure report failed: ${e.runtimeType}', stackTrace: st);
+    }
+  }
+
+  /// A dial that ran out its own time - the WebSocket's connect timeout -
+  /// rather than one the channel refused.
+  static bool _timedOut(Object error) {
+    Object? current = error;
+    for (var depth = 0; depth < 4 && current != null; depth++) {
+      if (current is TimeoutException) return true;
+      current = current is WebSocketChannelException ? current.inner : null;
+    }
+    return false;
   }
 
   /// The machine at [url] proved a key other than the one the pairing link

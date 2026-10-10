@@ -44,6 +44,55 @@ class FakeNetwork implements NetworkChangeService {
   Stream<void> watchChanges() => _changes.stream;
 }
 
+/// A tor of the probe's own, run as the separate service the server expects
+/// since phase 045 - set up the way the install script sets it up: an onion
+/// service on port 443 pointed at the server's port, proof-of-work defences
+/// on, no SOCKS port. The server never starts it, never sees its keys, and
+/// learns its address only through `-onion-addr`.
+///
+/// Its directories live under `<work>`: the service's keys in `<work>/hs`, so
+/// a tor started again over the same work directory keeps the same onion
+/// address - what a server moved to another port looks like from outside.
+class LiveTor {
+  LiveTor._(this.pid, this.onion);
+
+  final int pid;
+
+  /// `<56>.onion`, as tor wrote it to `<work>/hs/hostname`.
+  final String onion;
+
+  /// Starts tor with an onion service that forwards to [target], the address
+  /// `noxd` listens on - `127.0.0.1:<port>` for a server listening on all
+  /// interfaces, its LAN address for one bound to it, as the probes' are.
+  static Future<LiveTor> start({required String tor, required String work, required String target, String log = 'tor.log'}) async {
+    final torrc = File('$work/torrc')
+      ..writeAsStringSync(
+        [
+          'SocksPort 0',
+          'DataDirectory $work/tor-data',
+          'HiddenServiceDir $work/hs',
+          'HiddenServicePort 443 $target',
+          'HiddenServicePoWDefensesEnabled 1',
+          'Log notice file $work/$log',
+        ].join('\n'),
+      );
+    final shell = await Process.run('/bin/sh', ['-c', '"$tor" -f "${torrc.path}" > /dev/null 2>&1 & echo \$!']);
+    final pid = int.parse((shell.stdout as String).trim());
+    final hostname = File('$work/hs/hostname');
+    await liveUntil(
+      'tor writes the onion address',
+      const Duration(seconds: 60),
+      () => hostname.existsSync() && hostname.readAsStringSync().trim().isNotEmpty,
+    );
+    return LiveTor._(pid, hostname.readAsStringSync().trim());
+  }
+
+  Future<void> stop() async {
+    Process.killPid(pid);
+    await Future<void>.delayed(const Duration(seconds: 1));
+  }
+}
+
 /// A `noxd` run detached from the probe, so it can outlive it.
 class LiveNoxd {
   LiveNoxd._(this.pid, this._log);
@@ -51,17 +100,21 @@ class LiveNoxd {
   final int pid;
   final File _log;
 
+  /// Starts `noxd` on [addr]. [onionAddr] is the address of the onion
+  /// service a separate tor publishes for it ([LiveTor]); the server only
+  /// stores it and hands it out (phase 045).
   static Future<LiveNoxd> start({
     required String noxd,
-    required String tor,
     required String work,
     required String addr,
     required String log,
+    String? onionAddr,
   }) async {
     final file = File('$work/$log');
+    final onion = onionAddr == null ? '' : '-onion-addr $onionAddr';
     final shell = await Process.run('/bin/sh', [
       '-c',
-      '"$noxd" -addr $addr -db "$work/probe.db" -tor -tor-bin "$tor" -status-addr "" > "${file.path}" 2>&1 & echo \$!',
+      '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr "" > "${file.path}" 2>&1 & echo \$!',
     ]);
     final pid = int.parse((shell.stdout as String).trim());
     final server = LiveNoxd._(pid, file);

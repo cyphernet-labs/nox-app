@@ -12,6 +12,7 @@ import 'package:nox_app/domain/service/qr_image_decode_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/pages/connect_page/connect_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -63,6 +64,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(SetUsernamePage), findsOneWidget); // decoded id → same registration route
+  });
+
+  testWidgets('in the real flow an image with a pairing link opens the connection screen, as a paste does (FR-013)', (tester) async {
+    when(filePicker.pickFile()).thenAnswer((_) async => (name: 'id.png', sizeBytes: 1, extension: 'png', path: '/tmp/id.png'));
+    when(decoder.decodeQr(any)).thenAnswer((_) async => PairingLink.demo);
+
+    await pumpApp(tester, const LoginPage());
+    await tester.tap(imageButton());
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConnectPage), findsOneWidget);
+    expect(find.text('192.168.1.20:8443'), findsOneWidget, reason: 'the link\'s address stands in the field');
   });
 
   testWidgets('an image with no valid NOX QR shows a notice and does not sign in', (tester) async {
