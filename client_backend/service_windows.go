@@ -66,8 +66,8 @@ func runService(cfg config.Config, migrations fs.FS) int {
 type service struct {
 	logger *slog.Logger
 	run    func(ctx context.Context) error
-	// failed is set when the server stopped with an error; read after
-	// svc.Run returns, on the same goroutine that set it.
+	// failed is set when the server stopped by itself; read after svc.Run
+	// returns, on the same goroutine that set it.
 	failed bool
 }
 
@@ -85,7 +85,7 @@ func (s *service) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	for {
 		select {
 		case err := <-done:
-			return s.stopped(err)
+			return s.stopped(err, false)
 		case req := <-requests:
 			switch req.Cmd {
 			case svc.Interrogate:
@@ -93,19 +93,32 @@ func (s *service) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 			case svc.Stop, svc.Shutdown:
 				status <- svc.Status{State: svc.StopPending, WaitHint: uint32(stopWaitHint / time.Millisecond)}
 				cancel()
-				return s.stopped(<-done)
+				return s.stopped(<-done, true)
 			}
 		}
 	}
 }
 
 // stopped records how the server ended and turns it into the service's exit.
-func (s *service) stopped(err error) (bool, uint32) {
-	if err != nil {
-		s.logger.Error("server stopped with error", "err", err)
+//
+// A stop the manager asked for is a clean exit whatever the server's shutdown
+// returned. The shutdown does return an error when its deadline passes, and a
+// file transfer still moving through Tor holds it that long; but the service
+// is registered with failure actions that count a failure exit as a crash
+// (sc failureflag 1), so reporting one would have the manager start the server
+// again five seconds after the owner stopped it - in the middle of an update,
+// with its old command line. Only a server that stopped by itself is a
+// failure, which is the one case the manager should restart.
+func (s *service) stopped(err error, requested bool) (bool, uint32) {
+	switch {
+	case requested && err != nil:
+		s.logger.Warn("server stopped as asked; its shutdown did not finish cleanly", "err", err)
+	case requested:
+		s.logger.Info("server stopped")
+	default:
+		s.logger.Error("server stopped by itself", "err", err)
 		s.failed = true
 		return true, 1
 	}
-	s.logger.Info("server stopped")
 	return false, 0
 }

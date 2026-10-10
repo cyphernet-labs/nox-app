@@ -583,4 +583,8 @@ any of them is a change to the scripts too:
 - The onion service's `HiddenServicePort 443` points at `127.0.0.1:<port>`, so
   the server is bound where loopback reaches it.
 - On Windows the service control manager starts `noxd` itself
-  (`service_windows.go`).
+  (`service_windows.go`). A stop the manager asked for exits clean even when
+  the shutdown ran past its deadline (a transfer still moving does that): the
+  service is registered with failure actions that count a failure exit as a
+  crash (`sc failureflag 1`), so only a server that stopped by itself exits as
+  a failure and is restarted.
