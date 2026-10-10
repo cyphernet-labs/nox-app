@@ -363,10 +363,17 @@ make_work() {
 make_dir() {
 	local path=$1 owner=$2 group=$3 mode=$4 top="" p
 	p=$path
-	while [ ! -e "$p" ]; do
+	# A link stops the walk, and one that leads nowhere is refused before
+	# anything is recorded: the folder of a second disk that is not mounted
+	# looks missing, and taking back a mkdir that failed through it would
+	# delete the owner's link.
+	while [ ! -e "$p" ] && [ ! -L "$p" ]; do
 		top=$p
 		p=$(dirname "$p")
 	done
+	if [ -L "$p" ] && [ ! -e "$p" ]; then
+		die "$p is a link to $(readlink "$p"), which is not there: mount or fix it, and run the script again"
+	fi
 	if [ -z "$top" ]; then
 		[ -d "$path" ] || die "$path is not a directory"
 		return 0
