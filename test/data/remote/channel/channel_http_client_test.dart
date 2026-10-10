@@ -173,6 +173,16 @@ void main() {
     expect([for (final channel in late) channel.closeCalls], [1, 1], reason: 'a channel opened after the cancel is closed on arrival');
   });
 
+  test('the two clients together keep fewer connections than a Tor circuit to the onion service may carry', () {
+    // The server's torrc closes a circuit past 16 streams, the command socket
+    // with it (HiddenServiceMaxStreamsCloseCircuit).
+    final channels = ChannelHttpClient(ScriptedChannelApi());
+    expect(channels.client.maxConnectionsPerHost, ChannelHttpClient.maxConnectionsPerHost);
+    expect(channels.transferClient.maxConnectionsPerHost, ChannelHttpClient.maxConnectionsPerHost);
+    expect(2 * ChannelHttpClient.maxConnectionsPerHost, lessThan(16));
+    channels.unbind();
+  });
+
   test('the log names the path and the outcome - never an onion host or a key', () async {
     final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.torOnionNotFound);
     final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
