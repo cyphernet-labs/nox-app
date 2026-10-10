@@ -390,7 +390,15 @@ func (g *gate) ask(ctx context.Context, req gateRequest) (gateReply, bool) {
 	case rep := <-req.reply:
 		return rep, true
 	case <-ctx.Done():
-		return gateReply{}, false
+		// An answer given before the context ended still wins: a server that
+		// cannot start answers why and then stops its page, which ends this
+		// context - and with both ready, select picks either.
+		select {
+		case rep := <-req.reply:
+			return rep, true
+		default:
+			return gateReply{}, false
+		}
 	}
 }
 

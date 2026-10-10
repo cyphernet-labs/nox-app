@@ -118,13 +118,32 @@ done
 echo
 
 echo "==> unlocking the server with noxd unlock"
+# noxd unlock says why it failed - a wrong password, or why a server with the
+# right one could not start, its main port taken by another process above all.
+# A server that could not start also writes it to its log on the way down, a
+# moment after the command returned: show that too, rather than let set -e end
+# the script on the command's line alone.
+unlock_failed() {
+  for _ in $(seq 1 10); do
+    grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null && break
+    pgrep -f "$STAND-noxd" >/dev/null 2>&1 || break
+    sleep 0.2
+  done
+  if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+    echo "the server could not start:" >&2
+    grep '"level":"ERROR"' "$STAND/server.log" >&2
+  fi
+  exit 1
+}
 if [ -n "${NOX_STAND_PASSWORD:-}" ]; then
   # Twice: a fresh server asks for the password and its repeat, a locked one
   # reads the first line and leaves the second.
-  printf '%s\n%s\n' "$NOX_STAND_PASSWORD" "$NOX_STAND_PASSWORD" \
-    | "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"
+  if ! printf '%s\n%s\n' "$NOX_STAND_PASSWORD" "$NOX_STAND_PASSWORD" \
+    | "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"; then
+    unlock_failed
+  fi
 elif [ -t 0 ]; then
-  "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"
+  "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT" || unlock_failed
 else
   echo "no terminal to ask the password at: set NOX_STAND_PASSWORD" >&2
   exit 1

@@ -551,31 +551,47 @@ func run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		logger.Info("stopped while locked")
 		return nil
 	}
-	err = serve(ctx, cfg, migrations, logger, key, g, page, opener)
-	if err != nil && g.current() != stateOpen {
-		// The password was right and the data still did not open: whoever
-		// typed it hears so, and the process goes down with the reason in the
-		// log - the same as a database that failed to open always did.
-		opener.answer(codeInternal, "the password is right, but the server could not open its data - see its log")
-	}
-	return err
+	return serve(ctx, cfg, migrations, logger, key, g, page, opener)
 }
 
 // serve opens the data with key and runs the server until ctx ends: what Run
-// did before 047, from the database on. The request that brought the key is
-// answered once the main port listens.
+// did before 047, from the database on.
+//
+// The request that brought the key is answered exactly once: once the main
+// port listens, or with why the server could not start - after which the
+// process goes down with the same reason in its log, as a database that failed
+// to open always did. A failure is answered BEFORE the page stops: stopping it
+// ends that request's context, and an answer given after that reached nobody,
+// so every such failure read "the server is stopping" instead of its reason.
 func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger, key []byte, g *gate,
-	page *servicePage, opener gateRequest) error {
+	page *servicePage, opener gateRequest) (err error) {
 	opened := time.Now()
+	answered := false
+	refuse := func(err error) {
+		// A server stopped while it opened has nothing to report but that,
+		// and the request hears it from the page's own stop.
+		if ctx.Err() == nil {
+			opener.answer(codeInternal, "the password was accepted, but the server cannot start and is stopping: "+err.Error())
+		}
+		answered = true
+	}
 	dbs, err := db.Open(cfg.DBPath, key)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		err = fmt.Errorf("open database: %w", err)
+		refuse(err)
+		return err
 	}
 	defer func() { _ = dbs.Close() }()
 	// Registered after the database's close, so it runs before it: whatever
 	// way serve ends, the page stops before the database it reads closes
 	// (invariant 9).
 	defer func() { _ = page.stop() }()
+	// Registered after the page's stop, so it runs before it - see above.
+	defer func() {
+		if err != nil && !answered {
+			refuse(err)
+		}
+	}()
 
 	version, err := db.Migrate(ctx, dbs.Write, migrations)
 	if err != nil {
@@ -680,7 +696,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	// a port somebody else holds is said to the person who just unlocked.
 	raw, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+		return fmt.Errorf("the main port %s cannot be opened: %w", cfg.Addr, err)
 	}
 	// The machine's PUBLIC key, which is what an operator compares with the
 	// one in a link; the private half and every token stay out of this line.
@@ -688,6 +704,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 		"server_key", base64.StdEncoding.EncodeToString(machine.PublicKey))
 	g.opened(srv)
 	opener.answer("", "")
+	answered = true
 	logger.Info("server unlocked", "took_ms", time.Since(opened).Milliseconds())
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
