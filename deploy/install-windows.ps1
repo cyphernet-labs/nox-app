@@ -133,6 +133,9 @@ $script:UndoFailed = $false
 # ServerLockedAgain is set when taking back started the server that ran before
 # the run: it starts locked, as every start does.
 $script:ServerLockedAgain = $false
+# KeepOnionKey is set while an interrupted run is taken back on a server that
+# holds data and has the key of an onion address (Test-UndoSkipped).
+$script:KeepOnionKey = $false
 # CtrlCGuard says whether the rollback can make the process ignore Ctrl+C.
 $script:CtrlCGuard = $false
 # UndoFailedSteps keeps the steps that could not be taken back: they stay in
@@ -277,31 +280,31 @@ function Resume-Interrupted {
     if ($lines.Count -lt 1 -or $lines[0] -notmatch '^nox-install-journal 1 (\d+)$') { Fail "$file is not a record this script wrote; look at it, remove $($script:JournalDir), and run the script again" }
     $owner = [int]$Matches[1]
     if (Test-JournalOwnerAlive $owner) { Fail "another run of this script is under way (process $owner): let it finish, and run the script again" }
+    # Read into lists of its own: until the decision below the record stays
+    # on disk only, and a stop meanwhile leaves it for the next run.
+    $tor = New-Object System.Collections.Generic.List[object]
+    $main = New-Object System.Collections.Generic.List[object]
+    $failedSteps = New-Object System.Collections.Generic.List[object]
     try {
         for ($i = 1; $i -lt $lines.Count; $i++) {
             $f = $lines[$i] -split "`t"
             if ($f.Count -ne 4) { continue }
             $entry = [pscustomobject]@{ Action = $f[1]; A = (ConvertFrom-JournalField $f[2]); B = (ConvertFrom-JournalField $f[3]) }
             switch ($f[0]) {
-                'Tor' { $script:UndoTor.Add($entry) }
-                'Main' { $script:UndoMain.Add($entry) }
+                'Tor' { $tor.Add($entry) }
+                'Main' { $main.Add($entry) }
                 # A step that failed before is reported, not tried again unseen.
-                'Failed' { $script:UndoFailedSteps.Add($entry); $script:UndoFailed = $true }
+                'Failed' { $failedSteps.Add($entry) }
             }
         }
     } catch {
         Fail "$file is not a record this script wrote; look at it, remove $($script:JournalDir), and run the script again"
     }
-    $script:JournalOpen = $true
-    if (Test-RecordHoldsData) {
-        Step 'Keeping an interrupted run'
-        Say 'A run before this one ended before it finished, and taking it back would remove data this machine'
-        Say 'holds now - the server''s own, or the key of its onion address - so what that run changed stays, and'
-        Say 'this run goes on from there.'
-        $script:UndoTor.Clear()
-        $script:UndoMain.Clear()
-        $script:UndoFailedSteps.Clear()
-        $script:UndoFailed = $false
+    if (Test-RecordMadeServer $tor $main) {
+        Step 'Keeping an interrupted install'
+        Say 'A run before this one installed the server afresh and ended before it finished, and the server'
+        Say 'holds data now - its password was set, or a backup was restored into it. Taking that run back'
+        Say 'would delete the data, so what it changed stays, and this run goes on from there.'
         Close-Journal
         return
     }
@@ -310,10 +313,18 @@ function Resume-Interrupted {
     Say 'went down - and what it changed is still in place. That is taken back first.'
     Set-CtrlCIgnored $true
     try {
+        $script:UndoTor.AddRange($tor)
+        $script:UndoMain.AddRange($main)
+        $script:UndoFailedSteps.AddRange($failedSteps)
+        if ($failedSteps.Count -gt 0) { $script:UndoFailed = $true }
+        $script:JournalOpen = $true
+        $script:KeepOnionKey = ((Test-Path -LiteralPath $script:Db) -or (Test-Path -LiteralPath "$($script:Db).key")) -and
+            (Test-Path -LiteralPath (Join-Path $script:HsDir 'hs_ed25519_secret_key'))
         Stop-RecordedServices
         Invoke-Undo $script:UndoTor
         Invoke-Undo $script:UndoMain
     } finally {
+        $script:KeepOnionKey = $false
         Set-CtrlCIgnored $false
     }
     if ($script:UndoFailed) {
@@ -328,29 +339,35 @@ function Resume-Interrupted {
     Say 'What the interrupted run changed is taken back.'
 }
 
-# Test-RecordHoldsData says whether taking the record back would remove data
-# the server holds now, which the interrupted run did not make: the run
-# installed the server afresh (its record carries the mark, or removes the
-# folder the database is in) and since then a password was set on the
-# server's page or a backup restored into it; or the run made the folder the
-# onion address's key lives in, and the key is there - tor's own, or one
-# carried over from another machine, whose address the devices know. Such a
-# run stands.
-function Test-RecordHoldsData {
+# Test-RecordMadeServer says whether the record is a fresh install's - it
+# carries the mark, or removes the folder the database is in - while the
+# server holds data now, which no interrupted run makes itself: since that run
+# a password was set on the server's page, or a backup restored into it.
+# Taking the record back would delete that data; the install stands instead.
+function Test-RecordMadeServer($Tor, $Main) {
     if (-not ((Test-Path -LiteralPath $script:Db) -or (Test-Path -LiteralPath "$($script:Db).key"))) { return $false }
     $sep = [System.IO.Path]::DirectorySeparatorChar
-    $key = Join-Path $script:HsDir 'hs_ed25519_secret_key'
-    $hasKey = Test-Path -LiteralPath $key
-    foreach ($record in @($script:UndoTor, $script:UndoMain)) {
+    foreach ($record in @($Tor, $Main)) {
         foreach ($u in $record) {
             if ($u.Action -eq 'fresh-install') { return $true }
             if ($u.Action -ne 'remove') { continue }
             $folder = $u.A.TrimEnd([char[]]@('\', '/')) + $sep
             if ($script:Db.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-            if ($hasKey -and $key.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase)) { return $true }
         }
     }
     return $false
+}
+
+# Test-UndoSkipped says whether taking back passes the step over: while
+# KeepOnionKey is set - an interrupted run is taken back on a server that
+# holds data and has the key of an onion address - the removal of the folder
+# the key is in. The key may be the one the devices know, carried over from
+# another machine; and when it is the one the run's tor made, keeping it costs
+# nothing - the next run sets tor up around it.
+function Test-UndoSkipped($U) {
+    if (-not $script:KeepOnionKey -or $U.Action -ne 'remove') { return $false }
+    $folder = $U.A.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    return (Join-Path $script:HsDir 'hs_ed25519_secret_key').StartsWith($folder, [StringComparison]::OrdinalIgnoreCase)
 }
 
 # Stop-RecordedServices stops the services the record names before it is
@@ -419,7 +436,7 @@ function Invoke-UndoAction($U) {
         'service-stop' { Stop-Service -Name $U.A -Force -ErrorAction SilentlyContinue }
         'firewall-port' { Get-NetFirewallRule -Name $U.A | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $U.B }
         'firewall-remove' { Remove-NetFirewallRule -Name $U.A -ErrorAction SilentlyContinue }
-        # A mark with nothing to undo (Test-RecordHoldsData reads it).
+        # A mark with nothing to undo (Test-RecordMadeServer reads it).
         'fresh-install' { }
         default { Warn "no way to undo '$($U.Action)'" }
     }
@@ -442,10 +459,14 @@ function Invoke-WithRetry([scriptblock]$Step) {
 function Invoke-Undo([System.Collections.Generic.List[object]]$Record) {
     while ($Record.Count -gt 0) {
         $u = $Record[$Record.Count - 1]
-        try { $null = Invoke-UndoAction $u } catch {
-            Warn "could not undo a step: $($_.Exception.Message)"
-            $script:UndoFailed = $true
-            $script:UndoFailedSteps.Add($u)
+        if (Test-UndoSkipped $u) {
+            Note "kept, for the key of the onion address: $($u.A)"
+        } else {
+            try { $null = Invoke-UndoAction $u } catch {
+                Warn "could not undo a step: $($_.Exception.Message)"
+                $script:UndoFailed = $true
+                $script:UndoFailedSteps.Add($u)
+            }
         }
         $Record.RemoveAt($Record.Count - 1)
         try { Write-Journal } catch { }

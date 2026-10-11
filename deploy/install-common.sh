@@ -360,11 +360,11 @@ resume_interrupted() {
 		esac
 	done <"$JOURNAL_DIR/journal"
 	JOURNAL_OPEN=1
-	if record_holds_data; then
-		step "Keeping an interrupted run"
-		say "A run before this one ended before it finished, and taking it back would remove data this machine"
-		say "holds now - the server's own, or the key of its onion address - so what that run changed stays, and"
-		say "this run goes on from there."
+	if record_made_server; then
+		step "Keeping an interrupted install"
+		say "A run before this one installed the server afresh and ended before it finished, and the server"
+		say "holds data now - its password was set, or a backup was restored into it. Taking that run back"
+		say "would delete the data, so what it changed stays, and this run goes on from there."
 		UNDO_TOR=() UNDO_MAIN=() UNDO_TOR_LAST=() UNDO_MAIN_LAST=() UNDO_FAILED_STEPS=()
 		UNDO_FAILED=0
 		journal_close
@@ -374,8 +374,12 @@ resume_interrupted() {
 	step "Taking back an interrupted run"
 	say "A run before this one ended before it finished - it was killed, or the machine went down - and"
 	say "what it changed is still in place. That is taken back first."
+	if { [ -e "$DB" ] || [ -e "$DB.key" ]; } && [ -e "$HS_DIR/hs_ed25519_secret_key" ]; then
+		KEEP_ONION_KEY=1
+	fi
 	undo_run TOR
 	undo_run MAIN
+	KEEP_ONION_KEY=0
 	if [ "$UNDO_FAILED" != 0 ]; then
 		journal_keep_failed
 		# The server that ran before may be running again all the same, and
@@ -389,15 +393,13 @@ resume_interrupted() {
 	trap - INT TERM HUP QUIT PIPE
 }
 
-# record_holds_data says whether taking the record back would remove data the
-# server holds now, which the interrupted run did not make: the run installed
-# the server afresh (its record carries the mark, or removes the folder the
-# database is in) and since then a password was set on the server's page or
-# a backup restored into it; or the run made the folder the onion address's
-# key lives in, and the key is there - tor's own, or one carried over from
-# another machine, whose address the devices know. Such a run stands.
-record_holds_data() {
-	local entry path key=$HS_DIR/hs_ed25519_secret_key
+# record_made_server says whether the record is a fresh install's - it carries
+# the mark, or removes the folder the database is in - while the server holds
+# data now, which no interrupted run makes itself: since that run a password
+# was set on the server's page, or a backup restored into it. Taking the
+# record back would delete that data; the install stands instead.
+record_made_server() {
+	local entry path
 	[ -e "$DB" ] || [ -e "$DB.key" ] || return 1
 	for entry in ${UNDO_MAIN[@]+"${UNDO_MAIN[@]}"} ${UNDO_TOR[@]+"${UNDO_TOR[@]}"}; do
 		case $entry in
@@ -407,14 +409,37 @@ record_holds_data() {
 			case $DB in
 			"$path"/*) return 0 ;;
 			esac
-			if [ -e "$key" ]; then
-				case $key in
-				"$path"/*) return 0 ;;
-				esac
-			fi
 			;;
 		esac
 	done
+	return 1
+}
+
+# KEEP_ONION_KEY is set while an interrupted run is taken back on a server
+# that holds data and has the key of an onion address: its removal - and, on
+# macOS, the removal of the account it belongs to - is passed over. The key
+# may be the one the devices know, carried over from another machine; and
+# when it is the one the run's tor made, keeping it costs nothing - the next
+# run sets tor up around it.
+KEEP_ONION_KEY=0
+
+# undo_skipped CMD says whether taking back passes the step CMD over.
+undo_skipped() {
+	local path
+	[ "$KEEP_ONION_KEY" = 1 ] || return 1
+	case $1 in
+	"rm -rf "*)
+		eval "path=${1#rm -rf }"
+		case $HS_DIR/hs_ed25519_secret_key in
+		"$path"/*) return 0 ;;
+		esac
+		;;
+	"forget_record "*)
+		[ -n "${TOR_ACCOUNT:-}" ] || return 1
+		eval "path=${1#forget_record }"
+		[ "${path##*/}" = "$TOR_ACCOUNT" ] && return 0
+		;;
+	esac
 	return 1
 }
 
@@ -454,7 +479,9 @@ undo_steps() {
 	i=$((count - 1))
 	while [ "$i" -ge 0 ]; do
 		eval "cmd=\${${name}[$i]}"
-		if ! eval "$cmd"; then
+		if undo_skipped "$cmd"; then
+			note "kept, for the key of the onion address: $cmd"
+		elif ! eval "$cmd"; then
 			warn "could not undo: $cmd"
 			UNDO_FAILED=1
 			UNDO_FAILED_STEPS[${#UNDO_FAILED_STEPS[@]}]=$cmd
