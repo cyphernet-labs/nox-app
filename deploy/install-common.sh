@@ -391,7 +391,11 @@ resume_interrupted() {
 	journal_close
 	if [ "$UNDO_KEPT" = 1 ]; then
 		say "What the interrupted run changed is taken back, but for the folder with the key of the onion address"
-		say "($HS_DIR): tor is set up around it again."
+		if [ "$OPT_NO_TOR" = 1 ]; then
+			say "($HS_DIR): it stays, and a run with tor sets tor up around it."
+		else
+			say "($HS_DIR): tor is set up around it again."
+		fi
 		UNDO_KEPT=0
 	else
 		say "What the interrupted run changed is taken back."

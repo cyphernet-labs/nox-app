@@ -314,6 +314,7 @@ function Resume-Interrupted {
     Say 'A run before this one ended before it finished - its window was closed, it was stopped, or the machine'
     Say 'went down - and what it changed is still in place. That is taken back first.'
     Set-CtrlCIgnored $true
+    $finished = $false
     try {
         $script:UndoTor.AddRange($tor)
         $script:UndoMain.AddRange($main)
@@ -325,20 +326,23 @@ function Resume-Interrupted {
         Stop-RecordedServices
         Invoke-Undo $script:UndoTor
         Invoke-Undo $script:UndoMain
+        $finished = $true
     } finally {
-        $script:KeepOnionKey = $false
-        Set-CtrlCIgnored $false
         # Cut short - where Ctrl+C could not be ignored: what is left of the
-        # record is on disk, written after every step, and the next run takes
-        # it back as this one would have. Handing it to this run's own rollback
-        # would take it back without the care above, the onion key included.
-        if ($script:UndoTor.Count -gt 0 -or $script:UndoMain.Count -gt 0) {
+        # record is on disk, written after every step, failures included, and
+        # the next run takes it back as this one would have. Handing it to
+        # this run's own rollback would take it back without the care above,
+        # the onion key included.
+        if (-not $finished) {
             $script:UndoTor.Clear()
             $script:UndoMain.Clear()
             $script:UndoFailedSteps.Clear()
             $script:UndoFailed = $false
             $script:JournalOpen = $false
+            Warn "taking back the interrupted run stopped half way: what is left of it stays recorded in $($script:JournalDir), and the next run of the script takes it back - until then the server may stay stopped"
         }
+        $script:KeepOnionKey = $false
+        Set-CtrlCIgnored $false
     }
     if ($script:UndoFailed) {
         Save-FailedJournal
@@ -351,7 +355,8 @@ function Resume-Interrupted {
     Close-Journal
     if ($script:UndoKept) {
         Say 'What the interrupted run changed is taken back, but for the folder with the key of the onion address'
-        Say "($($script:HsDir)): tor is set up around it again."
+        if ($NoTor) { Say "($($script:HsDir)): it stays, and a run with tor sets tor up around it." }
+        else { Say "($($script:HsDir)): tor is set up around it again." }
         $script:UndoKept = $false
     } else {
         Say 'What the interrupted run changed is taken back.'
@@ -1411,7 +1416,9 @@ try {
             if ($null -ne $ctrlC) { try { [Console]::TreatControlCAsInput = $ctrlC } catch { } }
             Set-CtrlCIgnored $false
         }
-    } elseif (-not $script:Committed -and $script:JournalOpen) {
+    } elseif (-not $script:Committed -and -not $script:UndoFailed -and $script:JournalOpen) {
+        # A record holding steps that could not be taken back stays for the
+        # next run, which sets it aside for the owner.
         Close-Journal
     }
     if ($script:Work -and (Test-Path -LiteralPath $script:Work)) { Remove-Item -LiteralPath $script:Work -Recurse -Force -ErrorAction SilentlyContinue }
