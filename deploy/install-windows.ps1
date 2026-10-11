@@ -136,6 +136,8 @@ $script:ServerLockedAgain = $false
 # KeepOnionKey is set while an interrupted run is taken back on a server that
 # holds data and has the key of an onion address (Test-UndoSkipped).
 $script:KeepOnionKey = $false
+# UndoKept is set when taking back passed a step over.
+$script:UndoKept = $false
 # CtrlCGuard says whether the rollback can make the process ignore Ctrl+C.
 $script:CtrlCGuard = $false
 # UndoFailedSteps keeps the steps that could not be taken back: they stay in
@@ -326,6 +328,17 @@ function Resume-Interrupted {
     } finally {
         $script:KeepOnionKey = $false
         Set-CtrlCIgnored $false
+        # Cut short - where Ctrl+C could not be ignored: what is left of the
+        # record is on disk, written after every step, and the next run takes
+        # it back as this one would have. Handing it to this run's own rollback
+        # would take it back without the care above, the onion key included.
+        if ($script:UndoTor.Count -gt 0 -or $script:UndoMain.Count -gt 0) {
+            $script:UndoTor.Clear()
+            $script:UndoMain.Clear()
+            $script:UndoFailedSteps.Clear()
+            $script:UndoFailed = $false
+            $script:JournalOpen = $false
+        }
     }
     if ($script:UndoFailed) {
         Save-FailedJournal
@@ -336,7 +349,13 @@ function Resume-Interrupted {
         Fail 'not everything the interrupted run changed could be taken back: see the lines above'
     }
     Close-Journal
-    Say 'What the interrupted run changed is taken back.'
+    if ($script:UndoKept) {
+        Say 'What the interrupted run changed is taken back, but for the folder with the key of the onion address'
+        Say "($($script:HsDir)): tor is set up around it again."
+        $script:UndoKept = $false
+    } else {
+        Say 'What the interrupted run changed is taken back.'
+    }
 }
 
 # Test-RecordMadeServer says whether the record is a fresh install's - it
@@ -461,6 +480,7 @@ function Invoke-Undo([System.Collections.Generic.List[object]]$Record) {
         $u = $Record[$Record.Count - 1]
         if (Test-UndoSkipped $u) {
             Note "kept, for the key of the onion address: $($u.A)"
+            $script:UndoKept = $true
         } else {
             try { $null = Invoke-UndoAction $u } catch {
                 Warn "could not undo a step: $($_.Exception.Message)"

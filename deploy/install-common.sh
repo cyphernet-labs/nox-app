@@ -389,7 +389,13 @@ resume_interrupted() {
 		die "not everything the interrupted run changed could be taken back: see the lines above"
 	fi
 	journal_close
-	say "What the interrupted run changed is taken back."
+	if [ "$UNDO_KEPT" = 1 ]; then
+		say "What the interrupted run changed is taken back, but for the folder with the key of the onion address"
+		say "($HS_DIR): tor is set up around it again."
+		UNDO_KEPT=0
+	else
+		say "What the interrupted run changed is taken back."
+	fi
 	trap - INT TERM HUP QUIT PIPE
 }
 
@@ -422,6 +428,8 @@ record_made_server() {
 # when it is the one the run's tor made, keeping it costs nothing - the next
 # run sets tor up around it.
 KEEP_ONION_KEY=0
+# UNDO_KEPT is set when taking back passed a step over.
+UNDO_KEPT=0
 
 # undo_skipped CMD says whether taking back passes the step CMD over.
 undo_skipped() {
@@ -481,6 +489,7 @@ undo_steps() {
 		eval "cmd=\${${name}[$i]}"
 		if undo_skipped "$cmd"; then
 			note "kept, for the key of the onion address: $cmd"
+			UNDO_KEPT=1
 		elif ! eval "$cmd"; then
 			warn "could not undo: $cmd"
 			UNDO_FAILED=1
