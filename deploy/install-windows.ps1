@@ -296,6 +296,16 @@ function Resume-Interrupted {
     Say 'A run before this one ended before it finished - its window was closed, it was stopped, or the machine'
     Say 'went down - and what it changed is still in place. That is taken back first.'
     $script:JournalOpen = $true
+    if (Test-RecordHoldsData) {
+        Say 'That run installed the server afresh, and the server holds data now - its password was set, or a'
+        Say 'backup was restored into it - so what the run changed stays, and this run goes on from there.'
+        $script:UndoTor.Clear()
+        $script:UndoMain.Clear()
+        $script:UndoFailedSteps.Clear()
+        $script:UndoFailed = $false
+        Close-Journal
+        return
+    }
     Set-CtrlCIgnored $true
     try {
         Stop-RecordedServices
@@ -314,6 +324,25 @@ function Resume-Interrupted {
     }
     Close-Journal
     Say 'What the interrupted run changed is taken back.'
+}
+
+# Test-RecordHoldsData says whether the record would remove the folder the
+# server's data lives in while that folder holds a server's data: the
+# interrupted run installed the server afresh - so it made the folder, and
+# made no data in it - and since then a password was set on the server's
+# page, or a backup restored into it. Taking that record back would delete
+# the data with the folder; the install stands instead.
+function Test-RecordHoldsData {
+    if (-not ((Test-Path -LiteralPath $script:Db) -or (Test-Path -LiteralPath "$($script:Db).key"))) { return $false }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    foreach ($record in @($script:UndoTor, $script:UndoMain)) {
+        foreach ($u in $record) {
+            if ($u.Action -ne 'remove') { continue }
+            $folder = $u.A.TrimEnd([char[]]@('\', '/')) + $sep
+            if ($script:Db.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+    }
+    return $false
 }
 
 # Stop-RecordedServices stops the services the record names before it is

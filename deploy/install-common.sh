@@ -363,6 +363,15 @@ resume_interrupted() {
 		esac
 	done <"$JOURNAL_DIR/journal"
 	JOURNAL_OPEN=1
+	if record_holds_data; then
+		say "That run installed the server afresh, and the server holds data now - its password was set, or a"
+		say "backup was restored into it - so what the run changed stays, and this run goes on from there."
+		UNDO_TOR=() UNDO_MAIN=() UNDO_TOR_LAST=() UNDO_MAIN_LAST=() UNDO_FAILED_STEPS=()
+		UNDO_FAILED=0
+		journal_close
+		trap - INT TERM HUP QUIT PIPE
+		return 0
+	fi
 	undo_run TOR
 	undo_run MAIN
 	if [ "$UNDO_FAILED" != 0 ]; then
@@ -376,6 +385,28 @@ resume_interrupted() {
 	journal_close
 	say "What the interrupted run changed is taken back."
 	trap - INT TERM HUP QUIT PIPE
+}
+
+# record_holds_data says whether the record would remove the folder the
+# server's data lives in while that folder holds a server's data: the
+# interrupted run installed the server afresh - so it made the folder, and
+# made no data in it - and since then a password was set on the server's
+# page, or a backup restored into it. Taking that record back would delete
+# the data with the folder; the install stands instead.
+record_holds_data() {
+	local entry path
+	[ -e "$DB" ] || [ -e "$DB.key" ] || return 1
+	for entry in ${UNDO_MAIN[@]+"${UNDO_MAIN[@]}"} ${UNDO_TOR[@]+"${UNDO_TOR[@]}"}; do
+		case $entry in
+		"rm -rf "*)
+			eval "path=${entry#rm -rf }"
+			case $DB in
+			"$path"/*) return 0 ;;
+			esac
+			;;
+		esac
+	done
+	return 1
 }
 
 undo_push() {
