@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  tor for NOX: publishes the onion service of the NOX server on this machine.
+  Written by deploy/install-macos.sh. Its settings are in the torrc it names.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@TOR@</string>
+		<string>--defaults-torrc</string>
+		<string>@TOR_DEFAULTS@</string>
+		<string>-f</string>
+		<string>@TORRC@</string>
+	</array>
+	<key>UserName</key>
+	<string>@USER@</string>
+	<key>GroupName</key>
+	<string>@GROUP@</string>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>@LOG@</string>
+	<key>StandardErrorPath</key>
+	<string>@LOG@</string>
+</dict>
+</plist>
