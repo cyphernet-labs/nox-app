@@ -714,6 +714,11 @@ main() {
 	fi
 
 	# From here on the machine changes; a failure takes every change back.
+	if [ "$FRESH_DATA" = 1 ]; then
+		# A mark with nothing to undo: a run that finds this record with a
+		# server's data in place knows the install it cut short became a server.
+		undo_push ": fresh-install"
+	fi
 	install_layout
 	install_binary
 	if [ "$OPT_NO_TOR" = 0 ]; then

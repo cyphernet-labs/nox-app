@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The variables set here are read by the scripts that source this file, and
 # PORT, STATUS_PORT, PREV_STATUS_PORT, UPDATE, REPO_DIR, NOXD, NOXD_CMD,
-# RUN_DIR, SERVER_LOG, BACKUP_DIR and JOURNAL_DIR are set by them.
+# RUN_DIR, SERVER_LOG, BACKUP_DIR, JOURNAL_DIR, DB and HS_DIR are set by them.
 # shellcheck disable=SC2034,SC2153
 #
 # Shared by install-macos.sh and install-linux.sh: sourced by them, never run
@@ -342,9 +342,6 @@ resume_interrupted() {
 		die "another run of this script is under way (process $pid): let it finish, and run the script again"
 	fi
 	trap '' INT TERM HUP QUIT PIPE
-	step "Taking back an interrupted run"
-	say "A run before this one ended before it finished - it was killed, or the machine went down - and"
-	say "what it changed is still in place. That is taken back first."
 	UNDO_TOR=() UNDO_MAIN=() UNDO_TOR_LAST=() UNDO_MAIN_LAST=()
 	while IFS= read -r line; do
 		if [ "$first" = 1 ]; then
@@ -364,14 +361,19 @@ resume_interrupted() {
 	done <"$JOURNAL_DIR/journal"
 	JOURNAL_OPEN=1
 	if record_holds_data; then
-		say "That run installed the server afresh, and the server holds data now - its password was set, or a"
-		say "backup was restored into it - so what the run changed stays, and this run goes on from there."
+		step "Keeping an interrupted run"
+		say "A run before this one ended before it finished, and taking it back would remove data this machine"
+		say "holds now - the server's own, or the key of its onion address - so what that run changed stays, and"
+		say "this run goes on from there."
 		UNDO_TOR=() UNDO_MAIN=() UNDO_TOR_LAST=() UNDO_MAIN_LAST=() UNDO_FAILED_STEPS=()
 		UNDO_FAILED=0
 		journal_close
 		trap - INT TERM HUP QUIT PIPE
 		return 0
 	fi
+	step "Taking back an interrupted run"
+	say "A run before this one ended before it finished - it was killed, or the machine went down - and"
+	say "what it changed is still in place. That is taken back first."
 	undo_run TOR
 	undo_run MAIN
 	if [ "$UNDO_FAILED" != 0 ]; then
@@ -387,22 +389,29 @@ resume_interrupted() {
 	trap - INT TERM HUP QUIT PIPE
 }
 
-# record_holds_data says whether the record would remove the folder the
-# server's data lives in while that folder holds a server's data: the
-# interrupted run installed the server afresh - so it made the folder, and
-# made no data in it - and since then a password was set on the server's
-# page, or a backup restored into it. Taking that record back would delete
-# the data with the folder; the install stands instead.
+# record_holds_data says whether taking the record back would remove data the
+# server holds now, which the interrupted run did not make: the run installed
+# the server afresh (its record carries the mark, or removes the folder the
+# database is in) and since then a password was set on the server's page or
+# a backup restored into it; or the run made the folder the onion address's
+# key lives in, and the key is there - tor's own, or one carried over from
+# another machine, whose address the devices know. Such a run stands.
 record_holds_data() {
-	local entry path
+	local entry path key=$HS_DIR/hs_ed25519_secret_key
 	[ -e "$DB" ] || [ -e "$DB.key" ] || return 1
 	for entry in ${UNDO_MAIN[@]+"${UNDO_MAIN[@]}"} ${UNDO_TOR[@]+"${UNDO_TOR[@]}"}; do
 		case $entry in
+		": fresh-install") return 0 ;;
 		"rm -rf "*)
 			eval "path=${entry#rm -rf }"
 			case $DB in
 			"$path"/*) return 0 ;;
 			esac
+			if [ -e "$key" ]; then
+				case $key in
+				"$path"/*) return 0 ;;
+				esac
+			fi
 			;;
 		esac
 	done

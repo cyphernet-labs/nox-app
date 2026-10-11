@@ -292,13 +292,12 @@ function Resume-Interrupted {
     } catch {
         Fail "$file is not a record this script wrote; look at it, remove $($script:JournalDir), and run the script again"
     }
-    Step 'Taking back an interrupted run'
-    Say 'A run before this one ended before it finished - its window was closed, it was stopped, or the machine'
-    Say 'went down - and what it changed is still in place. That is taken back first.'
     $script:JournalOpen = $true
     if (Test-RecordHoldsData) {
-        Say 'That run installed the server afresh, and the server holds data now - its password was set, or a'
-        Say 'backup was restored into it - so what the run changed stays, and this run goes on from there.'
+        Step 'Keeping an interrupted run'
+        Say 'A run before this one ended before it finished, and taking it back would remove data this machine'
+        Say 'holds now - the server''s own, or the key of its onion address - so what that run changed stays, and'
+        Say 'this run goes on from there.'
         $script:UndoTor.Clear()
         $script:UndoMain.Clear()
         $script:UndoFailedSteps.Clear()
@@ -306,6 +305,9 @@ function Resume-Interrupted {
         Close-Journal
         return
     }
+    Step 'Taking back an interrupted run'
+    Say 'A run before this one ended before it finished - its window was closed, it was stopped, or the machine'
+    Say 'went down - and what it changed is still in place. That is taken back first.'
     Set-CtrlCIgnored $true
     try {
         Stop-RecordedServices
@@ -326,20 +328,26 @@ function Resume-Interrupted {
     Say 'What the interrupted run changed is taken back.'
 }
 
-# Test-RecordHoldsData says whether the record would remove the folder the
-# server's data lives in while that folder holds a server's data: the
-# interrupted run installed the server afresh - so it made the folder, and
-# made no data in it - and since then a password was set on the server's
-# page, or a backup restored into it. Taking that record back would delete
-# the data with the folder; the install stands instead.
+# Test-RecordHoldsData says whether taking the record back would remove data
+# the server holds now, which the interrupted run did not make: the run
+# installed the server afresh (its record carries the mark, or removes the
+# folder the database is in) and since then a password was set on the
+# server's page or a backup restored into it; or the run made the folder the
+# onion address's key lives in, and the key is there - tor's own, or one
+# carried over from another machine, whose address the devices know. Such a
+# run stands.
 function Test-RecordHoldsData {
     if (-not ((Test-Path -LiteralPath $script:Db) -or (Test-Path -LiteralPath "$($script:Db).key"))) { return $false }
     $sep = [System.IO.Path]::DirectorySeparatorChar
+    $key = Join-Path $script:HsDir 'hs_ed25519_secret_key'
+    $hasKey = Test-Path -LiteralPath $key
     foreach ($record in @($script:UndoTor, $script:UndoMain)) {
         foreach ($u in $record) {
+            if ($u.Action -eq 'fresh-install') { return $true }
             if ($u.Action -ne 'remove') { continue }
             $folder = $u.A.TrimEnd([char[]]@('\', '/')) + $sep
             if ($script:Db.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            if ($hasKey -and $key.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase)) { return $true }
         }
     }
     return $false
@@ -411,6 +419,8 @@ function Invoke-UndoAction($U) {
         'service-stop' { Stop-Service -Name $U.A -Force -ErrorAction SilentlyContinue }
         'firewall-port' { Get-NetFirewallRule -Name $U.A | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $U.B }
         'firewall-remove' { Remove-NetFirewallRule -Name $U.A -ErrorAction SilentlyContinue }
+        # A mark with nothing to undo (Test-RecordHoldsData reads it).
+        'fresh-install' { }
         default { Warn "no way to undo '$($U.Action)'" }
     }
 }
@@ -1274,6 +1284,9 @@ function Invoke-Install {
     # From here on the machine changes; a failure takes every change back,
     # and nothing - not Ctrl+C either - cuts the taking back short.
     Step "Installing the server at $($script:Noxd)"
+    # A mark with nothing to undo: a run that finds this record with a
+    # server's data in place knows the install it cut short became a server.
+    if ($script:FreshData) { Add-Undo 'fresh-install' }
     if ($Prefix) { Stop-Background 'noxd' $script:ServerPidFile } else { Stop-ServiceForUpdate $ServerService }
     New-Directory $script:ProgramDir
     New-Directory $script:DataDir
