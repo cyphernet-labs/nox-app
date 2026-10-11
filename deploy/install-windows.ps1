@@ -298,6 +298,7 @@ function Resume-Interrupted {
     $script:JournalOpen = $true
     Set-CtrlCIgnored $true
     try {
+        Stop-RecordedServices
         Invoke-Undo $script:UndoTor
         Invoke-Undo $script:UndoMain
     } finally {
@@ -315,6 +316,31 @@ function Resume-Interrupted {
     Say 'What the interrupted run changed is taken back.'
 }
 
+# Stop-RecordedServices stops the services the record names before it is
+# taken back. One the run stopped, or created and never started, may run all
+# the same: the machine went down, and the service manager started it at
+# boot. Windows does not let the files of a running program be written over or
+# removed, and the record's own steps start the server that ran before again
+# at its end.
+function Stop-RecordedServices {
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($record in @($script:UndoTor, $script:UndoMain)) {
+        foreach ($u in $record) {
+            if ($u.Action -like 'service-*' -and -not $names.Contains($u.A)) { $names.Add($u.A) }
+        }
+    }
+    foreach ($name in $names) {
+        $s = Get-Service -Name $name -ErrorAction SilentlyContinue
+        if (-not $s -or $s.Status -eq 'Stopped') { continue }
+        try {
+            Stop-Service -Name $name -Force -ErrorAction Stop
+            $s.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
+        } catch {
+            Warn "could not stop the service $name before taking back: $($_.Exception.Message)"
+        }
+    }
+}
+
 # Write-ServerLockedAgain is what to say when taking back started the server
 # that ran before: it starts locked, as every start does, and how it opens.
 function Write-ServerLockedAgain {
@@ -330,14 +356,22 @@ function Invoke-UndoAction($U) {
         # Removing what was never made is nothing; what is still there after
         # the removal is a step that did not go back, and is named.
         'remove' {
-            Remove-Item -LiteralPath $U.A -Recurse -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $U.A) { throw "$($U.A) is still there" }
+            Invoke-WithRetry {
+                Remove-Item -LiteralPath $U.A -Recurse -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $U.A) { throw "$($U.A) is still there" }
+            }
         }
-        'restore' { Copy-Item -LiteralPath $U.A -Destination $U.B -Force }
+        'restore' { Invoke-WithRetry { Copy-Item -LiteralPath $U.A -Destination $U.B -Force } }
         'stop-background' { Stop-Background $U.A $U.B }
+        # Nothing to give back when the command line is the old one - the step
+        # it undoes failed, or never ran; 1072: the service is already going.
         'service-command' {
-            $out = Invoke-Native "$env:SystemRoot\System32\sc.exe" @('config', $U.A, 'binPath=', $U.B)
-            if ($out.ExitCode -ne 0) { throw "sc.exe could not give the service $($U.A) its command line back: $($out.Output.Trim())" }
+            $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$($U.A)"
+            $item = Get-ItemProperty -LiteralPath $key -Name ImagePath -ErrorAction SilentlyContinue
+            if (-not $item -or $item.ImagePath -ne $U.B) {
+                $out = Invoke-Native "$env:SystemRoot\System32\sc.exe" @('config', $U.A, 'binPath=', $U.B)
+                if ($out.ExitCode -notin @(0, 1072)) { throw "sc.exe could not give the service $($U.A) its command line back: $($out.Output.Trim())" }
+            }
         }
         # 1060: the service was never created; 1072: it is already going.
         'service-delete' {
@@ -349,6 +383,17 @@ function Invoke-UndoAction($U) {
         'firewall-port' { Get-NetFirewallRule -Name $U.A | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $U.B }
         'firewall-remove' { Remove-NetFirewallRule -Name $U.A -ErrorAction SilentlyContinue }
         default { Warn "no way to undo '$($U.Action)'" }
+    }
+}
+
+# Invoke-WithRetry runs a step on files that a program which has just
+# stopped - or a scanner - may hold for a moment, up to three times.
+function Invoke-WithRetry([scriptblock]$Step) {
+    for ($i = 1; ; $i++) {
+        try { & $Step; return } catch {
+            if ($i -ge 3) { throw }
+            Start-Sleep -Seconds 1
+        }
     }
 }
 
