@@ -2308,6 +2308,7 @@ dependencies = [
  "ec25519",
  "eidolon-auth",
  "futures",
+ "liblzma-sys",
  "rcgen",
  "ring",
  "rustls",

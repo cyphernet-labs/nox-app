@@ -89,6 +89,8 @@ String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencie
 
 `make tor-test` гоняет `cargo test` крейта и `dart test` пакета. Профиль release крейта — `opt-level = "z"`, fat LTO, `strip`, `panic = "unwind"` (паника задачи Arti не должна ронять приложение).
 
+Библиотека модуля не тянет за собой чужих библиотек: `liblzma` (сжатие каталогов Tor в Arti) собирается внутрь неё на всех платформах — у `liblzma-sys` включена фича `static`. Без этого сборка на хосте берёт ту `liblzma`, что находит pkg-config: на Mac с `xz` из Homebrew это `/opt/homebrew/opt/xz/lib/liblzma.5.dylib`, которую песочница приложения не открывает и которой нет на других машинах. Проверка: `otool -L` по `NOX.app/Contents/Frameworks/nox_tor.framework/nox_tor` — только системные библиотеки.
+
 ---
 
 ## 1. FVM — пин Flutter SDK

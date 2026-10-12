@@ -55,6 +55,13 @@ zeroize = "1"
 # the device's disk. Already in the graph under rustls, with the same features;
 # named here because the vault calls it itself.
 ring = "0.17"
+# xz for the directory documents Arti fetches (tor-dirclient), built from its
+# own source on every platform. Left to itself liblzma-sys links whatever
+# liblzma pkg-config finds on a host build: on a Mac with Homebrew's xz that is
+# /opt/homebrew/opt/xz/lib/liblzma.5.dylib, which the app's sandbox refuses to
+# open and no other Mac has. Only the feature is named here; the version is
+# Arti's.
+liblzma-sys = { version = "0.4", default-features = false, features = ["static"] }
 
 [dev-dependencies]
 # Paused time for the tests of the hedged connect. Tests only: a release build
