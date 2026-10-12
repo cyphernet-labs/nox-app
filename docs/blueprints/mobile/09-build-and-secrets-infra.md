@@ -7,12 +7,12 @@
 - **ключ устройства** — семя Ed25519, 32 байта, `session.device_secret`. Модуль канала получает семя при каждом открытии соединения и доказывает им ключ устройства в проверке Eidolon; держит его в затираемом буфере на время рукопожатия, по сети уходит только открытый ключ;
 - **ключ локальной базы** — 32 случайных байта, `device.storage_key` (base64). Им запечатаны база и файлы на диске (`04-data-layer.md` §6г); модуль канала держит его в затираемом буфере процесса.
 
-Ни один из них не попадает в системные бэкапы и на другие устройства. Опции сейфа — `SecureStoreOptions` (`lib/data/local/secure/secure_store_options.dart`), единые для всех записей:
+Ни один из них не попадает в системные бэкапы и на другие устройства (кроме отладочной сборки macOS — см. таблицу). Опции сейфа — `SecureStoreOptions` (`lib/data/local/secure/secure_store_options.dart`), единые для всех записей:
 
 | Платформа | Хранилище и опции |
 |---|---|
 | iOS | Keychain, класс `first_unlock_this_device` (читается с первой разблокировки после перезапуска, в бэкап на другой телефон не переносится), сервис `com.cyphernetlabs.noxapp` |
-| macOS | Keychain с защитой данных (`usesDataProtectionKeychain: true`), тот же класс и сервис. Требует `keychain-access-groups`, поэтому macOS-сборка подписывается командой (§7a) |
+| macOS | Релизная сборка — Keychain с защитой данных (`usesDataProtectionKeychain: true`), тот же класс и сервис; требует `keychain-access-groups`, то есть подписи командой (§7a). Отладочная и profile-сборки — обычная связка ключей с тем же сервисом: они подписываются без команды, и их записи попадают в Time Machine |
 | Android | хранилище плагина: данные AES-GCM под ключом Android Keystore, который не покидает устройство; бэкап и перенос выключены в манифесте (раздел «Данные не уходят в бэкапы») |
 | Windows | DPAPI текущего пользователя; файл плагина — в `%LOCALAPPDATA%\NOX`, а не в перемещаемом профиле |
 | Linux | libsecret (локальная связка ключей); работает, только если запущена служба ключей |
@@ -598,7 +598,7 @@ afterEvaluate {
 В этой итерации desktop-таргеты несут **только prod-идентичность** на нативном уровне (одна нативная конфигурация на платформу). Отдельная нативная `.stage`-идентичность (и, соответственно, упаковка двух раздельных артефактов) — **на будущее** (§11a). Stage на desktop виден исключительно через `app.flavor` в Dart (`--dart-define-from-file=config/stage.json`), нативная конфигурация при этом не меняется.
 
 - **macOS.** В `macos/Runner/Configs/AppInfo.xcconfig` prod-идентичность: `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX` (подтверждено кодом). Отдельная `.stage`-идентичность (`com.cyphernetlabs.noxapp.stage`) → упаковка **на будущее** (§11a).
-- **Подпись macOS-сборки (фаза 048).** Таргет `Runner` подписывается командой во всех конфигурациях: `DEVELOPMENT_TEAM = W84KAPTJ9Y`, `CODE_SIGN_STYLE = Automatic`, `CODE_SIGN_IDENTITY = "Apple Development"`; оба файла прав (`DebugProfile.entitlements`, `Release.entitlements`) несут `keychain-access-groups` = `$(AppIdentifierPrefix)com.cyphernetlabs.noxapp`. Без группы доступа связка ключей с защитой данных отвечает `errSecMissingEntitlement` (-34018), и сейф не работает. Локальной сборке нужен профиль Mac App Development для `com.cyphernetlabs.noxapp` в команде: Xcode заводит его сам при сборке из IDE под учётной записью команды (или `xcodebuild -allowProvisioningUpdates`); без профиля `flutter build macos` останавливается на «No profiles for 'com.cyphernetlabs.noxapp' were found». CI собирает macOS без подписи (§8.2).
+- **Подпись macOS-сборки.** Команды разработчика нет ни в macOS-, ни в iOS-проекте: какой командой подписывать релиз, решает владелец. Отладочная и profile-сборки подписываются для запуска на этой машине (`CODE_SIGN_IDENTITY = "-"`), `DebugProfile.entitlements` без группы доступа, сейф — обычная связка ключей (login keychain): её записи попадают в Time Machine, что допустимо только на машине разработчика. Релизная сборка держит сейф в связке ключей с защитой данных: `Release.entitlements` несёт `keychain-access-groups` = `$(AppIdentifierPrefix)com.cyphernetlabs.noxapp` — без группы доступа эта связка отвечает `errSecMissingEntitlement` (-34018), а группа действует только в сборке, подписанной командой. Поэтому релизную сборку собирают с командой.
 - **Windows.** В `windows/CMakeLists.txt` — `BINARY_NAME = "nox_app"` (technical-имя бинарника); в `windows/runner/Runner.rc` блок `VERSIONINFO` несёт `CompanyName = "Cyphernet Labs"`, `ProductName = "NOX"`, `FileDescription = "NOX"`, `InternalName = "nox_app"`. Закоммиченный стабильный GUID приложения (между сборками) — **на будущее** (в текущем `Runner.rc` отдельного app-GUID нет). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
 - **Linux.** В `linux/CMakeLists.txt` — `APPLICATION_ID = "com.cyphernetlabs.noxapp"`, `BINARY_NAME = "nox_app"` (technical-имя). `Name` в `.desktop`-файле — `NOX`; сам `.desktop`-файл — **на будущее** (генерируется при упаковке, §11a). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
 
@@ -720,11 +720,7 @@ jobs:
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
-      # Unsigned: CI holds no certificate and never runs the app (phase 048).
       - run: flutter build macos --debug --dart-define-from-file=config/stage.json
-        env:
-          FLUTTER_XCODE_CODE_SIGNING_ALLOWED: 'NO'
-          FLUTTER_XCODE_CODE_SIGNING_REQUIRED: 'NO'
 
   compile-windows:
     runs-on: windows-latest

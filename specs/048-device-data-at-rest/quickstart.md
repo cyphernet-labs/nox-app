@@ -9,7 +9,7 @@ make gate && make golden-verify   # кодек, файлы, временные �
 
 ## 2. Прогон на macOS
 
-1. `fvm flutter run -d macos --dart-define-from-file=config/stage.json` (сборка подписана командой).
+1. `fvm flutter run -d macos --dart-define-from-file=config/stage.json` (отладочная сборка: без команды, ключ — в обычной связке ключей; связку ключей с защитой данных проверяет только релизная сборка, подписанная командой).
 2. Спарить, написать сообщения, отправить и получить картинку и видео.
 3. `grep -r` маркеров сообщений и байтов файлов по папке данных приложения (`~/Library/Containers/com.cyphernetlabs.noxapp/Data/Library/Application Support/`) → пусто (SC-001).
 4. `xattr -p com.apple.metadata:com_apple_backup_excludeItem` на папке данных → метка стоит; `tmutil isexcluded <папка>` → исключена.

@@ -523,10 +523,19 @@ void main() {
 
     test('the store of today is for this device only', () {
       expect(SecureStoreOptions.ios.accessibility, KeychainAccessibility.first_unlock_this_device);
-      expect(SecureStoreOptions.macOs.accessibility, KeychainAccessibility.first_unlock_this_device);
-      expect(SecureStoreOptions.macOs.usesDataProtectionKeychain, isTrue);
+      expect(SecureStoreOptions.macOsRelease.accessibility, KeychainAccessibility.first_unlock_this_device);
+      expect(SecureStoreOptions.macOsRelease.usesDataProtectionKeychain, isTrue);
       expect(SecureStoreOptions.ios.synchronizable, isFalse);
-      expect(SecureStoreOptions.macOs.synchronizable, isFalse);
+      expect(SecureStoreOptions.macOsRelease.synchronizable, isFalse);
+    });
+
+    test('a debug build on macOS keeps the store in the login keychain, under the same service', () {
+      // Signed to run locally, with no team and so no access group, which the
+      // data-protection keychain would refuse.
+      expect(SecureStoreOptions.macOs, same(SecureStoreOptions.macOsLocal));
+      expect(SecureStoreOptions.macOsLocal.usesDataProtectionKeychain, isFalse);
+      expect(SecureStoreOptions.macOsLocal.accountName, SecureStoreOptions.macOsRelease.accountName);
+      expect(SecureStoreOptions.macOsLocal.synchronizable, isFalse);
     });
   });
 

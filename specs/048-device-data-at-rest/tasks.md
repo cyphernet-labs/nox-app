@@ -45,6 +45,7 @@
 - [x] T016 Гейты: `make tor-test`, `make gate`, `make golden-verify`
 - [x] T017 Прогон на macOS по `quickstart.md` §2; итог — в `research.md`
 - [x] T018 Трекер `docs/client-backend/roadmap-security.md`: 048 реализована
+- [x] T019 Пересмотр владельца 2026-10-12, отменяет подпись командой из T004: команды разработчика нет в проектах iOS и macOS; `SecureStoreOptions.macOs` — по режиму сборки (релиз — связка ключей с защитой данных, отладка и profile — обычная); `keychain-access-groups` только в `Release.entitlements`; `compile-check.yml` — macOS как до 048; тесты, блюпринт 09, `CLAUDE.md`, трекер
 
 ## Dependencies & Execution Order
 

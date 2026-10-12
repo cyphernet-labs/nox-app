@@ -14,17 +14,16 @@
 
 Нужно: Xcode с симуляторами iOS, Go (тот, что в `client_backend/go.mod`), fvm с Flutter 3.44.1, Rust через rustup, gpg (`brew install gnupg`) — им скрипт проверяет подпись Tor Project. tor ставить не надо: скрипт скачает Tor Expert Bundle сам.
 
-**Работать в копии ветки `security-rework`:**
+**Перейти на ветку `security-rework`** — в папке проекта:
 
 ```bash
-cd ~/work/projects/PandoraPrime/sources/nox-app/.claude/worktrees/security-rework
-git pull
+git switch security-rework && git pull
 ```
 
 **Остановить старый демо-стенд**, если он работает: он держит порты `8080` и `8081`, а служебной странице установленного сервера нужен `8081`.
 
 ```bash
-pkill -f /tmp/nox-demo-noxd; pkill -f /tmp/nox-demo/torrc
+pkill -f /tmp/nox-demo-noxd; pkill -f /tmp/nox-demo-tor/tor
 lsof -nP -iTCP:8081 -sTCP:LISTEN; lsof -nP -iTCP:8443 -sTCP:LISTEN     # пусто - порты свободны
 ```
 
@@ -34,14 +33,16 @@ lsof -nP -iTCP:8081 -sTCP:LISTEN; lsof -nP -iTCP:8443 -sTCP:LISTEN     # пус�
 make deps && make generate
 ```
 
-**Стереть симуляторы**, на которых будет приложение, — чтобы старая установка NOX со старым ключом сервера не мешала:
+**Завести три отдельных симулятора** — чистых, без старой установки NOX и без чужих приложений; свои симуляторы стирать не нужно. Каждая команда печатает UDID нового симулятора:
 
 ```bash
-xcrun simctl list devices available | grep -E "iPhone 16( Pro)?( Max)? \("   # UDID симуляторов
-xcrun simctl erase <UDID iPhone 16>
-xcrun simctl erase <UDID iPhone 16 Pro>
-xcrun simctl erase <UDID iPhone 16 Pro Max>
+xcrun simctl list runtimes available                     # какие iOS есть, например iOS-18-5
+xcrun simctl create NOX-1 com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5
+xcrun simctl create NOX-2 com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro com.apple.CoreSimulator.SimRuntime.iOS-18-5
+xcrun simctl create NOX-3 com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-18-5
 ```
+
+После проверки их убирает `xcrun simctl delete <UDID>`.
 
 ## 2. Запустить сборку приложения
 
@@ -49,8 +50,8 @@ xcrun simctl erase <UDID iPhone 16 Pro Max>
 
 ```bash
 open -a Simulator
-xcrun simctl boot <UDID iPhone 16>
-fvm flutter run -d <UDID iPhone 16> --dart-define-from-file=config/stage.json
+xcrun simctl boot <UDID NOX-1>
+fvm flutter run -d <UDID NOX-1> --dart-define-from-file=config/stage.json
 ```
 
 `--dart-define-from-file=config/stage.json` обязателен: без него приложение работает с выдуманными данными и к серверу не ходит.
@@ -93,7 +94,7 @@ open http://127.0.0.1:8081
 
 ### 4.1. Первое устройство — ссылка с машины (044, 046)
 
-1. В приложении на iPhone 16: скопировать ссылку из терминала, в поле `Pairing link` — `Paste` (или Cmd+V) → `Sign in`.
+1. В приложении на NOX-1: скопировать ссылку из терминала, в поле `Pairing link` — `Paste` (или Cmd+V) → `Sign in`.
 2. Экран **`Connect to your server`**: `Server address` (адрес Mac в сети с портом `8443`) и `Onion address` подставлены из ссылки, `Use Tor` выключен → `Connect`.
 3. Экран имени → имя → список чатов.
 4. Обновить служебную страницу: ссылки больше нет, вместо неё — `Add a device`.
@@ -110,8 +111,8 @@ open http://127.0.0.1:8081
 Терминал **C**:
 
 ```bash
-xcrun simctl boot <UDID iPhone 16 Pro>
-fvm flutter run -d <UDID iPhone 16 Pro> --dart-define-from-file=config/stage.json
+xcrun simctl boot <UDID NOX-2>
+fvm flutter run -d <UDID NOX-2> --dart-define-from-file=config/stage.json
 ```
 
 **Отказ.** На первом: `Settings` → `Devices` → `Add a device` → QR и ссылка → `Copy`. На втором: `Paste` → `Sign in` → `Connect` → `Waiting for approval on your other device`. На первом поверх экрана: `New device: iPhone or iPad. Allow it to join?` → `Deny`. Второе: `Your other device declined this request.`
@@ -160,7 +161,7 @@ grep -c "Kiwi-7319" ~/nox-test.tar          # 0 - внутри всё зашиф
 
 На одной машине «уйти из дома» нельзя: приложение пробует все прямые адреса сервера, какие знает. Поэтому путь через Tor проверяют на новом устройстве, которому дали только onion-адрес, или на телефоне в мобильной сети.
 
-**Спаривание через Tor (симулятор).** Терминал **D**: загрузить iPhone 16 Pro Max и запустить приложение, как в 4.3. На первом — новое приглашение и `Copy`. На третьем — `Paste` → `Sign in` → на экране подключения:
+**Спаривание через Tor (симулятор).** Терминал **D**: загрузить NOX-3 и запустить приложение, как в 4.3. На первом — новое приглашение и `Copy`. На третьем — `Paste` → `Sign in` → на экране подключения:
 
 - `Server address` заменить на `192.0.2.1:8443` — адрес, на котором никто не отвечает;
 - `Onion address` оставить;
@@ -192,7 +193,7 @@ grep -c "Kiwi-7319" ~/nox-test.tar          # 0 - внутри всё зашиф
 ### 4.11. Данные на устройстве зашифрованы (048)
 
 ```bash
-DATA=$(xcrun simctl get_app_container <UDID iPhone 16> com.cyphernetlabs.noxapp data)
+DATA=$(xcrun simctl get_app_container <UDID NOX-1> com.cyphernetlabs.noxapp data)
 grep -rl "Kiwi-7319" "$DATA/Library/Application Support"; echo "exit $?"   # ничего не найдено, exit 1
 ```
 
@@ -210,8 +211,8 @@ sudo deploy/install-macos.sh
 
 ## 5. Другие устройства (по желанию)
 
-- **iPhone.** В Xcode открыть `ios/Runner.xcworkspace` → цель `Runner` → `Signing & Capabilities`: команда `W84KAPTJ9Y`, автоматическая подпись. Подключить телефон, затем `fvm flutter devices` и `fvm flutter run -d <id телефона> --dart-define-from-file=config/stage.json`. Телефон — в той же Wi-Fi-сети, что Mac; при первом запуске разрешить доступ к локальной сети. Ссылку удобно снять с экрана: `Scan QR` на экране входа.
-- **Приложение для macOS.** Нужен профиль подписи Mac App Development для `com.cyphernetlabs.noxapp`: Xcode → `macos/Runner.xcworkspace` → `Signing & Capabilities` → команда `W84KAPTJ9Y`, автоматическая подпись. Без профиля приложение не может сохранить ключ и стоит на заставке. Затем `fvm flutter run -d macos --dart-define-from-file=config/stage.json`.
+- **iPhone.** Команды разработчика в проекте нет. В Xcode открыть `ios/Runner.xcworkspace` → цель `Runner` → `Signing & Capabilities` → выбрать свою команду, подпись автоматическая; это изменение проекта не коммитят. Подключить телефон, затем `fvm flutter devices` и `fvm flutter run -d <id телефона> --dart-define-from-file=config/stage.json`. Телефон — в той же Wi-Fi-сети, что Mac; при первом запуске разрешить доступ к локальной сети. Ссылку удобно снять с экрана: `Scan QR` на экране входа.
+- **Приложение для macOS.** `fvm flutter run -d macos --dart-define-from-file=config/stage.json`. Отладочная сборка подписывается без команды и держит ключи в обычной связке ключей (login keychain); связку ключей с защитой данных использует только релизная сборка, подписанная командой.
 - **Android.** Нужен NDK `28.2.13676358`; телефон в той же Wi-Fi-сети или эмулятор; `fvm flutter run -d <id> --dart-define-from-file=config/stage.json`.
 
 ## 6. Если что-то не так
@@ -226,7 +227,7 @@ sudo deploy/install-macos.sh
 | `noxd unlock` пишет `no server answered on …` | Служба сервера не запущена или страница на другом порту |
 | Телефон в Wi-Fi не подключается | Брандмауэр macOS: команду печатает скрипт (`socketfilterfw --add /usr/local/bin/noxd --unblockapp …`); на iPhone — доступ к локальной сети в настройках |
 | tor не записал onion-адрес | Конец журнала — `/Library/Logs/NOX/tor.log` |
-| Приложение на симуляторе сразу просит спаривания или висит без связи | Осталась старая установка: стереть симулятор (раздел 1) и запустить заново |
+| Приложение на симуляторе сразу просит спаривания или висит без связи | Осталась старая установка: удалить приложение (`xcrun simctl uninstall <UDID> com.cyphernetlabs.noxapp`) или взять новый симулятор (раздел 1) |
 
 ## 7. Убрать всё с Mac после проверки
 
