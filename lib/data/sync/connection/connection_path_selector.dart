@@ -165,7 +165,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// across one hands the prober zeros. The prober copies what it is handed
   /// before it awaits anything, so the selector stays the one owner of these.
   Uint8List? _serverKey;
-  Uint8List? _deviceSeed;
+  Uint8List? _devicePrivateKey;
   bool _active = false;
 
   StreamSubscription<void>? _networkSub;
@@ -249,13 +249,13 @@ class ConnectionPathSelector implements SocketTargetProvider {
   bool get bringingUpSlowPath => _torRound != null && _torRound == _round;
 
   /// Starts serving a session: [linkAddress] is the address the pairing link
-  /// carried, [serverKey] the key every path must prove and [deviceSeed] the
+  /// carried, [serverKey] the key every path must prove and [devicePrivateKey] the
   /// key this device proves itself with. Both are copied.
-  void begin({required String linkAddress, required Uint8List serverKey, required Uint8List deviceSeed}) {
+  void begin({required String linkAddress, required Uint8List serverKey, required Uint8List devicePrivateKey}) {
     _linkAddress = linkAddress;
     _wipeKeys();
     _serverKey = Uint8List.fromList(serverKey);
-    _deviceSeed = Uint8List.fromList(deviceSeed);
+    _devicePrivateKey = Uint8List.fromList(devicePrivateKey);
     if (_active) return;
     _active = true;
     _publish(_selection.value.copyWith(active: true, roundFailed: false, clearPath: true, clearProblem: true));
@@ -317,12 +317,12 @@ class ConnectionPathSelector implements SocketTargetProvider {
     await _stopTor();
   }
 
-  /// The device seed is this device's private key; it does not outlive the
-  /// session it was handed over for.
+  /// The device's private key does not outlive the session it was handed over
+  /// for.
   void _wipeKeys() {
-    final seed = _deviceSeed;
-    if (seed != null) seed.fillRange(0, seed.length, 0);
-    _deviceSeed = null;
+    final device = _devicePrivateKey;
+    if (device != null) device.fillRange(0, device.length, 0);
+    _devicePrivateKey = null;
     _serverKey = null;
   }
 
@@ -349,7 +349,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     }
     _forgetHandedOut();
     _torMiss = null;
-    if (_serverKey == null || _deviceSeed == null) return _noPath();
+    if (_serverKey == null || _devicePrivateKey == null) return _noPath();
 
     final verified = _verified;
     _verified = null;
@@ -364,10 +364,10 @@ class ConnectionPathSelector implements SocketTargetProvider {
       // Read after the await, not before it: a begin() meanwhile - a start
       // over a running session - wiped the seed it replaced.
       final serverKey = _serverKey;
-      final deviceSeed = _deviceSeed;
-      if (serverKey == null || deviceSeed == null) return _noPath();
+      final devicePrivateKey = _devicePrivateKey;
+      if (serverKey == null || devicePrivateKey == null) return _noPath();
       _publish(_selection.value.copyWith(clearPath: true));
-      final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, deviceSeed: deviceSeed);
+      final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, devicePrivateKey: devicePrivateKey);
       if (!_current(round)) return null;
       if (result.notHome.isNotEmpty) {
         logRepository.debug(target: this, message: 'path: ${result.notHome.length} direct address(es) answered with another key');
@@ -675,11 +675,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
   Future<void> _checkCurrentDirect() async {
     final address = _handedOutAddress;
     final serverKey = _serverKey;
-    final deviceSeed = _deviceSeed;
-    if (address == null || serverKey == null || deviceSeed == null || _probing) return;
+    final devicePrivateKey = _devicePrivateKey;
+    if (address == null || serverKey == null || devicePrivateKey == null || _probing) return;
     _probing = true;
     try {
-      final result = await _prober.probe([address], serverKey: serverKey, deviceSeed: deviceSeed);
+      final result = await _prober.probe([address], serverKey: serverKey, devicePrivateKey: devicePrivateKey);
       if (!_active || _handedOutAddress != address || result.address != null) return;
       logRepository.debug(target: this, message: 'path: the direct address stopped answering, choosing again');
       await _socket.reconnect();
@@ -691,7 +691,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// While on Tor: does a direct address answer again? Then move to it.
   Future<void> _recheckDirect({required String reason}) async {
     if (!_active || _probing || _forceTor || currentPath != ConnectionPath.tor) return;
-    if (_serverKey == null || _deviceSeed == null) return;
+    if (_serverKey == null || _devicePrivateKey == null) return;
     _probing = true;
     try {
       final addresses = await _readAddresses();
@@ -699,9 +699,9 @@ class ConnectionPathSelector implements SocketTargetProvider {
       // restart left the Tor path this check was for.
       if (!_active || currentPath != ConnectionPath.tor) return;
       final serverKey = _serverKey;
-      final deviceSeed = _deviceSeed;
-      if (serverKey == null || deviceSeed == null) return;
-      final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, deviceSeed: deviceSeed);
+      final devicePrivateKey = _devicePrivateKey;
+      if (serverKey == null || devicePrivateKey == null) return;
+      final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, devicePrivateKey: devicePrivateKey);
       final address = result.address;
       if (address == null || !_active || currentPath != ConnectionPath.tor) return;
       logRepository.debug(target: this, message: 'path: the direct path answers again ($reason), switching');

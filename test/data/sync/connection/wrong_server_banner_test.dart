@@ -72,7 +72,7 @@ void main() {
       _Lifecycle(),
       socket,
       torReadyBudget: const Duration(milliseconds: 400),
-    )..begin(linkAddress: link, serverKey: Uint8List(32), deviceSeed: Uint8List(32));
+    )..begin(linkAddress: link, serverKey: Uint8List(32), devicePrivateKey: Uint8List(32));
     status = LiveConnectionStatusService(socket, selector, tor);
     getIt.allowReassignment = true;
     getIt.registerSingleton<ConnectionStatusService>(status);

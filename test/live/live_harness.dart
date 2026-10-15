@@ -42,9 +42,9 @@ class AwayProber implements DirectProber {
   bool away = false;
 
   @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) => away
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) => away
       ? Future<DirectProbeResult>.value(const DirectProbeResult())
-      : _real.probe(candidates, serverKey: serverKey, deviceSeed: deviceSeed);
+      : _real.probe(candidates, serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 }
 
 /// A network that changes when [change] says so.
@@ -339,7 +339,7 @@ Future<void> expectSamePlainBytes(String path, File source) async {
 /// app around them. It dials the link's first direct address: it is at home.
 class WireDevice {
   WireDevice(this.link) : _seed = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256))) {
-    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: _seed);
+    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, devicePrivateKey: _seed);
     socket = NoxSocketClient(WebSocketChannelFactory(_channel), _NoCursor());
     _events = socket.events.listen(_seen.add);
   }

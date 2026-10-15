@@ -63,11 +63,11 @@
   - те же свойства, что в T006, включая 16 горутин под `-race`;
   - `IsStub() == true`;
   - отказ источника случайных байтов даёт `ErrRandom`, а экземпляр после ошибки снова годен.
-- [ ] T012 Подключить RustSecureBox к `nox_tor`:
+- [X] T012 Подключить RustSecureBox к `nox_tor`:
   - `packages/nox_tor/rust/Cargo.toml`: `rust_secure_box = { path = "../../rust_secure_box" }`, `httparse = "1"`, `serde_json = "1"`;
   - `packages/nox_tor/hook/build.dart`: `Cargo.toml` и `src/` крейта — в `output.dependencies`.
-- [ ] T013 Добавить `packages/nox_tor/rust/src/secure_box.rs` (`nox_box_generate_keys`, `nox_box_get_challenge`, `nox_box_sign_challenge`, `nox_box_check_signature` с `catch_unwind` и проверкой нулевых указателей; `contracts/ffi-box.md`) и экспорт из `packages/nox_tor/rust/src/lib.rs`. Тесты — в том же файле.
-- [ ] T014 [P] Сделать Dart-API RustSecureBox:
+- [X] T013 Добавить `packages/nox_tor/rust/src/secure_box.rs` (`nox_box_generate_keys`, `nox_box_get_challenge`, `nox_box_sign_challenge`, `nox_box_check_signature` с `catch_unwind` и проверкой нулевых указателей; `contracts/ffi-box.md`) и экспорт из `packages/nox_tor/rust/src/lib.rs`. Тесты — в том же файле.
+- [X] T014 [P] Сделать Dart-API RustSecureBox:
   - `packages/nox_tor/lib/src/secure_box_bindings.dart` (`@Native` с тем же `assetId`, что у канала);
   - `packages/nox_tor/lib/secure_box.dart` — `SecureBoxApi`, `NativeSecureBoxApi`, `SecureBoxKeyPair`, `SecureBoxException`, затирание буферов;
   - тесты `packages/nox_tor/test/secure_box_test.dart`: круг через нативную библиотеку, неверные длины → `ArgumentError`, векторы заглушки из `rsb-vectors.json`.
@@ -109,29 +109,29 @@
 
 ### Rust-модуль приложения
 
-- [ ] T021 [US1] Сделать `packages/nox_tor/rust/src/channel/auth.rs` — клиентскую сторону по research R6: побайтные заголовки ≤ 8 КиБ, `httparse`, тело ≤ 1 КиБ по `Content-Length`, base64url `data-encoding`, порядок «подпись → ключ → `/auth2`». Кроме того:
+- [X] T021 [US1] Сделать `packages/nox_tor/rust/src/channel/auth.rs` — клиентскую сторону по research R6: побайтные заголовки ≤ 8 КиБ, `httparse`, тело ≤ 1 КиБ по `Content-Length`, base64url `data-encoding`, порядок «подпись → ключ → `/auth2`». Кроме того:
   - удалить `src/channel/eidolon.rs`;
   - убрать `channel_binding` из `src/channel/tls.rs`;
   - `src/channel/mod.rs`: `establish` через `auth::handshake(stream, key, server_key, host)`, `DeviceSeed` → `DeviceKey`;
   - `src/channel/target.rs`, `registry.rs`, `lib.rs` (`nox_chan_open` с закрытым ключом, без запрета нулевого семени).
-- [ ] T022 [P] [US1] Написать тесты в `packages/nox_tor/rust/src/channel/auth.rs` (`tokio::io::duplex`):
+- [X] T022 [P] [US1] Написать тесты в `packages/nox_tor/rust/src/channel/auth.rs` (`tokio::io::duplex`):
   - удачный обмен;
   - до проверенного ответа на `/auth` модуль не пишет ничего, кроме `/auth`;
   - после `200` на `/auth2` следующие байты принадлежат потоку;
   - не-200, EOF, `Transfer-Encoding`, лишне длинные заголовки и тело — `PROTOCOL`.
-- [ ] T023 [US1] Обновить `packages/nox_tor/rust/tests/channel.rs`: тестовый TLS-сервер отвечает на `/auth` и `/auth2` через `rust_secure_box`. Удалить `tests/data/eidolon-vectors.json`, обновить `examples/bootstrap.rs`.
+- [X] T023 [US1] Обновить `packages/nox_tor/rust/tests/channel.rs`: тестовый TLS-сервер отвечает на `/auth` и `/auth2` через `rust_secure_box`. Удалить `tests/data/eidolon-vectors.json`, обновить `examples/bootstrap.rs`.
 
 ### Dart
 
-- [ ] T024 [US1] Переименовать `deviceSeed` → `devicePrivateKey` в `packages/nox_tor/lib/channel.dart` и `lib/src/channel_{core,ffi,types}.dart`, документацию — без Eidolon. Тесты `packages/nox_tor/test/channel_test.dart` и `channel_core_test.dart`.
-- [ ] T025 [US1] Переименовать в приложении:
+- [X] T024 [US1] Переименовать `deviceSeed` → `devicePrivateKey` в `packages/nox_tor/lib/channel.dart` и `lib/src/channel_{core,ffi,types}.dart`, документацию — без Eidolon. Тесты `packages/nox_tor/test/channel_test.dart` и `channel_core_test.dart`.
+- [X] T025 [US1] Переименовать в приложении:
   - `lib/data/remote/channel/channel_http_client.dart` (`bind(serverKey:, devicePrivateKey:)`);
   - `lib/data/sync/connection/direct_prober.dart`, `connection_path_selector.dart`;
   - `lib/data/sync/live_session_starter.dart`;
   - комментарии `lib/data/remote/api_client.dart`, `lib/data/remote/socket/{nox_socket_client,server_frame}.dart`;
   - тесты в `test/data/remote/channel/`, `test/data/sync/`;
   - `integration_test/tor_pairing_test.dart`.
-- [ ] T026 [P] [US1] Перевести `test/live/channel_probe.dart` и `test/live/tor_live_probe.dart` на `NativeSecureBoxApi` вместо `package:cryptography`.
+- [X] T026 [P] [US1] Перевести `test/live/channel_probe.dart` и `test/live/tor_live_probe.dart` на `NativeSecureBoxApi` вместо `package:cryptography`.
 
 **Checkpoint**: сервер и приложение говорят `/auth`/`/auth2`; smoke и живая проба проходят.
 
@@ -143,7 +143,7 @@
 
 **Independent Test**: тесты ниже.
 
-- [ ] T027 [P] [US2] Дополнить `packages/nox_tor/rust/tests/channel.rs`. Ожидаемые исходы:
+- [X] T027 [P] [US2] Дополнить `packages/nox_tor/rust/tests/channel.rs`. Ожидаемые исходы:
 
   | Сервер | Исход |
   |---|---|
@@ -154,7 +154,7 @@
 - [X] T028 [P] [US2] Дополнить тесты `client_backend/internal/server/channel_test.go` и `logs_test.go`:
   - подпись устройства над чужим челленджем — `401` и разрыв, обработчики не вызваны;
   - журнал отказов содержит только вид — ни `pk`, ни челленджа, ни подписи в base64url и hex.
-- [ ] T029 [US2] Убедиться, что Dart различает отказы по-прежнему: `test/data/sync/connection/direct_prober_test.dart` и `connection_path_selector_test.dart` — `wrongServer` по прямому адресу пропускается молча, по onion даёт `serverMismatch`. Поправить, если переименование их задело.
+- [X] T029 [US2] Убедиться, что Dart различает отказы по-прежнему: `test/data/sync/connection/direct_prober_test.dart` и `connection_path_selector_test.dart` — `wrongServer` по прямому адресу пропускается молча, по onion даёт `serverMismatch`. Поправить, если переименование их задело.
 
 ---
 
@@ -164,16 +164,16 @@
 
 **Independent Test**: тесты сессии и устройства в Dart; `go test ./internal/store ./internal/server -run Pair`; smoke.
 
-- [ ] T030 [US3] Переписать `lib/general/pairing/device_keys.dart` на `SecureBoxApi` (по умолчанию `NativeSecureBoxApi`): `generate()` → `DeviceKeyPair(privateKey, publicKey)` (base64), `publicKeyOf(privateKey)`.
-- [ ] T031 [US3] Сессия: `lib/domain/repository/app/session_repository.dart` и `lib/data/repository/app/session_repository_impl.dart`:
+- [X] T030 [US3] Переписать `lib/general/pairing/device_keys.dart` на `SecureBoxApi` (по умолчанию `NativeSecureBoxApi`): `generate()` → `DeviceKeyPair(privateKey, publicKey)` (base64), `publicKeyOf(privateKey)`.
+- [X] T031 [US3] Сессия: `lib/domain/repository/app/session_repository.dart` и `lib/data/repository/app/session_repository_impl.dart`:
   - `deviceKey()` вместо `deviceSecret()` — запись `session.device_key` одним JSON, создаётся при первом запросе;
   - `discardSignIn()` её сохраняет;
   - `sweepLegacyKeys()` удаляет `session.device_secret`.
-- [ ] T032 [US3] Перевести вызовы на `deviceKey()`:
+- [X] T032 [US3] Перевести вызовы на `deviceKey()`:
   - `lib/data/sync/live_session_starter.dart` — закрытый ключ;
   - `lib/data/repository/device/device_repository_impl.dart` — открытый, «это устройство»;
   - `lib/data/repository/app/auth_repository_impl.dart` (`_revokeOwnKey`) — открытый.
-- [ ] T033 [P] [US3] Обновить тесты:
+- [X] T033 [P] [US3] Обновить тесты:
   - `test/general/pairing/device_keys_test.dart`;
   - `test/data/repository/app/session_repository_impl_test.dart` — создание, сохранение при `discardSignIn`, удаление при `clear`, удаление `session.device_secret`;
   - `test/data/sync/live_session_starter_test.dart`, `test/data/local/local_data_lifecycle_test.dart`, `test/data/repository/app/auth_repository_impl_test.dart`;
@@ -196,7 +196,7 @@
   - `run` в `client_backend/internal/server/server.go` при `box.IsStub()` пишет `Warn` `RustSecureBox is a stub: devices are not really verified` на каждом старте, сразу после открытия данных;
   - строка `RustSecureBox is a stub: devices are not really verified.` на странице открытого сервера (`client_backend/internal/server/status.go`, `status_page.go`);
   - тесты `status_page_test.go` и `run_test.go` (строка в журнале).
-- [ ] T037 [US4] Отставка сессии в `lib/data/repository/app/auth_repository_impl.dart` (`retireLegacySession`) и, если нужно, `lib/data/repository/app/session_repository_impl.dart` (`deviceKeyMatchesBox()`): сессия есть и `session.device_key` нет или ключи не сходятся → `logout(forced: true)`; ошибка сейфа ничего не стирает. Тесты в `test/data/repository/app/auth_repository_impl_test.dart` — четыре случая.
+- [X] T037 [US4] Отставка сессии в `lib/data/repository/app/auth_repository_impl.dart` (`retireLegacySession`) и, если нужно, `lib/data/repository/app/session_repository_impl.dart` (`deviceKeyMatchesBox()`): сессия есть и `session.device_key` нет или ключи не сходятся → `logout(forced: true)`; ошибка сейфа ничего не стирает. Тесты в `test/data/repository/app/auth_repository_impl_test.dart` — четыре случая.
 
 ---
 
@@ -206,7 +206,7 @@
 
 **Independent Test**: quickstart §6.
 
-- [ ] T038 [US5] Написать `packages/rust_secure_box/README.md` (русский): назначение, интерфейс (ссылка на контракт), как заменить заглушку, как пересобрать копию сервера (`make box-wasm`), что проверить (`cargo test --test interface`, `make box-verify`, `go test ./internal/securebox`), пробный ключ, требование «один импорт».
+- [X] T038 [US5] Написать `packages/rust_secure_box/README.md` (русский): назначение, интерфейс (ссылка на контракт), как заменить заглушку, как пересобрать копию сервера (`make box-wasm`), что проверить (`cargo test --test interface`, `make box-verify`, `go test ./internal/securebox`), пробный ключ, требование «один импорт».
 - [ ] T039 [US5] Прогнать подмену по quickstart §6 в scratchpad (Ed25519 вместо заглушки, без коммита). Записать результат в `specs/050-rust-secure-box/research.md` (R1).
 
 ---
@@ -216,9 +216,9 @@
 - [ ] T040 [P] Убрать `cryptography` из `pubspec.yaml` (и `pubspec.lock` через `fvm flutter pub get`). Убедиться, что импортов больше нет.
 - [ ] T041 [P] Убрать `eidolon-auth`, `cyphergraphy`, `ec25519` из `packages/nox_tor/rust/Cargo.toml` и `Cargo.lock`; описание крейта — без Eidolon. Поправить комментарий в `.github/workflows/compile-check.yml`.
 - [ ] T042 [P] Обновить блюпринты: `docs/blueprints/mobile/{01-stack-and-tooling,02-dependency-injection,04-data-layer,05-presentation-layer,09-build-and-secrets-infra,10-code-templates,14-networking-and-auth,16-file-upload,README}.md` и `docs/blueprints/client-backend/README.md`.
-- [ ] T043 [P] Обновить `CLAUDE.md` (корень: защищённый канал 044 → проверка 050, спаривание, `cryptography`, RustSecureBox, `make box-*`), `client_backend/CLAUDE.md` (вход, тулчейн, карта файлов `internal/connauth`, `internal/securebox`, тесты `dialAs`, известные упущения: перевыпуск, заглушка) и `client_backend/README.md`.
+- [X] T043 [P] Обновить `CLAUDE.md` (корень: защищённый канал 044 → проверка 050, спаривание, `cryptography`, RustSecureBox, `make box-*`), `client_backend/CLAUDE.md` (вход, тулчейн, карта файлов `internal/connauth`, `internal/securebox`, тесты `dialAs`, известные упущения: перевыпуск, заглушка) и `client_backend/README.md`.
 - [ ] T044 [P] Обновить документы: `docs/client-backend/architecture/{authentication,transport}.md`, `docs/client-backend/README.md`, `docs/README.md`, `docs/client-backend/demo-runbook.md`, `docs/design/spec/overview.md`, `docs/design/spec/screens/file-view.md` (упоминания Eidolon).
-- [ ] T045 Обновить трекер `docs/client-backend/roadmap-security.md`: «Порядок» (050 реализована), «Для реализации» темы 1 (выпуск заглушки решён — FR-022; Go выполняет через `wasm2go`; перевыпуск ключа сервера — FR-021).
+- [X] T045 Обновить трекер `docs/client-backend/roadmap-security.md`: «Порядок» (050 реализована), «Для реализации» темы 1 (выпуск заглушки решён — FR-022; Go выполняет через `wasm2go`; перевыпуск ключа сервера — FR-021).
 - [ ] T046 Прогнать гейты:
   - `cd client_backend && gofmt -l . && go vet ./... && go test -race ./...`;
   - `make tor-test` (с крейтом и `box-verify`);

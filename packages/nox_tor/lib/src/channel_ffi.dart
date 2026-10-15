@@ -48,19 +48,19 @@ class FfiChannelAbi implements ChannelAbi {
   const FfiChannelAbi();
 
   @override
-  int open(int targetKind, String host, int port, Uint8List deviceSeed, Uint8List serverKey, int timeoutMs) {
-    final seed = malloc<Uint8>(32);
+  int open(int targetKind, String host, int port, Uint8List devicePrivateKey, Uint8List serverKey, int timeoutMs) {
+    final device = malloc<Uint8>(32);
     final key = malloc<Uint8>(32);
     final hostText = host.toNativeUtf8(allocator: malloc);
     try {
-      seed.asTypedList(32).setAll(0, deviceSeed);
+      device.asTypedList(32).setAll(0, devicePrivateKey);
       key.asTypedList(32).setAll(0, serverKey);
-      return noxChanOpen(targetKind, hostText, port, seed, key, timeoutMs, NativeApi.postCObject, _events.sendPort.nativePort);
+      return noxChanOpen(targetKind, hostText, port, device, key, timeoutMs, NativeApi.postCObject, _events.sendPort.nativePort);
     } finally {
-      // The seed is this device's private key: no copy of it outlives the
-      // call. The module keeps its own, in a buffer it wipes.
-      seed.asTypedList(32).fillRange(0, 32, 0);
-      malloc.free(seed);
+      // This device's private key: no copy of it outlives the call. The
+      // module keeps its own, in a buffer it wipes.
+      device.asTypedList(32).fillRange(0, 32, 0);
+      malloc.free(device);
       malloc.free(key);
       malloc.free(hostText);
     }

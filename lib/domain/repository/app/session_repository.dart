@@ -1,4 +1,5 @@
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
@@ -25,13 +26,13 @@ abstract class SessionRepository {
   /// validation (charset / uniqueness / ≤32).
   Future<RepositoryResult<bool>> updateLabel({required String label});
 
-  /// This installation's opaque id, minted once on first use and kept in secure
-  /// storage. It names the DEVICE in a greeting (`device_key`), never the
-  /// person: a logout wipes it along with everything else, and the person is
-  /// recognised by what they hold, not by which install they happen to be on.
-  /// This device's key seed, minted on first use. The public half of the pair
-  /// is what the server knows as `device_key`; this half never leaves.
-  Future<RepositoryResult<String>> deviceSecret();
+  /// This device's key pair (phase 050), made by RustSecureBox on first use -
+  /// the way into the first pairing after an install or a logout - and kept in
+  /// secure storage for this device only. The public half is what the server
+  /// knows as `device_key`; the private half goes to the channel and nowhere
+  /// else. It names the DEVICE, never the person: a logout wipes it with
+  /// everything else, a failed sign-in keeps it.
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey();
 
   /// The local-data key (phase 048): base64 of 32 bytes, kept for this device
   /// only, that the database and the files on the disk are sealed under. Null
@@ -47,8 +48,9 @@ abstract class SessionRepository {
   Future<RepositoryResult<bool>> forgetStorageKey();
 
   /// Records which server this installation was paired with, from the link:
-  /// where the connection starts, and the server's Ed25519 key (base64) every
-  /// connection's Eidolon check must prove (phase 044). Without it the app
+  /// where the connection starts, and the server's key (base64) every
+  /// connection's check must prove in its answer to POST /auth (phases 044,
+  /// 050). Without it the app
   /// would pair with one server and talk to another.
   Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey});
 
@@ -68,6 +70,18 @@ abstract class SessionRepository {
   /// A storage READ error is an error, never a `true`: a keychain that is
   /// still locked after a reboot must not cost anybody their session.
   Future<RepositoryResult<bool>> predatesServerKey();
+
+  /// Whether the stored session's device key was made by another
+  /// implementation of the check than this build's RustSecureBox (phase 050,
+  /// FR-019): an identifier with no device key pair - a session of the
+  /// Eidolon check - or a pair whose public key is not the one RustSecureBox
+  /// gives for its private key - a session of the stub after the real library
+  /// came, or the other way round. The server has rekeyed by then, and no key
+  /// of such a session passes the check any more: it is wiped once, at launch.
+  ///
+  /// A storage read error, or RustSecureBox failing, is an error, never a
+  /// `true`.
+  Future<RepositoryResult<bool>> predatesSecureBox();
 
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption

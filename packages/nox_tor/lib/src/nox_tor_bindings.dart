@@ -63,7 +63,7 @@ external int noxChanOpen(
   int targetKind,
   Pointer<Utf8> host,
   int port,
-  Pointer<Uint8> deviceSeed32,
+  Pointer<Uint8> devicePrivateKey32,
   Pointer<Uint8> serverKey32,
   int connectTimeoutMs,
   Pointer<NativeFunction<NoxChanPostNative>> post,

@@ -28,8 +28,8 @@ void main() {
   late MockNoxSocketClient socket;
   late DeviceRepositoryImpl repository;
 
-  // The public half of the seed FakeSessionRepository hands out.
-  const ownKey = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+  // The public half of the pair FakeSessionRepository hands out.
+  const ownKey = 'cHVibGljLWtleS1vZi10aGlzLWRldmljZS0zMmJ5dGU=';
 
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({});

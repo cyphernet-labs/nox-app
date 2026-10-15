@@ -38,9 +38,9 @@ class _AwayProber implements DirectProber {
   bool away = false;
 
   @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) => away
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) => away
       ? Future<DirectProbeResult>.value(const DirectProbeResult())
-      : _real.probe(candidates, serverKey: serverKey, deviceSeed: deviceSeed);
+      : _real.probe(candidates, serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 }
 
 /// Device B on a simulator or an emulator, as phases 045 and 046 have it: away
@@ -164,7 +164,7 @@ void main() {
 class _Issuer {
   _Issuer._(this._link) {
     final seed = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
-    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: _link.serverKey, deviceSeed: seed);
+    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: _link.serverKey, devicePrivateKey: seed);
     _socket = NoxSocketClient(WebSocketChannelFactory(_channel), _NoCursor());
   }
 

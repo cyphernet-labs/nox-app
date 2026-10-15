@@ -18,7 +18,7 @@ class FakeDirectProber implements DirectProber {
 
   /// The keys of every round, copied as the prober was handed them - what
   /// its channels would have opened with.
-  final List<({Uint8List serverKey, Uint8List deviceSeed})> keys = <({Uint8List serverKey, Uint8List deviceSeed})>[];
+  final List<({Uint8List serverKey, Uint8List devicePrivateKey})> keys = <({Uint8List serverKey, Uint8List devicePrivateKey})>[];
 
   /// The device-seed arrays themselves, not copies: the caller's own, so a
   /// test can see the caller wipe them once its session is over.
@@ -29,10 +29,10 @@ class FakeDirectProber implements DirectProber {
   Future<void>? gate;
 
   @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) async {
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) async {
     rounds.add(List<String>.of(candidates));
-    keys.add((serverKey: Uint8List.fromList(serverKey), deviceSeed: Uint8List.fromList(deviceSeed)));
-    seedsHanded.add(deviceSeed);
+    keys.add((serverKey: Uint8List.fromList(serverKey), devicePrivateKey: Uint8List.fromList(devicePrivateKey)));
+    seedsHanded.add(devicePrivateKey);
     await gate;
     final notHome = candidates.where(otherKey.contains).toList();
     for (final candidate in candidates) {

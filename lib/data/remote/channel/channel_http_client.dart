@@ -11,9 +11,10 @@ import 'package:nox_tor/channel.dart';
 /// connection to the server is opened (phase 044).
 ///
 /// Every connection - the socket's `wss` and the attachment bytes' `https` -
-/// is a channel of the native module: transport, then TLS 1.3, then the
-/// Eidolon check that the machine answering proves the key the pairing link
-/// named, and that this device proves its own. Nothing here sees a
+/// is a channel of the native module: transport, then TLS 1.3, then the check
+/// - POST /auth and POST /auth2 with RustSecureBox (phase 050) - that the
+/// machine answering proves the key the pairing link named, and that this
+/// device proves its own. Nothing here sees a
 /// certificate, and nothing needs to: the certificate is technical, and who is
 /// on the other end is decided below TLS-the-encryption, by the check bound to
 /// this very connection.
@@ -46,13 +47,13 @@ class ChannelHttpClient {
   /// Set on every start of the live channel rather than once at construction:
   /// this object is a DI singleton and both keys arrive later, when somebody
   /// pairs. Copies are kept; the caller's bytes stay the caller's.
-  void bind({required Uint8List serverKey, required Uint8List deviceSeed}) {
+  void bind({required Uint8List serverKey, required Uint8List devicePrivateKey}) {
     if (serverKey.length != 32) throw ArgumentError.value(serverKey.length, 'serverKey', 'must be 32 bytes');
-    if (deviceSeed.length != 32) throw ArgumentError.value(deviceSeed.length, 'deviceSeed', 'must be 32 bytes');
+    if (devicePrivateKey.length != 32) throw ArgumentError.value(devicePrivateKey.length, 'devicePrivateKey', 'must be 32 bytes');
     final current = _binding;
-    if (current != null && listEquals(current.serverKey, serverKey) && listEquals(current.deviceSeed, deviceSeed)) return;
+    if (current != null && listEquals(current.serverKey, serverKey) && listEquals(current.devicePrivateKey, devicePrivateKey)) return;
     current?.wipe();
-    _binding = _Binding(Uint8List.fromList(serverKey), Uint8List.fromList(deviceSeed));
+    _binding = _Binding(Uint8List.fromList(serverKey), Uint8List.fromList(devicePrivateKey));
     // A CHANGE drops every pooled connection: each was verified for the keys
     // it was opened with, and a kept-alive connection is never verified again
     // - re-pairing would otherwise keep reaching the previous machine until
@@ -140,7 +141,7 @@ class ChannelHttpClient {
     final cancelled = Completer<void>();
     final opening = _api.open(
       target,
-      deviceSeed: binding.deviceSeed,
+      devicePrivateKey: binding.devicePrivateKey,
       serverKey: binding.serverKey,
       timeout: target is OnionTarget ? onionOpenTimeout : directOpenTimeout,
       cancel: cancelled.future,
@@ -166,7 +167,7 @@ class ChannelHttpClient {
   }
 
   /// One line per open: which path, how long, how it ended. Never a key, a
-  /// seed, a token or an onion host - the path's kind is all it names.
+  /// token or an onion host - the path's kind is all it names.
   void _log(ChannelTarget target, Stopwatch watch, String outcome) {
     final path = target is OnionTarget ? 'onion' : 'direct';
     logRepository.debug(target: this, message: 'channel: $path $outcome after ${watch.elapsedMilliseconds} ms');
@@ -179,12 +180,12 @@ class ChannelHttpClient {
 }
 
 class _Binding {
-  _Binding(this.serverKey, this.deviceSeed);
+  _Binding(this.serverKey, this.devicePrivateKey);
 
   final Uint8List serverKey;
-  final Uint8List deviceSeed;
+  final Uint8List devicePrivateKey;
 
-  /// The seed is this device's private key; a binding that is let go of does
-  /// not leave it in memory.
-  void wipe() => deviceSeed.fillRange(0, deviceSeed.length, 0);
+  /// This device's private key: a binding that is let go of does not leave it
+  /// in memory.
+  void wipe() => devicePrivateKey.fillRange(0, devicePrivateKey.length, 0);
 }

@@ -115,7 +115,7 @@ impl Events {
         false
     }
 
-    /// The channel is verified; `key` is the server's, which Eidolon checked.
+    /// The channel is verified; `key` is the server's, which the check proved.
     pub(crate) fn open(&self, key: &[u8; 32]) {
         self.send(event::OPEN, key, code::NONE);
     }

@@ -11,8 +11,8 @@ import 'package:nox_app/domain/repository/app_config/app_config_repository.dart'
 /// the WebSocket envelope (feature 026) and always will.
 ///
 /// Both halves go to one machine, each over a channel of the native module
-/// (phase 044): every connection for file bytes passes the same Eidolon check
-/// the socket's does, on its own. Registered only where the socket is - the
+/// (phase 044): every connection for file bytes passes the same check the
+/// socket's does - POST /auth and POST /auth2 (phase 050) - on its own. Registered only where the socket is - the
 /// flavour that talks to a server.
 @LazySingleton(env: [Environment.dev])
 class ApiClient {

@@ -66,8 +66,8 @@ pub async fn direct(host: &str, port: u16) -> Result<TcpStream, i32> {
     // (dartbug.com/50868).
     addresses.sort_by_key(SocketAddr::is_ipv6);
     let stream = staggered(addresses, TcpStream::connect, ATTEMPT_DELAY).await.ok_or(code::NETWORK)?;
-    // The channel carries small frames both ways - commands, acks, the
-    // Eidolon messages - and each would otherwise wait on the one before.
+    // The channel carries small frames both ways - commands, acks, the two
+    // requests of the check - and each would otherwise wait on the one before.
     let _ = stream.set_nodelay(true);
     Ok(stream)
 }

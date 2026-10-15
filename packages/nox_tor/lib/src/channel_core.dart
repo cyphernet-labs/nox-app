@@ -22,11 +22,11 @@ abstract final class ChannelReturn {
 }
 
 /// The channel's C ABI as calls: the native one goes through FFI, a test's
-/// stands in for the module. The seed and the key are the caller's - an
-/// implementation copies what it keeps.
+/// stands in for the module. The device's private key and the server's key are
+/// the caller's - an implementation copies what it keeps.
 abstract class ChannelAbi {
   /// `nox_chan_open`: a handle above 0, or a negative code.
-  int open(int targetKind, String host, int port, Uint8List deviceSeed, Uint8List serverKey, int timeoutMs);
+  int open(int targetKind, String host, int port, Uint8List devicePrivateKey, Uint8List serverKey, int timeoutMs);
 
   /// `nox_chan_write`: the queue's size after the write, or a negative code.
   int write(int handle, Uint8List bytes);
@@ -61,14 +61,14 @@ class ChannelCore {
 
   Future<NoxChannel> open(
     ChannelTarget target, {
-    required Uint8List deviceSeed,
+    required Uint8List devicePrivateKey,
     required Uint8List serverKey,
     required Duration timeout,
     Future<void>? cancel,
   }) async {
     // Everything up to the registration below runs before this method first
     // yields, so no event of the new handle can be delivered ahead of it.
-    if (deviceSeed.length != 32) throw ArgumentError.value(deviceSeed.length, 'deviceSeed', 'must be 32 bytes');
+    if (devicePrivateKey.length != 32) throw ArgumentError.value(devicePrivateKey.length, 'devicePrivateKey', 'must be 32 bytes');
     if (serverKey.length != 32) throw ArgumentError.value(serverKey.length, 'serverKey', 'must be 32 bytes');
     if (target.host.isEmpty || target.host.contains('\u0000')) throw ArgumentError.value('', 'target', 'needs a host');
     if (target.port < 1 || target.port > 0xFFFF) throw ArgumentError.value(target.port, 'target', 'port out of range');
@@ -77,7 +77,7 @@ class ChannelCore {
       target is OnionTarget ? 1 : 0,
       target.host,
       target.port,
-      deviceSeed,
+      devicePrivateKey,
       serverKey,
       timeout.inMilliseconds.clamp(1, 0xFFFFFFFF),
     );

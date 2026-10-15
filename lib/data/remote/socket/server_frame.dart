@@ -40,8 +40,8 @@ sealed class ServerFrame {
 /// (contract §2): `{"srv": {"schema_max": 1}}`.
 ///
 /// It carries nothing to sign any more (phase 044). Who connected was settled
-/// below HTTP, by the Eidolon check of this very connection, before the
-/// greeting could even be sent.
+/// by the check of this very connection - POST /auth and POST /auth2, before
+/// any other request on it - before the greeting could even be sent.
 class SrvGreeting extends ServerFrame {
   const SrvGreeting({required this.schemaMax});
 

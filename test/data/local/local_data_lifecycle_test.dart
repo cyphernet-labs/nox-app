@@ -175,7 +175,7 @@ void main() {
       await StoreRef<String, String>.main().record('opened').put(await getIt<AppDatabase>().db, 'before the pairing');
       await getIt<AppDatabase>().close();
       await sessionRepository.saveServer(address: '192.168.1.20:8443', serverKey: 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=');
-      final deviceKey = (await sessionRepository.deviceSecret()).data!;
+      final deviceKey = (await sessionRepository.deviceKey()).data!.privateKey;
       await sessionRepository.savePendingPairing(PendingPairing(link: link, waitUntil: DateTime.now().add(const Duration(minutes: 5))));
       return deviceKey;
     }
@@ -189,7 +189,11 @@ void main() {
 
       expect(await const FlutterSecureStorage().read(key: pendingKey), isNull, reason: 'a link left in the store is a credential');
       expect((await authRepository.pendingPairing()).data, isNull, reason: 'the login screen offers no wait to go back to');
-      expect((await sessionRepository.deviceSecret()).data, isNot(deviceKey), reason: 'the key the wait went on with is gone with it');
+      expect(
+        (await sessionRepository.deviceKey()).data!.privateKey,
+        isNot(deviceKey),
+        reason: 'the key the wait went on with is gone with it',
+      );
     });
 
     test('survives a store that does not answer: nothing is wiped, and the wait is there to resume', () async {
@@ -200,7 +204,7 @@ void main() {
       expect((await authRepository.openLocalData()).data, isFalse, reason: 'nothing went');
 
       expect((await authRepository.pendingPairing()).data?.link, link);
-      expect((await sessionRepository.deviceSecret()).data, deviceKey, reason: 'the same key, so the same request');
+      expect((await sessionRepository.deviceKey()).data!.privateKey, deviceKey, reason: 'the same key, so the same request');
     });
   });
 

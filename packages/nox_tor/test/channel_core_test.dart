@@ -20,12 +20,12 @@ class _FakeAbi implements ChannelAbi {
   int queueAfterWrite = 0;
 
   @override
-  int open(int targetKind, String host, int port, Uint8List deviceSeed, Uint8List serverKey, int timeoutMs) {
+  int open(int targetKind, String host, int port, Uint8List devicePrivateKey, Uint8List serverKey, int timeoutMs) {
     opens.add((
       kind: targetKind,
       host: host,
       port: port,
-      seed: Uint8List.fromList(deviceSeed),
+      seed: Uint8List.fromList(devicePrivateKey),
       key: Uint8List.fromList(serverKey),
       timeoutMs: timeoutMs,
     ));
@@ -87,7 +87,7 @@ void main() {
 
   /// Opens a channel and verifies it, as the module would.
   Future<NoxChannel> opened({ChannelTarget target = home}) async {
-    final opening = core.open(target, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30));
+    final opening = core.open(target, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30));
     core.deliver(abi.nextHandle - 1, ChannelEvent.open, Uint8List.fromList(key), 0);
     return opening;
   }
@@ -114,7 +114,7 @@ void main() {
     });
 
     test('an OPEN naming another key is the wrong server, and the channel is dropped (checked again in Dart)', () async {
-      final opening = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30));
+      final opening = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30));
       core.deliver(1, ChannelEvent.open, Uint8List(32), 0);
 
       await expectLater(opening, throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.wrongServer)));
@@ -122,18 +122,18 @@ void main() {
     });
 
     test('an OPEN without the key is the module failing, not a verified channel', () async {
-      final opening = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30));
+      final opening = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30));
       core.deliver(1, ChannelEvent.open, null, 0);
 
       await expectLater(opening, throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.internal)));
     });
 
     test('CLOSED before OPEN fails the open with its kind; a normal close there reads as the network', () async {
-      final refused = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30));
+      final refused = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30));
       core.deliver(1, ChannelEvent.closed, null, 5);
       await expectLater(refused, throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.wrongServer)));
 
-      final dropped = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30));
+      final dropped = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30));
       core.deliver(2, ChannelEvent.closed, null, 0);
       await expectLater(dropped, throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.network)));
       expect(core.liveChannels, 0);
@@ -141,7 +141,7 @@ void main() {
 
     test('every failure kind of the contract maps to its name, and an unknown one is internal', () async {
       for (var code = 1; code <= 12; code++) {
-        final opening = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30));
+        final opening = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30));
         core.deliver(abi.nextHandle - 1, ChannelEvent.closed, null, code);
         await expectLater(
           opening,
@@ -158,17 +158,17 @@ void main() {
 
     test('a refused call is an argument error for -7, and the module failing otherwise', () async {
       abi.refuseOpenWith = -7;
-      await expectLater(core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 1)), throwsArgumentError);
+      await expectLater(core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 1)), throwsArgumentError);
       abi.refuseOpenWith = -1;
       await expectLater(
-        core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 1)),
+        core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 1)),
         throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.internal)),
       );
     });
 
     test('a cancel before OPEN abandons the open in the module, and a late OPEN changes nothing', () async {
       final cancel = Completer<void>();
-      final opening = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30), cancel: cancel.future);
+      final opening = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30), cancel: cancel.future);
       cancel.complete();
       await expectLater(opening, throwsA(isA<ChannelOpenException>()));
       expect(abi.closes, [1], reason: 'nox_chan_close, not a wait for the module timeout');
@@ -180,7 +180,7 @@ void main() {
 
     test('a cancel after OPEN leaves the channel to whoever holds it', () async {
       final cancel = Completer<void>();
-      final opening = core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(seconds: 30), cancel: cancel.future);
+      final opening = core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(seconds: 30), cancel: cancel.future);
       core.deliver(1, ChannelEvent.open, Uint8List.fromList(key), 0);
       await opening;
 
@@ -193,7 +193,7 @@ void main() {
     test('a module that never answers is given up on past its own deadline', () async {
       final watch = Stopwatch()..start();
       await expectLater(
-        core.open(home, deviceSeed: seed, serverKey: key, timeout: const Duration(milliseconds: 50)),
+        core.open(home, devicePrivateKey: seed, serverKey: key, timeout: const Duration(milliseconds: 50)),
         throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.timeout)),
       );
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));

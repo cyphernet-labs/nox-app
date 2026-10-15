@@ -117,10 +117,10 @@ class FakeNoxChannel implements NoxChannel {
 
 /// One call to [NoxChannelApi.open], as the test saw it.
 class OpenCall {
-  OpenCall(this.target, this.deviceSeed, this.serverKey, this.timeout, this.cancel);
+  OpenCall(this.target, this.devicePrivateKey, this.serverKey, this.timeout, this.cancel);
 
   final ChannelTarget target;
-  final Uint8List deviceSeed;
+  final Uint8List devicePrivateKey;
   final Uint8List serverKey;
   final Duration timeout;
   final Future<void>? cancel;
@@ -140,12 +140,12 @@ class ScriptedChannelApi implements NoxChannelApi {
   @override
   Future<NoxChannel> open(
     ChannelTarget target, {
-    required Uint8List deviceSeed,
+    required Uint8List devicePrivateKey,
     required Uint8List serverKey,
     required Duration timeout,
     Future<void>? cancel,
   }) {
-    final call = OpenCall(target, Uint8List.fromList(deviceSeed), Uint8List.fromList(serverKey), timeout, cancel);
+    final call = OpenCall(target, Uint8List.fromList(devicePrivateKey), Uint8List.fromList(serverKey), timeout, cancel);
     calls.add(call);
     cancel?.then((_) => call._cancelled = true);
     final answer = this.answer;
@@ -316,7 +316,7 @@ class LoopbackChannelApi implements NoxChannelApi {
   @override
   Future<NoxChannel> open(
     ChannelTarget target, {
-    required Uint8List deviceSeed,
+    required Uint8List devicePrivateKey,
     required Uint8List serverKey,
     required Duration timeout,
     Future<void>? cancel,

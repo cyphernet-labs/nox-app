@@ -21,6 +21,9 @@ void main(List<String> args) async {
     // these, a manifest, lockfile or toolchain change leaves a stale library.
     output.dependencies.addAll([
       for (final f in ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml']) input.packageRoot.resolve('rust/$f'),
+      // RustSecureBox (050), a path dependency outside this package: its
+      // manifest, beside the sources cargo reports.
+      input.packageRoot.resolve('../rust_secure_box/Cargo.toml'),
     ]);
   });
 }

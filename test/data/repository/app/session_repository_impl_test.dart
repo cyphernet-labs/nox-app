@@ -185,12 +185,14 @@ void main() {
       expect((await repository.serverKey()).data, isNull);
     });
 
-    test('the device seed is a real 32-byte key, not a random string', () async {
-      final seed = (await repository.deviceSecret()).data!;
-      // The module opens every channel with it: if this ever stops being a
-      // key, every connection fails with an error nobody can trace to here.
-      expect(base64.decode(seed).length, 32);
-      expect((await DeviceKeys.publicKey(seed)).isNotEmpty, isTrue);
+    test('the device key is RustSecureBox\'s pair, made once and kept', () async {
+      final pair = (await repository.deviceKey()).data!;
+      // The module opens every channel with the private half: if this ever
+      // stops being a key, every connection fails with an error nobody can
+      // trace to here.
+      expect(base64.decode(pair.privateKey).length, 32);
+      expect(DeviceKeys.publicKeyOf(pair.privateKey), pair.publicKey);
+      expect((await repository.deviceKey()).data, pair, reason: 'made once, then read');
     });
   });
 
@@ -233,6 +235,51 @@ void main() {
     });
   });
 
+  group('a session whose device key another check made (phase 050, FR-019)', () {
+    const storage = FlutterSecureStorage();
+
+    test('an identifier with no device key pair - a session of the Eidolon check - predates RustSecureBox', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await storage.write(key: 'session.device_secret', value: base64.encode(List<int>.filled(32, 7)));
+      expect((await repository.predatesSecureBox()).data, isTrue);
+    });
+
+    test('a pair whose public key is not RustSecureBox\'s for its private one predates it too', () async {
+      final pair = (await repository.deviceKey()).data!;
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await storage.write(
+        key: 'session.device_key',
+        value: jsonEncode({'private': pair.privateKey, 'public': base64.encode(List<int>.filled(32, 9))}),
+      );
+      expect((await repository.predatesSecureBox()).data, isTrue);
+    });
+
+    test('a pair of this build\'s RustSecureBox does not, and no session at all predates nothing', () async {
+      expect((await repository.predatesSecureBox()).data, isFalse);
+      await repository.deviceKey();
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      expect((await repository.predatesSecureBox()).data, isFalse);
+    });
+
+    test('a keychain that cannot be read says so, and never claims the key is another\'s', () async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final prefs = await SharedPreferences.getInstance();
+      final locked = SessionRepositoryImpl(const _LockedStorage(), prefs);
+      expect((await locked.predatesSecureBox()).hasData, isFalse, reason: 'an error, which wipes nothing');
+    });
+
+    test('the bootstrap sweep drops the Eidolon seed, and a logout takes the pair', () async {
+      await storage.write(key: 'session.device_secret', value: 'seed');
+      await repository.sweepLegacyKeys();
+      expect(await storage.read(key: 'session.device_secret'), isNull);
+      await repository.deviceKey();
+      await repository.clear();
+      expect(await storage.read(key: 'session.device_key'), isNull);
+    });
+  });
+
   group('discardSignIn (feature 031)', () {
     test('undoes the sign-in so the session resolves to null', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
@@ -241,20 +288,20 @@ void main() {
     });
 
     test('keeps the device key - a sign-in that never reached the server changed no install', () async {
-      final before = (await repository.deviceSecret()).data;
+      final before = (await repository.deviceKey()).data;
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
 
       await repository.discardSignIn();
 
       // clear() would rotate it, and the next successful attempt would then
       // register a second device for one install.
-      expect((await repository.deviceSecret()).data, before);
+      expect((await repository.deviceKey()).data, before);
     });
 
     test('clear DOES rotate the device key, which is why sign-in must not use it', () async {
-      final before = (await repository.deviceSecret()).data;
+      final before = (await repository.deviceKey()).data;
       await repository.clear();
-      expect((await repository.deviceSecret()).data, isNot(before));
+      expect((await repository.deviceKey()).data, isNot(before));
     });
   });
 

@@ -10,18 +10,20 @@
 //!    nothing about the certificate it signed with: that is a throwaway one the
 //!    server makes at every start, and what a certificate would prove, the next
 //!    layer proves.
-//! 3. Eidolon (`eidolon`) over the TLS channel binding: the device shows its key
-//!    first, the server answers with its own, and the channel opens only when
-//!    that is the key the pairing link named. A man in the middle holds two TLS
-//!    sessions, so two bindings, and can sign for neither side over the other.
+//! 3. The check (`auth`, phase 050): `POST /auth`, then `POST /auth2`. The
+//!    device shows its key and a challenge, the server answers with its key, its
+//!    challenge and a signature over the device's; the device signs the
+//!    server's challenge only once that signature holds and the key is the one
+//!    the pairing link named. Keys and signatures are RustSecureBox's, the
+//!    library the app and the server share.
 //!
 //! Then the bytes go to Dart as events, posted to a port of the isolate that
 //! opened the channel (`dart`, `registry`), and are pumped both ways under a
 //! window each (`pump`). The contract is
 //! `specs/044-secure-channel/contracts/ffi-channel.md`.
 
+pub mod auth;
 pub mod dart;
-pub mod eidolon;
 pub mod pump;
 pub mod registry;
 pub mod target;
@@ -36,7 +38,7 @@ use tokio::sync::Notify;
 use tokio_rustls::client::TlsStream;
 
 use crate::engine::{self, lock};
-use eidolon::DeviceSeed;
+use auth::DeviceKey;
 use pump::{Flush, Pump};
 use registry::{Closer, Events};
 use target::{OnionContext, Transport};
@@ -131,7 +133,7 @@ impl Channel {
 
 /// Opens a channel: returns its handle at once, and the rest comes as events
 /// posted to `port`. Negative only when there is nowhere to run it.
-pub fn open(target: Target, seed: DeviceSeed, server_key: [u8; 32], budget: Duration, port: dart::Port) -> i64 {
+pub fn open(target: Target, device: DeviceKey, server_key: [u8; 32], budget: Duration, port: dart::Port) -> i64 {
     // An onion channel runs on the Tor client's own runtime, as the client's
     // streams do; one the client cannot take yet still needs a runtime to say so.
     let onion = match &target {
@@ -150,7 +152,7 @@ pub fn open(target: Target, seed: DeviceSeed, server_key: [u8; 32], budget: Dura
     // A task dropped before it ever ran means its runtime is gone: for an onion
     // channel, the Tor client stopped in between.
     let closer = Closer::new(channel, if onion.is_some() { code::TOR_NOT_READY } else { code::INTERNAL });
-    runtime.spawn(drive(closer, target, onion, seed, server_key, budget));
+    runtime.spawn(drive(closer, target, onion, device, server_key, budget));
     handle
 }
 
@@ -159,7 +161,7 @@ async fn drive(
     closer: Closer,
     target: Target,
     onion: Option<OnionContext>,
-    seed: DeviceSeed,
+    device: DeviceKey,
     server_key: [u8; 32],
     budget: Duration,
 ) {
@@ -171,7 +173,7 @@ async fn drive(
         () = channel.close_requested() => code::NONE,
         // Nobody is left to hear of it, or to ask for anything more.
         () = channel.events.lost() => code::NONE,
-        code = run(&channel, target, onion, seed, &server_key, budget) => code,
+        code = run(&channel, target, onion, device, &server_key, budget) => code,
     };
     closer.finish(code);
 }
@@ -180,13 +182,13 @@ async fn run(
     channel: &Channel,
     target: Target,
     onion: Option<OnionContext>,
-    seed: DeviceSeed,
+    device: DeviceKey,
     server_key: &[u8; 32],
     budget: Duration,
 ) -> i32 {
-    // One budget for the transport, TLS and Eidolon together: what the app
+    // One budget for the transport, TLS and the check together: what the app
     // waits for is a channel it can use, not any one of the steps.
-    let (stream, key) = match tokio::time::timeout(budget, establish(target, onion, seed, server_key)).await {
+    let (stream, key) = match tokio::time::timeout(budget, establish(target, onion, device, server_key)).await {
         Ok(Ok(opened)) => opened,
         Ok(Err(code)) => return code,
         Err(_) => return code::TIMEOUT,
@@ -199,14 +201,17 @@ async fn run(
     }
 }
 
-/// The three layers. Nothing reaches the stream before the device's Eidolon
-/// message, and the stream reaches nobody before the server's answer checked.
+/// The three layers. Nothing reaches the stream before `POST /auth`, and the
+/// stream reaches nobody before `POST /auth2` was answered.
 async fn establish(
     target: Target,
     onion: Option<OnionContext>,
-    seed: DeviceSeed,
+    device: DeviceKey,
     server_key: &[u8; 32],
 ) -> Result<(TlsStream<Box<dyn Transport>>, [u8; 32]), i32> {
+    let host = match &target {
+        Target::Direct { host, port } | Target::Onion { host, port } => auth::host_header(host, *port),
+    };
     let transport: Box<dyn Transport> = match target {
         Target::Direct { host, port } => Box::new(target::direct(&host, port).await?),
         Target::Onion { host, port } => {
@@ -217,8 +222,7 @@ async fn establish(
         }
     };
     let mut stream = tls::connect(transport).await?;
-    let binding = tls::channel_binding(stream.get_ref().1)?;
-    let key = eidolon::handshake(&mut stream, seed, server_key, &binding).await?;
+    let key = auth::handshake(&mut stream, device, server_key, &host).await?;
     Ok((stream, key))
 }
 

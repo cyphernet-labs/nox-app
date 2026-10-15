@@ -33,7 +33,7 @@ import 'fake_direct_prober.dart';
 /// Tor only when no direct address answers, `Use Tor` is on and an onion
 /// address is known, and back to direct as soon as it answers again.
 final Uint8List _serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
-final Uint8List _deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+final Uint8List _devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
 const String _link = '10.0.0.5:9000';
 final String _onionHost = '${'a' * 56}.onion';
 final String _onion = '$_onionHost:443';
@@ -163,7 +163,7 @@ void main() {
     addresses = getIt<ServerAddressesRepository>();
     network = _Network();
     lifecycle = _Lifecycle();
-    selector = build()..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+    selector = build()..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
   });
 
   tearDown(() async {
@@ -337,7 +337,7 @@ void main() {
       await selector.nextTarget();
 
       expect(prober.keys.single.serverKey, _serverKey);
-      expect(prober.keys.single.deviceSeed, _deviceSeed);
+      expect(prober.keys.single.devicePrivateKey, _devicePrivateKey);
     });
 
     test('a session not begun with keys has no path at all', () async {
@@ -349,28 +349,28 @@ void main() {
     });
 
     test('ending the session wipes its copy of the device key, and leaves the caller its own', () async {
-      final seed = Uint8List.fromList(_deviceSeed);
+      final seed = Uint8List.fromList(_devicePrivateKey);
       await selector.end();
-      selector = build()..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: seed);
+      selector = build()..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: seed);
       prober.home = <String>{};
       await selector.nextTarget();
       // The array the probe was handed is the selector's own copy: the one
       // that has to go with the session.
       final own = prober.seedsHanded.single;
-      expect(own, _deviceSeed);
+      expect(own, _devicePrivateKey);
       expect(identical(own, seed), isFalse, reason: 'the selector keeps a copy of its own');
 
       await selector.end();
 
       expect(own, everyElement(0), reason: 'the device key outlived its session');
-      expect(seed, _deviceSeed, reason: 'the caller keeps what it handed over');
+      expect(seed, _devicePrivateKey, reason: 'the caller keeps what it handed over');
       expect(await selector.nextTarget(), isNull);
     });
 
     test('a round whose read of the addresses outlives a new begin() probes with the new key, never the wiped one', () async {
       final store = _HeldAddresses(addresses);
       await selector.end();
-      selector = build(store: store)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector = build(store: store)..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       final held = Completer<void>();
       store.hold = held.future;
       prober.home = <String>{};
@@ -379,17 +379,17 @@ void main() {
       await waitUntil(() => store.reads == 1, reason: 'the round reads the addresses');
       // A start over a running session: the seed it replaces is wiped in place.
       final next = Uint8List.fromList(List<int>.generate(32, (i) => 0x40 + i));
-      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: next);
+      selector.begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: next);
       held.complete();
       await round;
 
-      expect(prober.keys.single.deviceSeed, next, reason: 'the probe opened its channels with a key wiped under it');
+      expect(prober.keys.single.devicePrivateKey, next, reason: 'the probe opened its channels with a key wiped under it');
     });
 
     test('a check of the direct path whose read of the addresses outlives end() opens nothing with the wiped key', () async {
       final store = _HeldAddresses(addresses);
       await selector.end();
-      selector = build(store: store)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector = build(store: store)..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       await torWorks();
       prober.home = <String>{};
       await connectAndGreet();
@@ -408,7 +408,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(prober.rounds, hasLength(probes), reason: 'a probe for a session that had ended');
-      expect(prober.keys.where((k) => k.deviceSeed.every((b) => b == 0)), isEmpty, reason: 'a probe opened with the wiped key');
+      expect(prober.keys.where((k) => k.devicePrivateKey.every((b) => b == 0)), isEmpty, reason: 'a probe opened with the wiped key');
     });
 
     test('a start that did not take is no path this round, at once', () async {
@@ -440,7 +440,7 @@ void main() {
 
     test('the debug switch skips the direct addresses', () async {
       await selector.end();
-      selector = build(forceTor: true)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector = build(forceTor: true)..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       await torWorks();
 
       expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'));
@@ -449,7 +449,7 @@ void main() {
 
     test('the debug switch does not override Use Tor', () async {
       await selector.end();
-      selector = build(forceTor: true)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector = build(forceTor: true)..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       await torWorks();
       await addresses.setUseTor(false);
 
@@ -661,7 +661,7 @@ void main() {
       expect(selector.selection.problem, ConnectionProblem.turnOnTor);
 
       await selector.end(keepTor: true);
-      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector.begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       expect(selector.selection.problem, isNull);
 
       await addresses.setUseTor(true);
@@ -793,7 +793,7 @@ void main() {
     test('every so often the direct path is checked, taken when it answers, and Tor stops (FR-003)', () async {
       await selector.end();
       selector = build(recheckEvery: const Duration(milliseconds: 150))
-        ..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+        ..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       await onTor();
 
       prober.home = null;
@@ -912,7 +912,7 @@ void main() {
 
     test('a desktop does not sleep', () async {
       await selector.end();
-      selector = build(mobile: false)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector = build(mobile: false)..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       await onTor();
 
       lifecycle.go(AppVisibility.background);
@@ -1004,7 +1004,7 @@ void main() {
     await selector.end(keepTor: true);
     expect(selector.selection.active, isTrue);
 
-    selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+    selector.begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
     expect(selector.selection.active, isTrue);
   });
 
@@ -1014,7 +1014,7 @@ void main() {
     // cancel wedged the channel restart a sign-in waits on.
     await selector.end();
     selector = ConnectionPathSelector.forTest(prober, tor, addresses, _StuckNetwork(), lifecycle, socket)
-      ..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      ..begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
     await selector.end().timeout(const Duration(seconds: 2), onTimeout: () => fail('end() waited on the stuck source'));
@@ -1086,7 +1086,7 @@ void main() {
       await selector.end(keepTor: true);
 
       expect(tor.stops, stops + 1, reason: 'coming up for longer than the budget is not coming up');
-      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector.begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       tor.afterStart = const TorStatus(state: TorState.ready, bootstrapPercent: 100);
       final starts = tor.starts;
       expect(await selector.nextTarget(), isNotNull);
@@ -1109,7 +1109,7 @@ void main() {
       expect(selector.selection.roundFailed, isTrue, reason: 'No connection');
 
       await selector.end(keepTor: true);
-      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      selector.begin(linkAddress: _link, serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
       expect(selector.selection.roundFailed, isFalse, reason: 'connecting again');
 
       expect(await selector.nextTarget(), isNull);

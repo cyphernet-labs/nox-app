@@ -16,7 +16,7 @@ Future<void> _openFromAnotherIsolate(List<Object> args) async {
   final [port as int, timeoutMs as int, ready as SendPort] = args;
   final opening = const NativeNoxChannelApi().open(
     DirectTarget('127.0.0.1', port),
-    deviceSeed: _seed,
+    devicePrivateKey: _seed,
     serverKey: _serverKey,
     timeout: Duration(milliseconds: timeoutMs),
   );
@@ -90,7 +90,7 @@ Future<void> _kill(Isolate isolate) async {
 
 // The secure channel against the library the hook built for the host. Only
 // the refusals live here - every one of them is decided before any server
-// would speak; the exchange with a real Eidolon peer is the crate's own
+// would speak; the exchange with a server that answers /auth and /auth2 is the crate's own
 // integration test (rust/tests/channel.rs).
 void main() {
   const api = NativeNoxChannelApi();
@@ -98,32 +98,37 @@ void main() {
   final serverKey = _serverKey;
 
   group('refused before the module is asked', () {
-    test('a seed or a server key of the wrong length', () {
+    test('a device key or a server key of the wrong length', () {
       expect(
-        api.open(const DirectTarget('127.0.0.1', 1), deviceSeed: Uint8List(31), serverKey: serverKey, timeout: const Duration(seconds: 1)),
+        api.open(
+          const DirectTarget('127.0.0.1', 1),
+          devicePrivateKey: Uint8List(31),
+          serverKey: serverKey,
+          timeout: const Duration(seconds: 1),
+        ),
         throwsArgumentError,
       );
       expect(
-        api.open(const DirectTarget('127.0.0.1', 1), deviceSeed: seed, serverKey: Uint8List(33), timeout: const Duration(seconds: 1)),
+        api.open(const DirectTarget('127.0.0.1', 1), devicePrivateKey: seed, serverKey: Uint8List(33), timeout: const Duration(seconds: 1)),
         throwsArgumentError,
       );
     });
 
     test('no host, a port out of range, no time at all', () {
       expect(
-        api.open(const DirectTarget('', 443), deviceSeed: seed, serverKey: serverKey, timeout: const Duration(seconds: 1)),
+        api.open(const DirectTarget('', 443), devicePrivateKey: seed, serverKey: serverKey, timeout: const Duration(seconds: 1)),
         throwsArgumentError,
       );
       expect(
-        api.open(const DirectTarget('127.0.0.1', 0), deviceSeed: seed, serverKey: serverKey, timeout: const Duration(seconds: 1)),
+        api.open(const DirectTarget('127.0.0.1', 0), devicePrivateKey: seed, serverKey: serverKey, timeout: const Duration(seconds: 1)),
         throwsArgumentError,
       );
       expect(
-        api.open(const DirectTarget('127.0.0.1', 70000), deviceSeed: seed, serverKey: serverKey, timeout: const Duration(seconds: 1)),
+        api.open(const DirectTarget('127.0.0.1', 70000), devicePrivateKey: seed, serverKey: serverKey, timeout: const Duration(seconds: 1)),
         throwsArgumentError,
       );
       expect(
-        api.open(const DirectTarget('127.0.0.1', 1), deviceSeed: seed, serverKey: serverKey, timeout: Duration.zero),
+        api.open(const DirectTarget('127.0.0.1', 1), devicePrivateKey: seed, serverKey: serverKey, timeout: Duration.zero),
         throwsArgumentError,
       );
     });
@@ -150,7 +155,7 @@ void main() {
       final port = probe.port;
       await probe.close();
       await expectLater(
-        api.open(DirectTarget('127.0.0.1', port), deviceSeed: seed, serverKey: serverKey, timeout: const Duration(seconds: 5)),
+        api.open(DirectTarget('127.0.0.1', port), devicePrivateKey: seed, serverKey: serverKey, timeout: const Duration(seconds: 5)),
         throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.network)),
       );
     });
@@ -169,7 +174,7 @@ void main() {
       await expectLater(
         api.open(
           DirectTarget('127.0.0.1', silent.port),
-          deviceSeed: seed,
+          devicePrivateKey: seed,
           serverKey: serverKey,
           timeout: const Duration(milliseconds: 800),
         ),
@@ -191,7 +196,7 @@ void main() {
       final cancel = Completer<void>();
       final opening = api.open(
         DirectTarget('127.0.0.1', silent.port),
-        deviceSeed: seed,
+        devicePrivateKey: seed,
         serverKey: serverKey,
         timeout: const Duration(seconds: 30),
         cancel: cancel.future,

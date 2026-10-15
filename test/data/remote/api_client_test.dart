@@ -38,12 +38,12 @@ class _FakeConfig implements AppConfigRepository {
 }
 
 final Uint8List _serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
-final Uint8List _deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+final Uint8List _devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
 /// A channel client bound to the server, with its channels opened to [port]
 /// on loopback - the server under test stands in for the one at any address.
 ChannelHttpClient _channels({int port = 1}) =>
-    ChannelHttpClient(LoopbackChannelApi(port))..bind(serverKey: _serverKey, deviceSeed: _deviceSeed);
+    ChannelHttpClient(LoopbackChannelApi(port))..bind(serverKey: _serverKey, devicePrivateKey: _devicePrivateKey);
 
 /// The machine the pairing link named. [hold] keeps a request open until it
 /// completes; everything else is answered at once. Plain HTTP: the channel
@@ -112,7 +112,7 @@ void main() {
     expect(identical(channels.transferClient, bytes), isTrue);
     expect(identical(socket, bytes), isFalse, reason: 'what Dio sets on its client must not reach the socket');
 
-    channels.bind(serverKey: Uint8List(32), deviceSeed: _deviceSeed);
+    channels.bind(serverKey: Uint8List(32), devicePrivateKey: _devicePrivateKey);
 
     expect(identical(channels.client, socket), isFalse, reason: 'a connection to the old machine is never checked again');
     expect(identical(channels.transferClient, bytes), isFalse);
@@ -123,7 +123,7 @@ void main() {
     final api = ApiClient(_FakeConfig(null), channels)..initBase(address: '10.0.0.5:9000');
     final before = api.dio.httpClientAdapter;
 
-    channels.bind(serverKey: Uint8List(32), deviceSeed: _deviceSeed);
+    channels.bind(serverKey: Uint8List(32), devicePrivateKey: _devicePrivateKey);
 
     expect(identical(api.dio.httpClientAdapter, before), isFalse);
   });

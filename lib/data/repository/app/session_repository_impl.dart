@@ -12,6 +12,7 @@ import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -58,10 +59,15 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   static const String _kLegacyInviteOnion = 'session.invite_onion';
   static const String _kLegacyInviteAccessKey = 'session.invite_access_key';
 
-  /// This device's Ed25519 seed. The private half of the pair whose public
-  /// half the server knows as `device_key` — it is generated here, stays here,
-  /// and dies with a logout through `deleteAll`.
-  static const String _kDeviceSecret = 'session.device_secret';
+  /// This device's key pair from RustSecureBox (phase 050), one JSON value -
+  /// `{"private", "public"}`, base64 each - so the halves never part. The
+  /// public half is what the server knows as `device_key`; the pair is made
+  /// here, stays here, and dies with a logout.
+  static const String _kDeviceKey = 'session.device_key';
+
+  /// The device's Ed25519 seed of phases 032-049 - the Eidolon check's key.
+  /// Swept at launch: no channel takes it any more.
+  static const String _kLegacyDeviceSecret = 'session.device_secret';
 
   /// The local-data key (phase 048), base64 of 32 bytes. Kept like every
   /// other record here - for this device only - and, unlike the session's
@@ -127,6 +133,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
       await _secureStorage.deleteIfPresent(key: _kLegacyInviteOnion);
       await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kLegacyDeviceSecret);
       await _secureStorage.deleteIfPresent(
         key: _kLegacyInviteAccessKey,
         iOptions: ConnectionStorage.legacyKeyIOSOptions,
@@ -238,18 +245,36 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<String>> deviceSecret() {
-    return execute<String>(() async {
-      final stored = await _secureStorage.read(key: _kDeviceSecret);
-      if (stored != null && stored.isNotEmpty) {
-        return RepositoryResult<String>.success(data: stored);
-      }
-      // Minted once, on the way into the first pairing. A rotated seed is a
-      // device the server no longer knows, which reads as a revocation.
-      final minted = await DeviceKeys.generateSeed();
-      await _secureStorage.write(key: _kDeviceSecret, value: minted);
-      return RepositoryResult<String>.success(data: minted);
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey() {
+    return execute<DeviceKeyPair>(() async {
+      final stored = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
+      if (stored != null) return RepositoryResult<DeviceKeyPair>.success(data: stored);
+      // Made once, on the way into the first pairing. A new pair is a device
+      // the server no longer knows, which reads as a revocation - so a record
+      // that does not read is replaced only here, where there is nothing paired
+      // with it yet: a session holding one is retired at launch first
+      // (predatesSecureBox).
+      final minted = DeviceKeys.generate();
+      await _secureStorage.write(key: _kDeviceKey, value: jsonEncode({'private': minted.privateKey, 'public': minted.publicKey}));
+      return RepositoryResult<DeviceKeyPair>.success(data: minted);
     });
+  }
+
+  /// The stored pair, or null when there is none or it does not read as two
+  /// base64 keys of 32 bytes.
+  static DeviceKeyPair? _decodeDeviceKey(String? stored) {
+    if (stored == null || stored.isEmpty) return null;
+    try {
+      final json = jsonDecode(stored);
+      if (json is! Map<String, dynamic>) return null;
+      final private = json['private'];
+      final public = json['public'];
+      if (private is! String || public is! String) return null;
+      if (base64.decode(private).length != 32 || base64.decode(public).length != 32) return null;
+      return DeviceKeyPair(privateKey: private, publicKey: public);
+    } on FormatException {
+      return null;
+    }
   }
 
   @override
@@ -305,6 +330,19 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<String?>(() async {
       final stored = await _secureStorage.read(key: _kServerKey);
       return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> predatesSecureBox() {
+    // Inside `execute`: a read that throws - or RustSecureBox failing - comes
+    // back as an error, and the caller wipes nothing on an error.
+    return execute<bool>(() async {
+      final identifier = await _secureStorage.read(key: _kIdentifier);
+      if (identifier == null || identifier.isEmpty) return const RepositoryResult<bool>.success(data: false);
+      final pair = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
+      if (pair == null) return const RepositoryResult<bool>.success(data: true);
+      return RepositoryResult<bool>.success(data: DeviceKeys.publicKeyOf(pair.privateKey) != pair.publicKey);
     });
   }
 
@@ -469,7 +507,8 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // app puts them on the naming screen, holding a token for a server it can
       // no longer reach.
       await _secureStorage.deleteIfPresent(key: _kIdentifier);
-      await _secureStorage.deleteIfPresent(key: _kDeviceSecret);
+      await _secureStorage.deleteIfPresent(key: _kDeviceKey);
+      await _secureStorage.deleteIfPresent(key: _kLegacyDeviceSecret);
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
       await _secureStorage.deleteIfPresent(key: _kServerKey);
       await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);

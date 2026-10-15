@@ -7,7 +7,6 @@ import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 
@@ -43,8 +42,8 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
 
       // Which row is "this device" is known only here: the server sees a key,
       // not a person holding a phone.
-      final seed = await _session.deviceSecret();
-      final own = seed.hasData ? await DeviceKeys.publicKey(seed.data!) : null;
+      final pair = await _session.deviceKey();
+      final own = pair.data?.publicKey;
 
       final raw = reply.data?['devices'];
       final devices = <DeviceModel>[];
