@@ -1,0 +1,5 @@
+# A WebAssembly instance carries its whole stack in its memory, and the server
+# keeps a pool of instances. The default 1 MiB is far more than four short
+# functions need.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=65536"]

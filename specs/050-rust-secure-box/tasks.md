@@ -21,7 +21,7 @@
   - §8, строка 8.1;
   - §9 — аутентификация.
 - [X] T002 Поправить конституцию 1.4.0 → 1.5.0 через `/speckit-constitution`, файл `.specify/memory/constitution.md`. Менять Принцип VII и «Рабочий режим»: проверка `POST /auth`/`POST /auth2` подписями RustSecureBox; RustSecureBox — одна библиотека на Rust в приложении и на сервере (WebAssembly без cgo); Eidolon и экспортёр убраны. Обновить Sync Impact Report.
-- [ ] T003 Создать крейт `packages/rust_secure_box/`:
+- [X] T003 Создать крейт `packages/rust_secure_box/`:
   - `Cargo.toml`: `rust_secure_box`, rlib, `sha2` 0.10 и `getrandom` 0.3 только не для wasm32, профиль release с `panic = "abort"`, `opt-level = "z"`, `lto`;
   - `rust-toolchain.toml`: 1.93.1, `wasm32-unknown-unknown`;
   - `.cargo/config.toml`: стек 64 КиБ для wasm32;
@@ -32,33 +32,33 @@
 
 ## Phase 2: Foundational — RustSecureBox на обеих сторонах
 
-- [ ] T004 Реализовать заглушку `packages/rust_secure_box/src/stub.rs` по research R4 и источник случайных байтов `src/random.rs`: `getrandom` на нативных целях, импорт `env.rsb_random` на wasm32. В комментариях — что делает настоящий RustSecureBox (Ed25519, RFC 8032, те же размеры) и что подпись заглушки подделывает любой, кто знает открытый ключ (FR-005).
-- [ ] T005 Сделать C ABI WebAssembly `packages/rust_secure_box/src/wasm.rs` (только `cfg(target_arch = "wasm32")`): `rsb_io` (256 байт), `rsb_generate_keys`, `rsb_get_challenge`, `rsb_sign_challenge`, `rsb_check_signature` с кодами `0/1/-1/-2/-3`.
-- [ ] T006 [P] Написать проверки интерфейса `packages/rust_secure_box/tests/interface.rs` (research R12):
+- [X] T004 Реализовать заглушку `packages/rust_secure_box/src/stub.rs` по research R4 и источник случайных байтов `src/random.rs`: `getrandom` на нативных целях, импорт `env.rsb_random` на wasm32. В комментариях — что делает настоящий RustSecureBox (Ed25519, RFC 8032, те же размеры) и что подпись заглушки подделывает любой, кто знает открытый ключ (FR-005).
+- [X] T005 Сделать C ABI WebAssembly `packages/rust_secure_box/src/wasm.rs` (только `cfg(target_arch = "wasm32")`): `rsb_io` (256 байт), `rsb_generate_keys`, `rsb_get_challenge`, `rsb_sign_challenge`, `rsb_check_signature` с кодами `0/1/-1/-2/-3`.
+- [X] T006 [P] Написать проверки интерфейса `packages/rust_secure_box/tests/interface.rs` (research R12):
   - своя подпись проходит; чужой ключ, другой челлендж и любой изменённый байт — нет;
   - `pk` из `get_challenge` равен `pk` из `generate_keys`;
   - 1000 челленджей различны;
   - 16 потоков дают те же ответы.
-- [ ] T007 Написать векторы `packages/rust_secure_box/tests/vectors.rs`:
+- [X] T007 Написать векторы `packages/rust_secure_box/tests/vectors.rs`:
   - `#[ignore] write_vectors` пишет `specs/050-rust-secure-box/contracts/rsb-vectors.json` по формату `data-model.md`, включая `probe` (32 × `0x01`);
   - обычный тест сверяет крейт с этим файлом и с копией `tests/data/rsb-vectors.json`.
 
   Сгенерировать оба файла.
-- [ ] T008 Написать `packages/rust_secure_box/build-wasm.sh`:
+- [X] T008 Написать `packages/rust_secure_box/build-wasm.sh`:
   - `cargo rustc --release --target wasm32-unknown-unknown --crate-type cdylib`;
   - `go run github.com/ncruces/wasm2go@v0.4.15 -embed -pkg boxwasm`;
   - выход — `client_backend/internal/securebox/boxwasm/`, необязательный каталог назначения для проверки.
 
   В `Makefile` добавить цели `box-wasm` и `box-verify` (сборка во временный каталог и `diff` с репозиторием). `tor-test` должен звать `cargo test` крейта и `box-verify`.
-- [ ] T009 Сгенерировать `client_backend/internal/securebox/boxwasm/box.go` и `box.dat` через `make box-wasm`. Добавить `doc.go` пакета с командой генерации и версией `wasm2go`; сгенерированное не править.
-- [ ] T010 Сделать обёртку `client_backend/internal/securebox/securebox.go`:
+- [X] T009 Сгенерировать `client_backend/internal/securebox/boxwasm/box.go` и `box.dat` через `make box-wasm`. Добавить `doc.go` пакета с командой генерации и версией `wasm2go`; сгенерированное не править.
+- [X] T010 Сделать обёртку `client_backend/internal/securebox/securebox.go`:
   - `Box` с `sync.Pool` экземпляров;
   - окружение с `Xrsb_random` из `crypto/rand`, утверждение компиляции `var _ boxwasm.Xenv = (*env)(nil)`;
   - методы `GenerateKeys`, `GetChallenge`, `SignChallenge`, `CheckSignature`, `PublicKey`, `IsStub`;
   - перехват паники экземпляра → `ErrBox`, экземпляр выбрасывается;
   - константы размеров и пробный открытый ключ заглушки;
   - ошибки `ErrInvalidArgument`, `ErrRandom`, `ErrBox`.
-- [ ] T011 [P] Написать тесты `client_backend/internal/securebox/securebox_test.go`:
+- [X] T011 [P] Написать тесты `client_backend/internal/securebox/securebox_test.go`:
   - векторы из `testdata/rsb-vectors.json` и сверка копии с `specs/050-rust-secure-box/contracts/rsb-vectors.json`;
   - те же свойства, что в T006, включая 16 горутин под `-race`;
   - `IsStub() == true`;
