@@ -188,12 +188,12 @@
 
 **Independent Test**: `serverkey_test`, `status_page_test`, `run_test`; Dart `auth_repository_impl_test`; quickstart §5.
 
-- [ ] T035 [US4] Перевыпуск ключа сервера: в `client_backend/internal/store/serverkey.go` — `ServerKey` при несовпадении `keys.PublicKey(sk)` с хранимым делает транзакцию `rekeyServerIdentity` (research R8) и возвращает признак перевыпуска; `Run` пишет предупреждение. Тесты в `serverkey_test.go`:
+- [ ] T035 [US4] Перевыпуск ключа сервера: в `client_backend/internal/store/serverkey.go` — `ServerKey` при несовпадении `keys.PublicKey(sk)` с хранимым делает транзакцию `rekeyServerIdentity` (research R8) и возвращает признак перевыпуска; `run` в `client_backend/internal/server/server.go` пишет предупреждение. Перевыпуск MUST случиться до первого использования открытого ключа сервера: `run` сверяет ключ сразу после `EnsureServerIdentity` и перечитывает личность, ни одно значение старого ключа не переживает перевыпуск. Тесты в `serverkey_test.go`:
   - совпадение — ничего не меняется;
   - несовпадение — устройства, токены и запросы удалены, люди, чаты и сообщения на месте, открытый ключ новый;
   - служебная страница после этого показывает ссылку.
 - [ ] T036 [US4] Предупреждение о заглушке:
-  - `Run` при `box.IsStub()` пишет `Warn` `RustSecureBox is a stub: devices are not really verified` на каждом старте (`client_backend/internal/server/run.go` или место открытия данных);
+  - `run` в `client_backend/internal/server/server.go` при `box.IsStub()` пишет `Warn` `RustSecureBox is a stub: devices are not really verified` на каждом старте, сразу после открытия данных;
   - строка `RustSecureBox is a stub: devices are not really verified.` на странице открытого сервера (`client_backend/internal/server/status.go`, `status_page.go`);
   - тесты `status_page_test.go` и `run_test.go` (строка в журнале).
 - [ ] T037 [US4] Отставка сессии в `lib/data/repository/app/auth_repository_impl.dart` (`retireLegacySession`) и, если нужно, `lib/data/repository/app/session_repository_impl.dart` (`deviceKeyMatchesBox()`): сессия есть и `session.device_key` нет или ключи не сходятся → `logout(forced: true)`; ошибка сейфа ничего не стирает. Тесты в `test/data/repository/app/auth_repository_impl_test.dart` — четыре случая.
@@ -224,11 +224,13 @@
   - `make tor-test` (с крейтом и `box-verify`);
   - `make gate`;
   - `make golden-verify`.
-- [ ] T047 Сквозная проверка по quickstart §4:
+- [ ] T047 Сквозная проверка по quickstart §4 и §5:
   - собрать `noxd`, открыть паролем — предупреждение о заглушке в журнале и на странице;
   - `noxd link` → `go run ./cmd/smoke`;
-  - `test/live/channel_probe.dart` против него.
+  - `test/live/channel_probe.dart` против него; записать время открытия канала с проверкой напрямую на loopback (SC-006: меньше 1 с);
+  - переход (SC-007): `noxd` и `cmd/smoke`, собранные из `security-rework` до 050 (`git worktree`), создают базу со спаренным устройством и сообщением; новый `noxd` открывает её тем же паролем — в журнале перевыпуск, устройств нет, страница показывает ссылку; новое устройство спаривается этой ссылкой и видит прежнее сообщение.
 - [ ] T048 Аудит хвостов: `git grep -n -i 'eidolon\|channel_binding\|EXPORTER-Channel-Binding\|deviceSeed\|device_seed\|package:cryptography'` вне `specs/044-*`…`specs/049-*` и истории трекера — пусто или только в исторических местах.
+  Отдельно (FR-024): ни Rust-модуль (`tracing`), ни Dart (`LogRepository`), ни сервер (`slog`) не пишут закрытые ключи, челленджи и подписи — проверить места журналирования вокруг `auth.rs`, `DeviceKeys`, `SessionRepositoryImpl.deviceKey`, `connauth`.
 
 ---
 
