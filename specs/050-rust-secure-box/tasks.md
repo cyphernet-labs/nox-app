@@ -214,10 +214,10 @@
 ## Phase 8: Polish & Cross-Cutting
 
 - [X] T040 [P] Убрать `cryptography` из `pubspec.yaml` (и `pubspec.lock` через `fvm flutter pub get`). Убедиться, что импортов больше нет.
-- [ ] T041 [P] Убрать `eidolon-auth`, `cyphergraphy`, `ec25519` из `packages/nox_tor/rust/Cargo.toml` и `Cargo.lock`; описание крейта — без Eidolon. Поправить комментарий в `.github/workflows/compile-check.yml`.
-- [ ] T042 [P] Обновить блюпринты: `docs/blueprints/mobile/{01-stack-and-tooling,02-dependency-injection,04-data-layer,05-presentation-layer,09-build-and-secrets-infra,10-code-templates,14-networking-and-auth,16-file-upload,README}.md` и `docs/blueprints/client-backend/README.md`.
+- [X] T041 [P] Убрать `eidolon-auth`, `cyphergraphy`, `ec25519` из `packages/nox_tor/rust/Cargo.toml` и `Cargo.lock`; описание крейта — без Eidolon. Поправить комментарий в `.github/workflows/compile-check.yml`.
+- [X] T042 [P] Обновить блюпринты: `docs/blueprints/mobile/{01-stack-and-tooling,02-dependency-injection,04-data-layer,05-presentation-layer,09-build-and-secrets-infra,10-code-templates,14-networking-and-auth,16-file-upload,README}.md` и `docs/blueprints/client-backend/README.md`.
 - [X] T043 [P] Обновить `CLAUDE.md` (корень: защищённый канал 044 → проверка 050, спаривание, `cryptography`, RustSecureBox, `make box-*`), `client_backend/CLAUDE.md` (вход, тулчейн, карта файлов `internal/connauth`, `internal/securebox`, тесты `dialAs`, известные упущения: перевыпуск, заглушка) и `client_backend/README.md`.
-- [ ] T044 [P] Обновить документы: `docs/client-backend/architecture/{authentication,transport}.md`, `docs/client-backend/README.md`, `docs/README.md`, `docs/client-backend/demo-runbook.md`, `docs/design/spec/overview.md`, `docs/design/spec/screens/file-view.md` (упоминания Eidolon).
+- [X] T044 [P] Обновить документы: `docs/client-backend/architecture/{authentication,transport}.md`, `docs/client-backend/README.md`, `docs/README.md`, `docs/client-backend/demo-runbook.md`, `docs/design/spec/overview.md`, `docs/design/spec/screens/file-view.md` (упоминания Eidolon).
 - [X] T045 Обновить трекер `docs/client-backend/roadmap-security.md`: «Порядок» (050 реализована), «Для реализации» темы 1 (выпуск заглушки решён — FR-022; Go выполняет через `wasm2go`; перевыпуск ключа сервера — FR-021).
 - [X] T046 Прогнать гейты:
   - `cd client_backend && gofmt -l . && go vet ./... && go test -race ./...`;
@@ -229,7 +229,7 @@
   - `noxd link` → `go run ./cmd/smoke`;
   - `test/live/channel_probe.dart` против него; записать время открытия канала с проверкой напрямую на loopback (SC-006: меньше 1 с);
   - переход (SC-007): `noxd` и `cmd/smoke`, собранные из `security-rework` до 050 (`git worktree`), создают базу со спаренным устройством и сообщением; новый `noxd` открывает её тем же паролем — в журнале перевыпуск, устройств нет, страница показывает ссылку; новое устройство спаривается этой ссылкой и видит прежнее сообщение.
-- [ ] T048 Аудит хвостов: `git grep -n -i 'eidolon\|channel_binding\|EXPORTER-Channel-Binding\|deviceSeed\|device_seed\|package:cryptography'` вне `specs/044-*`…`specs/049-*` и истории трекера — пусто или только в исторических местах.
+- [X] T048 Аудит хвостов: `git grep -n -i 'eidolon\|channel_binding\|EXPORTER-Channel-Binding\|deviceSeed\|device_seed\|package:cryptography'` вне `specs/044-*`…`specs/049-*` и истории трекера — пусто или только в исторических местах.
   Отдельно (FR-024): ни Rust-модуль (`tracing`), ни Dart (`LogRepository`), ни сервер (`slog`) не пишут закрытые ключи, челленджи и подписи — проверить места журналирования вокруг `auth.rs`, `DeviceKeys`, `SessionRepositoryImpl.deviceKey`, `connauth`.
 
 ---
