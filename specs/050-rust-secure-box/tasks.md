@@ -20,7 +20,7 @@
   - §8A — `server_key` и ключ `pair`;
   - §8, строка 8.1;
   - §9 — аутентификация.
-- [ ] T002 Поправить конституцию 1.4.0 → 1.5.0 через `/speckit-constitution`, файл `.specify/memory/constitution.md`. Менять Принцип VII и «Рабочий режим»: проверка `POST /auth`/`POST /auth2` подписями RustSecureBox; RustSecureBox — одна библиотека на Rust в приложении и на сервере (WebAssembly без cgo); Eidolon и экспортёр убраны. Обновить Sync Impact Report.
+- [X] T002 Поправить конституцию 1.4.0 → 1.5.0 через `/speckit-constitution`, файл `.specify/memory/constitution.md`. Менять Принцип VII и «Рабочий режим»: проверка `POST /auth`/`POST /auth2` подписями RustSecureBox; RustSecureBox — одна библиотека на Rust в приложении и на сервере (WebAssembly без cgo); Eidolon и экспортёр убраны. Обновить Sync Impact Report.
 - [ ] T003 Создать крейт `packages/rust_secure_box/`:
   - `Cargo.toml`: `rust_secure_box`, rlib, `sha2` 0.10 и `getrandom` 0.3 только не для wasm32, профиль release с `panic = "abort"`, `opt-level = "z"`, `lto`;
   - `rust-toolchain.toml`: 1.93.1, `wasm32-unknown-unknown`;
