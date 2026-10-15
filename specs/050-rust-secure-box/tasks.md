@@ -12,7 +12,7 @@
 
 ## Phase 1: Setup — основания (Принцип VII: сначала контракт и нормы)
 
-- [ ] T001 Переписать слой проверки в `docs/client-backend/protocol/contract-draft.md` по `contracts/auth-exchange.md`:
+- [X] T001 Переписать слой проверки в `docs/client-backend/protocol/contract-draft.md` по `contracts/auth-exchange.md`:
   - §1, пункт 3 — `POST /auth` → `POST /auth2` вместо Eidolon: ответы и коды, «до проверки — `401`», бюджет 30 с, общие векторы `specs/050-rust-secure-box/contracts/rsb-vectors.json`;
   - абзац про onion в §1;
   - §2 — «подписывать в приветствии нечего»;
