@@ -207,24 +207,24 @@
 **Independent Test**: quickstart §6.
 
 - [X] T038 [US5] Написать `packages/rust_secure_box/README.md` (русский): назначение, интерфейс (ссылка на контракт), как заменить заглушку, как пересобрать копию сервера (`make box-wasm`), что проверить (`cargo test --test interface`, `make box-verify`, `go test ./internal/securebox`), пробный ключ, требование «один импорт».
-- [ ] T039 [US5] Прогнать подмену по quickstart §6 в scratchpad (Ed25519 вместо заглушки, без коммита). Записать результат в `specs/050-rust-secure-box/research.md` (R1).
+- [X] T039 [US5] Прогнать подмену по quickstart §6 в scratchpad (Ed25519 вместо заглушки, без коммита). Записать результат в `specs/050-rust-secure-box/research.md` (R1).
 
 ---
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T040 [P] Убрать `cryptography` из `pubspec.yaml` (и `pubspec.lock` через `fvm flutter pub get`). Убедиться, что импортов больше нет.
+- [X] T040 [P] Убрать `cryptography` из `pubspec.yaml` (и `pubspec.lock` через `fvm flutter pub get`). Убедиться, что импортов больше нет.
 - [ ] T041 [P] Убрать `eidolon-auth`, `cyphergraphy`, `ec25519` из `packages/nox_tor/rust/Cargo.toml` и `Cargo.lock`; описание крейта — без Eidolon. Поправить комментарий в `.github/workflows/compile-check.yml`.
 - [ ] T042 [P] Обновить блюпринты: `docs/blueprints/mobile/{01-stack-and-tooling,02-dependency-injection,04-data-layer,05-presentation-layer,09-build-and-secrets-infra,10-code-templates,14-networking-and-auth,16-file-upload,README}.md` и `docs/blueprints/client-backend/README.md`.
 - [X] T043 [P] Обновить `CLAUDE.md` (корень: защищённый канал 044 → проверка 050, спаривание, `cryptography`, RustSecureBox, `make box-*`), `client_backend/CLAUDE.md` (вход, тулчейн, карта файлов `internal/connauth`, `internal/securebox`, тесты `dialAs`, известные упущения: перевыпуск, заглушка) и `client_backend/README.md`.
 - [ ] T044 [P] Обновить документы: `docs/client-backend/architecture/{authentication,transport}.md`, `docs/client-backend/README.md`, `docs/README.md`, `docs/client-backend/demo-runbook.md`, `docs/design/spec/overview.md`, `docs/design/spec/screens/file-view.md` (упоминания Eidolon).
 - [X] T045 Обновить трекер `docs/client-backend/roadmap-security.md`: «Порядок» (050 реализована), «Для реализации» темы 1 (выпуск заглушки решён — FR-022; Go выполняет через `wasm2go`; перевыпуск ключа сервера — FR-021).
-- [ ] T046 Прогнать гейты:
+- [X] T046 Прогнать гейты:
   - `cd client_backend && gofmt -l . && go vet ./... && go test -race ./...`;
   - `make tor-test` (с крейтом и `box-verify`);
   - `make gate`;
   - `make golden-verify`.
-- [ ] T047 Сквозная проверка по quickstart §4 и §5:
+- [X] T047 Сквозная проверка по quickstart §4 и §5:
   - собрать `noxd`, открыть паролем — предупреждение о заглушке в журнале и на странице;
   - `noxd link` → `go run ./cmd/smoke`;
   - `test/live/channel_probe.dart` против него; записать время открытия канала с проверкой напрямую на loopback (SC-006: меньше 1 с);
