@@ -16,6 +16,7 @@ import (
 
 	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
 	"nox.app/client-backend/internal/vault"
 )
@@ -45,6 +46,10 @@ type server struct {
 // newServer makes a server's data in dir: a key file, a database with a
 // person's chat and message carrying the marker, one finished attachment and
 // one upload that never finished.
+
+// testBox is RustSecureBox, which makes the server key (050).
+var testBox = securebox.New()
+
 func newServer(t *testing.T, dir string) *server {
 	t.Helper()
 	ctx := context.Background()
@@ -63,7 +68,7 @@ func newServer(t *testing.T, dir string) *server {
 		t.Fatalf("Migrate: %v", err)
 	}
 	s.st = store.New(s.dbs.Read, s.dbs.Write)
-	id, err := s.st.EnsureServerIdentity(ctx)
+	id, err := s.st.EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}

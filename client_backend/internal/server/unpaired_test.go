@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -158,7 +157,7 @@ func TestUnpairedConnectionsAreCappedAndTheOldestMakesRoom(t *testing.T) {
 // and never sends, a request no handler of ours serves.
 type rawChannel struct {
 	t    *testing.T
-	conn *tls.Conn
+	conn net.Conn
 	br   *bufio.Reader
 }
 

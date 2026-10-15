@@ -27,7 +27,7 @@ func mustAddresses(t *testing.T, s *Store) Addresses {
 // networks, and no parameter has ever been applied.
 func TestAFreshMachineStoresNoAddresses(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := s.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	if got := mustAddresses(t, s); got != (Addresses{}) {
@@ -41,7 +41,7 @@ func TestAFreshMachineStoresNoAddresses(t *testing.T) {
 func TestSetAddressWritesTheValueAndLeavesTheParameter(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	if err := s.ApplyAddressParam(ctx, AddressOnion, testOnion, testOnion+":443"); err != nil {
@@ -76,7 +76,7 @@ func TestApplyAddressParamWritesBothAndSurvivesAReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "addresses.db")
 	first := openStoreAt(t, path)
-	if _, err := first.EnsureServerIdentity(ctx); err != nil {
+	if _, err := first.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	if err := first.ApplyAddressParam(ctx, AddressPublic, testPublic, " "+testPublic); err != nil {
@@ -101,7 +101,7 @@ func TestApplyAddressParamWritesBothAndSurvivesAReopen(t *testing.T) {
 func TestTheAddressWritesRefuseWhatTheyCannotPlace(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	if err := s.SetAddress(ctx, AddressKind("direct"), testPublic); !errors.Is(err, ErrUnknownAddressKind) {
@@ -137,7 +137,7 @@ func TestABackupCarriesTheAddresses(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 	live := openStoreAt(t, filepath.Join(dir, "live.db"))
-	if _, err := live.EnsureServerIdentity(ctx); err != nil {
+	if _, err := live.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	if err := live.SetAddress(ctx, AddressOnion, testOnion); err != nil {

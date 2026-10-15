@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
 	"fmt"
 	"net"
 	"os"
@@ -282,7 +281,7 @@ func humanDuration(d time.Duration) string {
 // Wi-Fi came up after the server did drew a code over a link that still said
 // 127.0.0.1. One fact, one record.
 type linkBuilder struct {
-	key      ed25519.PublicKey
+	key      []byte
 	conf     configuredAddresses
 	host     string
 	dialable bool

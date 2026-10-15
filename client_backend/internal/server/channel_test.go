@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bufio"
 	"context"
-	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -17,11 +20,13 @@ import (
 	"testing"
 	"time"
 
-	"nox.app/client-backend/internal/eidolon"
+	"nox.app/client-backend/internal/connauth"
+	"nox.app/client-backend/internal/securebox"
 )
 
-// The channel listener (044): TLS 1.3, then the channel check, then HTTP - and
-// a connection that fails either layer is closed without a word.
+// The channel listener (044, the check since 050): TLS 1.3, then POST /auth and
+// POST /auth2, then HTTP - and a connection that fails either layer goes no
+// further than the check's refusal.
 
 // stackWith is newTestServer with a logger and tweaks applied before anything
 // serves, returning the main entry's address.
@@ -65,25 +70,73 @@ func silentAfter(t *testing.T, conn net.Conn) []byte {
 	return got
 }
 
-// A message that does not verify is answered with nothing - not the server's
-// own message, not an alert worth reading - and the connection is closed.
-func TestAMessageThatDoesNotVerifyIsAnsweredWithNothing(t *testing.T) {
+// checkRequest writes one raw request on a TLS connection that has not passed
+// the check and reads the answer.
+func checkRequest(t *testing.T, conn *tls.Conn, br *bufio.Reader, raw string) *http.Response {
+	t.Helper()
+	if _, err := io.WriteString(conn, raw); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("no answer: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp
+}
+
+func rawPost(path, body string) string {
+	return fmt.Sprintf("POST %s HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		path, len(body), body)
+}
+
+// passAuth sends a good /auth as d and returns the server's challenge.
+func passAuth(t *testing.T, conn *tls.Conn, br *bufio.Reader, d *device) securebox.Challenge {
+	t.Helper()
+	ours, public, err := testBox.GetChallenge(d.priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b64 := base64.RawURLEncoding
+	resp := checkRequest(t, conn, br, rawPost("/auth",
+		`{"pk":"`+b64.EncodeToString(public[:])+`","challenge":"`+b64.EncodeToString(ours[:])+`"}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/auth: %d", resp.StatusCode)
+	}
+	return securebox.Challenge{} // the body was read and discarded; the tests below sign their own
+}
+
+// A check that fails is answered with the refusal and Connection: close - and
+// the connection ends there, logged by kind and nothing else (contract §1).
+func TestAFailedCheckIsRefusedLoggedAndClosed(t *testing.T) {
 	buf := &syncBuffer{}
-	_, addr := stackWith(t, slog.New(slog.NewTextHandler(buf, nil)))
-	d := newDevice(t)
+	srv, addr := stackWith(t, slog.New(slog.NewTextHandler(buf, nil)))
+	d, stranger := newDevice(t), newDevice(t)
 
 	for _, tc := range []struct {
 		name   string
+		status int
 		reason string
-		msg    func(binding []byte) []byte
+		run    func(*tls.Conn, *bufio.Reader) *http.Response
 	}{
-		{"signed over another binding", "binding", func([]byte) []byte {
-			return eidolon.Message(d.priv, make([]byte, eidolon.BindingSize))
+		{"the socket before the check", http.StatusUnauthorized, "request before the check", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+			return checkRequest(t, c, br, "GET /ws HTTP/1.1\r\nHost: h\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 		}},
-		{"a key that does not sign itself", "signature over the key", func(binding []byte) []byte {
-			msg := eidolon.Message(d.priv, binding)
-			msg[ed25519.PublicKeySize] ^= 0x01
-			return msg
+		{"the socket between /auth and /auth2", http.StatusUnauthorized, "request before the check", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+			passAuth(t, c, br, d)
+			return checkRequest(t, c, br, "GET /ws HTTP/1.1\r\nHost: h\r\n\r\n")
+		}},
+		{"another key's signature in /auth2", http.StatusUnauthorized, "signature does not verify", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+			passAuth(t, c, br, d)
+			sig, _ := testBox.SignChallenge(stranger.priv, securebox.Challenge{1})
+			return checkRequest(t, c, br, rawPost("/auth2", `{"signature":"`+base64.RawURLEncoding.EncodeToString(sig[:])+`"}`))
+		}},
+		{"/auth2 first", http.StatusBadRequest, "steps out of order", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+			return checkRequest(t, c, br, rawPost("/auth2", `{"signature":"x"}`))
+		}},
+		{"GET on /auth", http.StatusMethodNotAllowed, "method not allowed", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+			return checkRequest(t, c, br, "GET /auth HTTP/1.1\r\nHost: h\r\n\r\n")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,106 +145,47 @@ func TestAMessageThatDoesNotVerifyIsAnsweredWithNothing(t *testing.T) {
 				t.Fatalf("tls.Dial: %v", err)
 			}
 			defer func() { _ = conn.Close() }()
-			state := conn.ConnectionState()
-			binding, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
-			if err != nil {
-				t.Fatalf("exporter: %v", err)
+			br := bufio.NewReader(conn)
+			resp := tc.run(conn, br)
+			if resp.StatusCode != tc.status || !resp.Close {
+				t.Fatalf("answer %d close=%v, want %d and close", resp.StatusCode, resp.Close, tc.status)
 			}
-			if _, err := conn.Write(tc.msg(binding)); err != nil {
-				t.Fatalf("write: %v", err)
+			if _, err := br.ReadByte(); err == nil {
+				t.Fatal("the connection went on after a refusal")
 			}
-			if got := silentAfter(t, conn); len(got) != 0 {
-				t.Fatalf("the server answered a failed check with %d bytes", len(got))
-			}
-			eventually(t, "the refusal is logged", func() bool {
+			eventually(t, "the refusal is logged by its kind", func() bool {
 				return strings.Contains(buf.String(), "channel check refused") && strings.Contains(buf.String(), tc.reason)
 			})
 		})
 	}
+	// The log names the kind of each refusal and nothing it was refused over
+	// (FR-024): no key, in either encoding.
+	for _, k := range []*device{d, stranger} {
+		for _, enc := range []string{k.pub, base64.RawURLEncoding.EncodeToString(k.key[:])} {
+			if strings.Contains(buf.String(), enc) {
+				t.Fatal("a device key reached the log")
+			}
+		}
+	}
+	// Nothing that failed the check ever became a connection the server
+	// serves (SC-003).
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if len(srv.conns) != 0 {
+		t.Fatalf("%d connections that failed the check were registered", len(srv.conns))
+	}
 }
 
 // A device expecting another machine's key refuses this one - and does so
-// before writing anything but its own check message: the answer it got is the
-// server's real one, proved over the right binding, and the key is simply not
-// the one its link named.
+// before /auth2: the answer it got is the server's real one, its signature
+// verifies, and the key is simply not the one its link named.
 func TestADeviceExpectingAnotherServerRefusesIt(t *testing.T) {
 	ts, _ := newTestServer(t)
-	other := ed25519.NewKeyFromSeed(make([]byte, 32)).Public().(ed25519.PublicKey)
-	_, err := dialChannel(t.Context(), ts.Listener.Addr().String(), other, newDevice(t).priv)
-	if !errors.Is(err, eidolon.ErrUnauthorized) {
-		t.Fatalf("dialChannel expecting another key = %v, want eidolon.ErrUnauthorized", err)
+	other := newDevice(t).key
+	_, err := dialChannel(t.Context(), ts.Listener.Addr().String(), other[:], newDevice(t).priv)
+	if !errors.Is(err, connauth.ErrWrongServer) {
+		t.Fatalf("dialChannel expecting another key = %v, want connauth.ErrWrongServer", err)
 	}
-}
-
-// T029: a relay in the middle. It runs one TLS session with the device and
-// another with the server, and forwards the device's check message unchanged.
-// The server sees a message signed over the relay's OTHER session, refuses it,
-// and answers the relay with nothing - not even its own key - so the device,
-// left waiting, gets nothing to accept either.
-func TestARelayBetweenTwoTLSSessionsIsRefused(t *testing.T) {
-	buf := &syncBuffer{}
-	srv, addr := stackWith(t, slog.New(slog.NewTextHandler(buf, nil)))
-	relayTLS, err := channelTLSConfig(time.Now())
-	if err != nil {
-		t.Fatalf("channelTLSConfig: %v", err)
-	}
-	relay, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	t.Cleanup(func() { _ = relay.Close() })
-
-	type relayed struct {
-		fromServer []byte
-		err        error
-	}
-	result := make(chan relayed, 1)
-	go func() {
-		raw, err := relay.Accept()
-		if err != nil {
-			result <- relayed{err: err}
-			return
-		}
-		toDevice := tls.Server(raw, relayTLS)
-		defer func() { _ = toDevice.Close() }()
-		if err := toDevice.Handshake(); err != nil {
-			result <- relayed{err: err}
-			return
-		}
-		toServer, err := tls.Dial("tcp", addr, testClientTLS())
-		if err != nil {
-			result <- relayed{err: err}
-			return
-		}
-		defer func() { _ = toServer.Close() }()
-		msg := make([]byte, eidolon.MessageSize)
-		if _, err := io.ReadFull(toDevice, msg); err != nil {
-			result <- relayed{err: err}
-			return
-		}
-		if _, err := toServer.Write(msg); err != nil {
-			result <- relayed{err: err}
-			return
-		}
-		_ = toServer.SetReadDeadline(time.Now().Add(5 * time.Second))
-		back, _ := io.ReadAll(toServer)
-		result <- relayed{fromServer: back}
-	}()
-
-	_, err = dialChannel(t.Context(), relay.Addr().String(), serverKeyOf(t, srv), newDevice(t).priv)
-	if err == nil {
-		t.Fatal("the device completed the check through a relay")
-	}
-	got := <-result
-	if got.err != nil {
-		t.Fatalf("the relay could not do its part: %v", got.err)
-	}
-	if len(got.fromServer) != 0 {
-		t.Fatalf("the server answered the relay with %d bytes", len(got.fromServer))
-	}
-	eventually(t, "the server logged a binding mismatch", func() bool {
-		return strings.Contains(buf.String(), "channel check refused") && strings.Contains(buf.String(), "binding")
-	})
 }
 
 // A client that connects and says nothing holds its own goroutine and one
@@ -368,7 +362,7 @@ func TestClosingTheListenerEndsHandshakesUnderWay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("channelTLSConfig: %v", err)
 	}
-	key, err := srv.store.ServerKey(t.Context())
+	key, _, err := srv.store.ServerKey(t.Context(), testBox)
 	if err != nil {
 		t.Fatalf("ServerKey: %v", err)
 	}
@@ -748,7 +742,7 @@ func TestAPeerThatSaysNothingIsCutAtItsFirstByteDeadline(t *testing.T) {
 		t.Parallel()
 		key, dev := serverKeyOf(t, srv), newDevice(t)
 		conn := pipes.dial(t, "198.51.100.9")
-		var tc *tls.Conn
+		var tc net.Conn
 		opened := make(chan error, 1)
 		go func() {
 			var err error
@@ -949,7 +943,7 @@ func pipeChannel(t *testing.T, srv *Server, budget time.Duration, tune func(*cha
 	if err != nil {
 		t.Fatalf("channelTLSConfig: %v", err)
 	}
-	key, err := srv.store.ServerKey(t.Context())
+	key, _, err := srv.store.ServerKey(t.Context(), testBox)
 	if err != nil {
 		t.Fatalf("ServerKey: %v", err)
 	}

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -67,7 +66,7 @@ func declare(t *testing.T, c *wsClient, id int, name string, size int, mime, fil
 // on purpose - and those are exactly the cases at stake here.
 type rawPut struct {
 	t    *testing.T
-	conn *tls.Conn
+	conn net.Conn
 	br   *bufio.Reader
 }
 

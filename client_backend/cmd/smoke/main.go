@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
@@ -34,7 +33,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"nox.app/client-backend/internal/eidolon"
+	"nox.app/client-backend/internal/connauth"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/server"
 )
 
@@ -78,7 +78,7 @@ func main() {
 // server from somebody else's holding the same port.
 func check(addr, serverKey string) error {
 	key, err := base64.StdEncoding.DecodeString(serverKey)
-	if err != nil || len(key) != ed25519.PublicKeySize {
+	if err != nil || len(key) != securebox.PublicKeySize {
 		return errors.New("the server key is not 32 bytes of base64")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -456,9 +456,9 @@ type link struct {
 	// addr is the address this run talks to: the first of addrs that proved
 	// the key, or the one -check was given.
 	addr string
-	// serverKey is the machine's Ed25519 key: the only answer to the channel
-	// check this smoke run accepts.
-	serverKey ed25519.PublicKey
+	// serverKey is the machine's public key from RustSecureBox: the only key
+	// in an answer to POST /auth this smoke run accepts.
+	serverKey []byte
 	token     string
 }
 
@@ -514,10 +514,9 @@ func dial(ctx context.Context, target link, dev device) (*conn, error) {
 
 // openChannel is the channel of contract §1, client side: TCP, TLS 1.3 that
 // checks no certificate - the certificate is technical and names nothing -
-// then the channel check over the session's exporter, with this device's key,
-// accepting only the server key the link named. Nothing else is written until
-// that check passed.
-func openChannel(ctx context.Context, target link, dev device) (*tls.Conn, error) {
+// then POST /auth and POST /auth2 with this device's key, accepting only the
+// server key the link named. Nothing else is written until that check passed.
+func openChannel(ctx context.Context, target link, dev device) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", target.addr)
@@ -535,24 +534,25 @@ func openChannel(ctx context.Context, target link, dev device) (*tls.Conn, error
 		_ = raw.Close()
 		return nil, fmt.Errorf("tls with %s: %w", target.addr, err)
 	}
-	state := tc.ConnectionState()
-	binding, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
+	var expected securebox.PublicKey
+	if len(target.serverKey) != len(expected) {
+		_ = raw.Close()
+		return nil, errors.New("the link's server key is not 32 bytes")
+	}
+	copy(expected[:], target.serverKey)
+	checked, err := connauth.Initiate(ctx, tc, box, dev.priv, target.addr, expected)
 	if err != nil {
 		_ = raw.Close()
-		return nil, fmt.Errorf("channel binding: %w", err)
-	}
-	if err := eidolon.Initiate(ctx, tc, binding, dev.priv, target.serverKey); err != nil {
-		_ = raw.Close()
-		if errors.Is(err, eidolon.ErrUnauthorized) {
+		if errors.Is(err, connauth.ErrWrongServer) {
 			return nil, fmt.Errorf("the machine at %s is not the one the link names: %w", target.addr, err)
 		}
 		return nil, fmt.Errorf("channel check with %s: %w", target.addr, err)
 	}
-	if err := tc.SetDeadline(time.Time{}); err != nil {
+	if err := checked.SetDeadline(time.Time{}); err != nil {
 		_ = raw.Close()
 		return nil, fmt.Errorf("clear the channel deadline: %w", err)
 	}
-	return tc, nil
+	return checked, nil
 }
 
 func (c *conn) close() { _ = c.ws.Close(websocket.StatusNormalClosure, "") }
@@ -628,17 +628,22 @@ func (c *conn) event(name string) (data, error) {
 	return nil, fmt.Errorf("no %s event arrived", name)
 }
 
+// box is RustSecureBox, as the app's Rust module runs it: the device's key
+// pair and its signature in POST /auth2.
+var box = securebox.New()
+
 // device is one installation's key pair; the channel check proves it.
 type device struct {
-	priv ed25519.PrivateKey
+	priv securebox.PrivateKey
 }
 
 func newDevice() device {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pair, err := box.GenerateKeys()
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "smoke: RustSecureBox made no key:", err)
+		os.Exit(1)
 	}
-	return device{priv: priv}
+	return device{priv: pair.PrivateKey}
 }
 
 // greet opens a connection as a paired device and greets. The greeting names

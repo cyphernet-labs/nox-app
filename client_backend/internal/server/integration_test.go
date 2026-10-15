@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -17,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/securebox"
 )
 
 // wsClient is a test-side protocol client over one connection.
@@ -113,20 +112,35 @@ func (c *wsClient) expectGreeting() {
 	}
 }
 
-// device is one test device's key pair. The private half never leaves it, the
-// same way it never leaves a real installation - it only signs the channel.
+// testBox is RustSecureBox as the test devices use it - the same library the
+// app's Rust module runs, here through the server's WebAssembly copy.
+var testBox = securebox.New()
+
+// device is one test device's key pair, made by RustSecureBox. The private
+// half never leaves it, the same way it never leaves a real installation - it
+// only signs the server's challenge in POST /auth2.
 type device struct {
+	// pub is the public key as devices.device_key stores it.
 	pub  string
-	priv ed25519.PrivateKey
+	key  securebox.PublicKey
+	priv securebox.PrivateKey
 }
 
 func newDevice(t *testing.T) *device {
 	t.Helper()
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	d, err := makeDevice()
 	if err != nil {
 		t.Fatalf("generate device key: %v", err)
 	}
-	return &device{pub: base64.StdEncoding.EncodeToString(pub), priv: priv}
+	return d
+}
+
+func makeDevice() (*device, error) {
+	pair, err := testBox.GenerateKeys()
+	if err != nil {
+		return nil, err
+	}
+	return &device{pub: base64.StdEncoding.EncodeToString(pair.PublicKey[:]), key: pair.PublicKey, priv: pair.PrivateKey}, nil
 }
 
 // firstDevice pairs a fresh device through a machine link - the way the first
@@ -643,7 +657,7 @@ func assertHealthy(t *testing.T, ts *httptest.Server) {
 func mustMachineLink(t *testing.T, srv *Server) string {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	link, err := srv.store.IssueMachineLink(ctx, time.Now().Unix())

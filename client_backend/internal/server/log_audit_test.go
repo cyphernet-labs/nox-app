@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -76,7 +75,7 @@ func postSet(t *testing.T, statusAddr, origin string, form url.Values) int {
 // dialRunVia opens a WebSocket to a server started by Run, as d, through the
 // channel - with the Host and headers a device going through the onion service
 // would send, when given.
-func dialRunVia(t *testing.T, addr string, key ed25519.PublicKey, d *device, host string, header http.Header) (*wsClient, error) {
+func dialRunVia(t *testing.T, addr string, key []byte, d *device, host string, header http.Header) (*wsClient, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -95,7 +94,7 @@ func dialRunVia(t *testing.T, addr string, key ed25519.PublicKey, d *device, hos
 
 // pairOverRun presents a machine link's token as d and returns once the
 // device is paired.
-func pairOverRun(t *testing.T, addr string, key ed25519.PublicKey, d *device, token string) {
+func pairOverRun(t *testing.T, addr string, key []byte, d *device, token string) {
 	t.Helper()
 	c := dialRun(t, addr, key, d)
 	c.expectGreeting()
@@ -230,8 +229,8 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 		"the invite token":           invite.Token,
 		"the form token":             formToken,
 		"the server's private key":   seed,
-		"the first device's key":     base64.StdEncoding.EncodeToString(first.priv),
-		"the second device's key":    base64.StdEncoding.EncodeToString(second.priv),
+		"the first device's key":     base64.StdEncoding.EncodeToString(first.priv[:]),
+		"the second device's key":    base64.StdEncoding.EncodeToString(second.priv[:]),
 		"the onion service's key":    base64.RawURLEncoding.EncodeToString(machine.Onion),
 		"the machine link's payload": strings.TrimPrefix(machineLink, "nox://pair/")[:40],
 		"the invite link's payload":  strings.TrimPrefix(inviteLink, "nox://pair/")[:40],

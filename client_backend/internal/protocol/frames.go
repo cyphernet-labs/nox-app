@@ -25,8 +25,9 @@ type Greeting struct {
 
 // GreetingBody carries the maximum supported schema and nothing else. The
 // challenge it once carried for the device to sign is gone (feature 044): the
-// device proved its key in the channel check before this frame was written, on
-// a binding no other connection shares, so there is nothing left to sign here.
+// device proved its key in the channel check - POST /auth and POST /auth2 on
+// this very connection - before this frame was written, so there is nothing
+// left to sign here.
 type GreetingBody struct {
 	SchemaMax int `json:"schema_max"`
 }

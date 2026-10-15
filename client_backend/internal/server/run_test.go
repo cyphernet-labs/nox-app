@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/base64"
 	"io"
 	"log/slog"
@@ -21,6 +19,7 @@ import (
 
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/vault"
 )
 
@@ -136,16 +135,17 @@ func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 	if err := RequestUnlock(t.Context(), cfg.StatusAddr, testPassword, testPassword); err != nil {
 		t.Fatalf("set the first password: %v", err)
 	}
-	var key ed25519.PublicKey
+	var key []byte
 	eventually(t, "the startup line names the server key", func() bool {
 		raw, err := base64.StdEncoding.DecodeString(loggedServerKey(logs.String()))
 		key = raw
-		return err == nil && len(raw) == ed25519.PublicKeySize
+		return err == nil && len(raw) == securebox.PublicKeySize
 	})
-	_, device, err := ed25519.GenerateKey(rand.Reader)
+	pair, err := testBox.GenerateKeys()
 	if err != nil {
 		t.Fatalf("generate a device key: %v", err)
 	}
+	device := pair.PrivateKey
 	eventually(t, "the main port opens a channel proving that key", func() bool {
 		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer dcancel()
@@ -346,5 +346,20 @@ func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	}
 	if public != nil || publicParam != nil {
 		t.Fatalf("the refused parameter left public=%v param=%v, want nothing", public, publicParam)
+	}
+}
+
+// FR-022: while RustSecureBox is the stub, every start says so in the log and
+// the open service page says so at its top - and the line goes away by itself
+// once the real library is in, since only the stub gives its probe answer.
+func TestTheStubIsAnnouncedInTheLogAndOnThePage(t *testing.T) {
+	cfg := testRunConfig(t)
+	logs, stop := runServer(t, cfg)
+	defer stop()
+	eventually(t, "the log warns about the stub", func() bool {
+		return strings.Contains(logs.String(), "RustSecureBox is a stub: devices are not really verified")
+	})
+	if page := getPage(t, cfg.StatusAddr); !strings.Contains(page, "RustSecureBox is a stub: devices are not really verified.") {
+		t.Fatal("the service page does not say the stub is in")
 	}
 }

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -20,7 +19,7 @@ import (
 
 // dialRun opens a WebSocket as d on a server Run started: the channel to its
 // main port, proving d's key against the machine's, then the upgrade.
-func dialRun(t *testing.T, addr string, serverKey ed25519.PublicKey, d *device) *wsClient {
+func dialRun(t *testing.T, addr string, serverKey []byte, d *device) *wsClient {
 	t.Helper()
 	c, err := dialRunVia(t, addr, serverKey, d, "", nil)
 	if err != nil {
@@ -68,7 +67,7 @@ func TestNoLinkAndNoTokenEverReachesTheLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server key: %v", err)
 	}
-	serverKey := ed25519.PublicKey(rawKey)
+	serverKey := rawKey
 	var links, tokens []string
 	remember := func(link string) string {
 		links = append(links, strings.TrimPrefix(link, "nox://pair/"))

@@ -84,11 +84,11 @@
 
 ### Сервер
 
-- [ ] T015 [US1] Сделать пакет `client_backend/internal/connauth/connauth.go`:
+- [X] T015 [US1] Сделать пакет `client_backend/internal/connauth/connauth.go`:
   - `Respond(ctx, conn, box, serverKey) (deviceKey []byte, net.Conn, error)` — серверная сторона по `contracts/auth-exchange.md` и research R7: `bufio` над `LimitReader` 16 КиБ, `http.ReadRequest`, порядок проверок «путь и метод → ступень → тело → подпись», ответы вручную, `prefixConn` для оставшихся байтов;
   - `Initiate(ctx, conn, box, deviceKey, host, expectedServerKey) error` — сторона устройства для тестов и smoke;
   - ошибки-виды для журнала: `ErrMalformed`, `ErrSignature`, `ErrOrder`, `ErrMethod`, `ErrUnauthenticatedPath`, `ErrWrongServer`.
-- [ ] T016 [P] [US1] Написать `client_backend/internal/connauth/connauth_test.go` (`net.Pipe`):
+- [X] T016 [P] [US1] Написать `client_backend/internal/connauth/connauth_test.go` (`net.Pipe`):
   - удачный обмен с подписями заглушки;
   - каждая строка таблицы отказов (`400`/`401`/`405`, `Connection: close`);
   - тела больше 1 КиБ и этап больше 16 КиБ;
@@ -96,16 +96,16 @@
   - байты, присланные после `/auth2`, доходят до читателя;
   - дедлайн контекста рвёт без ответа;
   - ключ другого сервера на стороне `Initiate` — `ErrWrongServer` до `/auth2`.
-- [ ] T017 [US1] Переделать вход сервера:
+- [X] T017 [US1] Переделать вход сервера:
   - `client_backend/internal/server/channel.go`: `verify` — TLS → `connauth.Respond`; ключ сервера `[]byte`, поле `box`; `channelPeer.key []byte`; `refused` пишет виды `connauth`;
   - удалить `client_backend/internal/eidolon/`.
-- [ ] T018 [US1] Перевести ключи с `ed25519` на байты RustSecureBox в `client_backend/internal/server/status.go`, `pairing_link.go`, `address_settings.go` и в проводке `Run`. Создать один `securebox.Box` на процесс и передать его входу и хранилищу.
-- [ ] T019 [US1] Обновить тесты `client_backend/internal/server/`:
+- [X] T018 [US1] Перевести ключи с `ed25519` на байты RustSecureBox в `client_backend/internal/server/status.go`, `pairing_link.go`, `address_settings.go` и в проводке `Run`. Создать один `securebox.Box` на процесс и передать его входу и хранилищу.
+- [X] T019 [US1] Обновить тесты `client_backend/internal/server/`:
   - `server_test.go` — `dialAs` через `connauth.Initiate`;
   - `channel_test.go`, `tls_test.go`, `integration_test.go`, `gate_test.go`, `control_test.go`, `logs_test.go`, `log_audit_test.go`, `run_test.go`, `at_rest_test.go`, `pairing_link_test.go`, `address_settings_test.go`;
   - новый тест: на соединении без `/auth2` до обработчиков `ServeMux` не доходит ни один запрос (SC-003);
   - пределы входа охватывают `/auth`: соединение, которое застряло между `/auth` и `/auth2`, вытесняется как любое на этапе проверки.
-- [ ] T020 [US1] Перевести `client_backend/cmd/smoke/main.go` на `connauth.Initiate`; ключ устройства — `box.GenerateKeys`.
+- [X] T020 [US1] Перевести `client_backend/cmd/smoke/main.go` на `connauth.Initiate`; ключ устройства — `box.GenerateKeys`.
 
 ### Rust-модуль приложения
 
@@ -151,7 +151,7 @@
   | подписал другой челлендж | `PROTOCOL` |
   | отвечает `404` или говорит Eidolon | `PROTOCOL` |
   | отвечает `401` на `/auth2` | `PROTOCOL` |
-- [ ] T028 [P] [US2] Дополнить тесты `client_backend/internal/server/channel_test.go` и `logs_test.go`:
+- [X] T028 [P] [US2] Дополнить тесты `client_backend/internal/server/channel_test.go` и `logs_test.go`:
   - подпись устройства над чужим челленджем — `401` и разрыв, обработчики не вызваны;
   - журнал отказов содержит только вид — ни `pk`, ни челленджа, ни подписи в base64url и hex.
 - [ ] T029 [US2] Убедиться, что Dart различает отказы по-прежнему: `test/data/sync/connection/direct_prober_test.dart` и `connection_path_selector_test.dart` — `wrongServer` по прямому адресу пропускается молча, по onion даёт `serverMismatch`. Поправить, если переименование их задело.
@@ -178,7 +178,7 @@
   - `test/data/repository/app/session_repository_impl_test.dart` — создание, сохранение при `discardSignIn`, удаление при `clear`, удаление `session.device_secret`;
   - `test/data/sync/live_session_starter_test.dart`, `test/data/local/local_data_lifecycle_test.dart`, `test/data/repository/app/auth_repository_impl_test.dart`;
   - `test/utils/fake_session_repository.dart`, `test/live/pairing_live_probe.dart`.
-- [ ] T034 [US3] Хранилище сервера: `client_backend/internal/store/serverkey.go` — интерфейс `KeySource` (`GenerateKeys`, `PublicKey`); `EnsureServerIdentity(ctx, keys)` через RustSecureBox; `ServerIdentity.PublicKey []byte`; `ServerKey` отдаёт 32 байта. Тесты `serverkey_test.go` и места вызова в `internal/server`.
+- [X] T034 [US3] Хранилище сервера: `client_backend/internal/store/serverkey.go` — интерфейс `KeySource` (`GenerateKeys`, `PublicKey`); `EnsureServerIdentity(ctx, keys)` через RustSecureBox; `ServerIdentity.PublicKey []byte`; `ServerKey` отдаёт 32 байта. Тесты `serverkey_test.go` и места вызова в `internal/server`.
 
 ---
 
@@ -188,11 +188,11 @@
 
 **Independent Test**: `serverkey_test`, `status_page_test`, `run_test`; Dart `auth_repository_impl_test`; quickstart §5.
 
-- [ ] T035 [US4] Перевыпуск ключа сервера: в `client_backend/internal/store/serverkey.go` — `ServerKey` при несовпадении `keys.PublicKey(sk)` с хранимым делает транзакцию `rekeyServerIdentity` (research R8) и возвращает признак перевыпуска; `run` в `client_backend/internal/server/server.go` пишет предупреждение. Перевыпуск MUST случиться до первого использования открытого ключа сервера: `run` сверяет ключ сразу после `EnsureServerIdentity` и перечитывает личность, ни одно значение старого ключа не переживает перевыпуск. Тесты в `serverkey_test.go`:
+- [X] T035 [US4] Перевыпуск ключа сервера: в `client_backend/internal/store/serverkey.go` — `ServerKey` при несовпадении `keys.PublicKey(sk)` с хранимым делает транзакцию `rekeyServerIdentity` (research R8) и возвращает признак перевыпуска; `run` в `client_backend/internal/server/server.go` пишет предупреждение. Перевыпуск MUST случиться до первого использования открытого ключа сервера: `run` сверяет ключ сразу после `EnsureServerIdentity` и перечитывает личность, ни одно значение старого ключа не переживает перевыпуск. Тесты в `serverkey_test.go`:
   - совпадение — ничего не меняется;
   - несовпадение — устройства, токены и запросы удалены, люди, чаты и сообщения на месте, открытый ключ новый;
   - служебная страница после этого показывает ссылку.
-- [ ] T036 [US4] Предупреждение о заглушке:
+- [X] T036 [US4] Предупреждение о заглушке:
   - `run` в `client_backend/internal/server/server.go` при `box.IsStub()` пишет `Warn` `RustSecureBox is a stub: devices are not really verified` на каждом старте, сразу после открытия данных;
   - строка `RustSecureBox is a stub: devices are not really verified.` на странице открытого сервера (`client_backend/internal/server/status.go`, `status_page.go`);
   - тесты `status_page_test.go` и `run_test.go` (строка в журнале).

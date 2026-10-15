@@ -97,6 +97,8 @@ p.note { margin: .6rem 0 0; padding: .5rem .8rem; border-radius: .4rem; font-siz
 p.saved { background: rgba(0,150,90,.16); }
 </style></head><body>
 
+{{if .Stub}}<p class="warn">RustSecureBox is a stub: devices are not really verified.</p>{{end}}
+
 {{if not .HasDevices}}
 {{if .HasPerson}}
 <h1>No device can reach this server</h1>
@@ -275,6 +277,8 @@ func contentSecurityPolicy(withScript bool) string {
 // statusView is what the template sees. A flat struct on purpose: the template
 // must not be able to reach anything that was not deliberately handed to it.
 type statusView struct {
+	// Stub is the RustSecureBox of this build being the stub (050, FR-022).
+	Stub       bool
 	HasDevices bool
 	HasPerson  bool
 	QR         template.HTML
@@ -393,6 +397,7 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query()
 	view := statusView{
+		Stub:       s.boxIsStub,
 		HasDevices: status.HasDevices,
 		HasPerson:  status.HasPerson,
 		Link:       status.Link,

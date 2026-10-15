@@ -209,7 +209,7 @@ func startStore(t *testing.T) *store.Store {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 	st := store.New(d.Read, d.Write)
-	if _, err := st.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := st.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	return st

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -57,7 +58,7 @@ func TestTheControlEndpointHandsTheTerminalANewLink(t *testing.T) {
 		t.Fatalf("the answer carries %v, want exactly link and expires_at", keys)
 	}
 	link := readLink(t, reply.Link)
-	if !link.ServerKey.Equal(serverKeyOf(t, srv)) {
+	if !bytes.Equal(link.ServerKey, serverKeyOf(t, srv)) {
 		t.Fatal("the link names another machine's key")
 	}
 	if left := reply.ExpiresAt - time.Now().Unix(); left < 595 || left > 600 {
