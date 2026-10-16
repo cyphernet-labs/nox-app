@@ -175,6 +175,33 @@ func (c *client) resendPairRequests() {
 		}
 		c.sendFrame(ev)
 	}
+	if len(waiting) == 0 {
+		return
+	}
+	// A request can close between the read above and its event going out -
+	// withdrawn, swept, answered on another connection - and its
+	// device.pairResolved, sent to this greeted connection meanwhile, can be
+	// ahead of the stale ask: the dialog would open for a request that is
+	// over. So the list is read again after, and whatever closed is closed
+	// here too; the app takes a second close of the same request as nothing.
+	still, err := c.srv.store.WaitingPairRequests(c.ctx, c.deviceKey, time.Now().Unix())
+	if err != nil {
+		return
+	}
+	open := make(map[string]bool, len(still))
+	for _, r := range still {
+		open[r.RequestID] = true
+	}
+	for _, r := range waiting {
+		if open[r.RequestID] {
+			continue
+		}
+		ev, err := offJournal(protocol.EventDevicePairResolved, devicePairResolvedData{RequestID: r.RequestID})
+		if err != nil {
+			return
+		}
+		c.sendFrame(ev)
+	}
 }
 
 // runRequestSweeper closes the requests whose time ran out and tells both

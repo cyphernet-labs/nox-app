@@ -46,6 +46,10 @@ type client struct {
 	// row is gone: from then on the connection runs no command of its own
 	// (dispatch), however long its goodbye takes to go out.
 	revoked atomic.Bool
+	// transport is the channel connection the WebSocket runs on (channel.go):
+	// what cut closes under the WebSocket library. Nil only off the channel,
+	// in tests that build a client by hand.
+	transport *channelConn
 	// requestHost is the address this device dialled to get here, from the
 	// request's Host header. It is the only address the server knows to be
 	// reachable from somewhere other than the machine itself, which is what an
@@ -121,15 +125,21 @@ func (c *client) closeAfterFlush(reason string) {
 // does not read, whose full queue would otherwise hold it for writeTimeout a
 // frame.
 //
-// Not through closeOnce: a close handshake already under way holds that, and
-// is exactly what a peer that does not read never finishes. Closing the
-// transport under it ends the handshake and any write it waits on.
+// Not through closeOnce, and not through the library first: a close handshake
+// already under way holds closeOnce, and the library's CloseNow then only
+// waits - up to its own 15 s - for that handshake, which a peer that does not
+// read never finishes. So the context goes first, then the connection under
+// TLS (channelConn.cut), which fails every read and write the handshake waits
+// on; the library's CloseNow after that returns at once.
 func (c *client) cut() {
-	if c.conn != nil {
-		_ = c.conn.CloseNow()
-	}
 	if c.cancel != nil {
 		c.cancel()
+	}
+	if c.transport != nil {
+		c.transport.cut()
+	}
+	if c.conn != nil {
+		_ = c.conn.CloseNow()
 	}
 }
 

@@ -311,8 +311,19 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 	// Revoking a key that is not there is a success: the caller asked for a
 	// state and that state holds, so a retry after a dropped connection does
 	// not look like a failure.
-	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
-	c.srv.dropDevice(key)
+	//
+	// Another device is dropped BEFORE the answer: sending it can wait on this
+	// connection's full queue, and all that time the revoked one would go on
+	// running commands. A device revoking itself is answered first: its
+	// logout waits for that OK, and the device.revoked echo on this very
+	// connection comes after it (contract §8A).
+	if key != c.deviceKey {
+		c.srv.dropDevice(key)
+		c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+	} else {
+		c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+		c.srv.dropDevice(key)
+	}
 	// The requests the revoked device took part in closed with it. The device
 	// waiting on each is told, its connection a stranger again (endWait); so
 	// is the device asked to answer it, unless that is the one just revoked -

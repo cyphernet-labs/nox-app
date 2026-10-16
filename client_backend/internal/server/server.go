@@ -465,11 +465,15 @@ func (s *Server) dropDevice(deviceKey string) {
 		payload = json.RawMessage(`{}`)
 	}
 	for _, c := range doomed {
-		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
-		go c.closeAfterFlush("device revoked")
 		// A peer that does not read would hold the goodbye for writeTimeout
-		// a frame queued ahead of it: past the flush budget it is cut.
+		// a frame queued ahead of it: past the flush budget it is cut. Armed
+		// first, and the goodbye queued off this goroutine: a full queue
+		// must not hold the device that asked for the revocation.
 		time.AfterFunc(s.revokedFlush, c.cut)
+		go func() {
+			c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
+			c.closeAfterFlush("device revoked")
+		}()
 	}
 }
 

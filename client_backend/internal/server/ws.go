@@ -37,6 +37,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	logger := s.logger.With("conn", randomConnID())
 	c := newClient(s, conn, r.Context(), logger)
 	c.deviceKey = peer.deviceKey()
+	if cc, ok := channelConnFrom(r.Context()); ok {
+		c.transport = cc
+	}
 	c.requestHost = r.Host
 	s.track(c)
 	defer s.untrack(c)

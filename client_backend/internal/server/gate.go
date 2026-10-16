@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"nox.app/client-backend/internal/backup"
 	"nox.app/client-backend/internal/config"
@@ -393,6 +394,18 @@ func (g *gate) ask(ctx context.Context, req gateRequest) (gateReply, bool) {
 	case rep := <-req.reply:
 		return rep, true
 	case <-ctx.Done():
+		if req.kind == reqChange {
+			// A password change the keeper took runs to its end - Argon2id and
+			// a rename that no context stops - so its outcome is waited for.
+			// Told "stopping" instead, the owner would try the old password
+			// on a key file the new one seals.
+			select {
+			case rep := <-req.reply:
+				return rep, true
+			case <-time.After(changeOutcomeWait):
+				return gateReply{}, false
+			}
+		}
 		// An answer given before the context ended still wins: a server that
 		// cannot start answers why and then stops its page, which ends this
 		// context - and with both ready, select picks either.
@@ -404,6 +417,11 @@ func (g *gate) ask(ctx context.Context, req gateRequest) (gateReply, bool) {
 		}
 	}
 }
+
+// changeOutcomeWait bounds the wait for a password change whose request went
+// away after the keeper took it: two Argon2id runs and a rename, seconds on a
+// small board.
+const changeOutcomeWait = 30 * time.Second
 
 // --- the service page's own listener ---
 

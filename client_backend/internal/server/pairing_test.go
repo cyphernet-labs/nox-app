@@ -848,13 +848,17 @@ func TestARevokedConnectionThatDoesNotReadIsCut(t *testing.T) {
 	if server == nil {
 		t.Fatal("the device's connection is not registered")
 	}
-	// A writer that never gets its turn: the queue is held by a frame the
-	// test never lets out, the way a peer that stops reading holds it.
-	server.closeOnce.Do(func() {})
+	// The device reads nothing from here on, the close frame included: the
+	// server's close handshake would wait on it for the library's own 5 s
+	// and then 5 s more, and the cut must not.
+	start := time.Now()
 	srv.dropDevice(second.pub)
 	select {
 	case <-server.ctx.Done():
-	case <-time.After(5 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("the revoked connection was not cut within its flush budget")
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("the cut took %v", took)
 	}
 }
