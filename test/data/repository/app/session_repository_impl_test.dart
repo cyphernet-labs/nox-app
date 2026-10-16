@@ -303,6 +303,9 @@ void main() {
 
       DeviceKeys.box = const _FailingBox(SecureBoxCode.random);
       expect((await repository.predatesSecureBox()).hasData, isFalse, reason: 'an error, which wipes nothing');
+      // A paired device's key is read without the box: a box that fails
+      // never keeps it from connecting.
+      expect((await repository.deviceKey()).data, pair);
     });
 
     test('a keychain that cannot be read says so, and never claims the key is another\'s', () async {
