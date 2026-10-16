@@ -628,13 +628,16 @@ void main() {
 
     test('where a lasting failure is a key gone for good, it costs the data after the limit, and not before', () async {
       repository.unreadableLimit = 3;
+      when(session.resetSecureStore()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
       useVault([LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.open]);
 
       final result = await repository.openLocalData();
 
       expect(result.data, isTrue);
       expect(vault.asked, 3, reason: 'asked as often as the limit, then given up');
-      verify(session.clear()).called(1);
+      // The store is rebuilt before the session is emptied: a store that
+      // fails every call could empty nothing.
+      verifyInOrder([session.resetSecureStore(), session.clear()]);
     });
 
     test('with no limit, a store that keeps failing is asked again and again', () async {

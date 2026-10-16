@@ -107,8 +107,19 @@ class OutboxCopies {
         try {
           await copy.rename(destination);
         } on FileSystemException {
-          // Another volume: rename cannot cross one.
-          await copy.copy(destination);
+          // A rename refused - on Windows, a file another handle holds open,
+          // the bubble drawing the picture being sent among them. Copied
+          // under a name of its own and renamed into place: the destination
+          // only ever holds a whole file, since being there is what tells a
+          // download its bytes are complete.
+          final next = File('$destination.next');
+          try {
+            await copy.copy(next.path);
+            await next.rename(destination);
+          } on FileSystemException {
+            if (next.existsSync()) next.deleteSync();
+            rethrow;
+          }
         }
       }
     } on FileSystemException catch (error) {

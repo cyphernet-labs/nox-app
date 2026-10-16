@@ -106,6 +106,9 @@ class FakeSessionRepository implements SessionRepository {
   @override
   Future<RepositoryResult<bool>> outlivedItsInstall() async => const RepositoryResult<bool>.success(data: false);
 
+  @override
+  Future<RepositoryResult<bool>> resetSecureStore() => throw UnimplementedError();
+
   /// Raised by [updateLabel] the way the real store raises it: a greeting states
   /// a name only after a rename.
   bool labelDirty = false;

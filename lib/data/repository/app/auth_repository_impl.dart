@@ -632,6 +632,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           final limit = unreadableLimit;
           if (limit != null && attempt >= limit) {
             logRepository.debug(target: this, message: 'bootstrap: the secure store kept failing to give the local-data key');
+            // The store fails every call, deletes included, until the plugin
+            // rebuilds it: rebuilt first, or the retire below could empty
+            // nothing and no pairing could store a server again.
+            final reset = await _sessionRepository.resetSecureStore();
+            if (!reset.hasData) logRepository.debug(target: this, message: 'bootstrap: the secure store would not be rebuilt');
             return _retireLocalData();
           }
           logRepository.debug(target: this, message: 'bootstrap: the secure store did not give the local-data key, asking again');

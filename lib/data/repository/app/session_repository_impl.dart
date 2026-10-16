@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
+import 'package:nox_app/data/local/secure/secure_store_options.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
@@ -345,6 +346,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       final pair = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
       if (pair == null) return const RepositoryResult<bool>.success(data: true);
       return RepositoryResult<bool>.success(data: !DeviceKeys.isOwn(pair));
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> resetSecureStore() {
+    return execute<bool>(() async {
+      await _secureStorage.deleteAll(aOptions: SecureStoreOptions.android.copyWith(resetOnError: true));
+      return const RepositoryResult<bool>.success(data: true);
     });
   }
 

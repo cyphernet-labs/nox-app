@@ -87,6 +87,14 @@ abstract class SessionRepository {
   /// error, never a `true`.
   Future<RepositoryResult<bool>> predatesSecureBox();
 
+  /// Deletes everything the secure store holds and leaves it usable. On
+  /// Android a store whose Keystore key is gone fails every call - deletes
+  /// included - until the plugin rebuilds it, which it does only when asked to
+  /// for this one call (`resetOnError`); without this the start that retires
+  /// the local data could not empty the session, and no pairing could store
+  /// a server again. Only that start calls it.
+  Future<RepositoryResult<bool>> resetSecureStore();
+
   /// Whether the secure store holds a session the app's preferences know
   /// nothing of: the identifier is there, its onboarding flag - written
   /// before it, always - is not. On iOS the keychain outlives the app, and a
