@@ -48,6 +48,10 @@ const (
 	// defaultWriteTimeout bounds one frame write and one ping's wait for its
 	// pong.
 	defaultWriteTimeout = slowPathTimeout
+	// defaultRevokedFlush bounds the goodbye of a revoked device's connection:
+	// enough for device.revoked through Tor behind a short queue, and no
+	// writeTimeout per frame for a peer that stopped reading.
+	defaultRevokedFlush = 5 * time.Second
 	// readHeaderTimeout bounds the request headers that follow the channel
 	// check on the main port.
 	readHeaderTimeout = slowPathTimeout
@@ -102,6 +106,10 @@ type Server struct {
 
 	pingInterval time.Duration
 	writeTimeout time.Duration
+	// revokedFlush is how long a revoked device's connection gets to take its
+	// device.revoked before it is cut (dropDevice). A field so tests can
+	// scale it.
+	revokedFlush time.Duration
 	// channelTimeout is the budget for TLS and the channel check together
 	// (044). A field so tests can scale it.
 	channelTimeout time.Duration
@@ -234,6 +242,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		continuationWait: defaultContinuationWait,
 		pingInterval:     defaultPingInterval,
 		writeTimeout:     defaultWriteTimeout,
+		revokedFlush:     defaultRevokedFlush,
 		channelTimeout:   defaultChannelTimeout,
 		idleTimeout:      defaultIdleTimeout,
 		bodyTimeout:      defaultBodyTimeout,
@@ -427,6 +436,9 @@ func (s *Server) dropDevice(deviceKey string) {
 	doomed := make([]*client, 0, 1)
 	for c := range s.conns {
 		if c.deviceKey == deviceKey {
+			// Before anything else: a command the connection reads from now
+			// on is refused (dispatch), even one already in its buffer.
+			c.revoked.Store(true)
 			doomed = append(doomed, c)
 			// A connection on its way out holds no place and waits on
 			// nothing (unpaired.go): its goodbye can take seconds, and a
@@ -455,6 +467,9 @@ func (s *Server) dropDevice(deviceKey string) {
 	for _, c := range doomed {
 		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
 		go c.closeAfterFlush("device revoked")
+		// A peer that does not read would hold the goodbye for writeTimeout
+		// a frame queued ahead of it: past the flush budget it is cut.
+		time.AfterFunc(s.revokedFlush, c.cut)
 	}
 }
 
@@ -606,9 +621,30 @@ func (s *Server) trackTransfer(deviceKey string, conn *channelConn) (untrack fun
 	}
 }
 
+// requestNote is what the door learns of a request for its log line: whether
+// the key its connection proved is paired.
+type requestNote struct{ paired bool }
+
+type requestNoteKey struct{}
+
+// noteRequest records on r's note, when it carries one, what the door found.
+func noteRequest(r *http.Request, paired bool) {
+	if note, ok := r.Context().Value(requestNoteKey{}).(*requestNote); ok {
+		note.paired = paired
+	}
+}
+
+// logRequests writes a line per request: at Info for a paired device's, at
+// Debug for a key nobody paired. A stranger's connection carries one request
+// and anyone can mint such a key and pass the check with it, so at Info its
+// lines would grow with the handshake rate - which nothing bounds (050) - and
+// push out what an operator needs to read; the entry's own warnings about
+// strangers are counted per minute instead (channel.go).
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		note := &requestNote{}
+		r = r.WithContext(context.WithValue(r.Context(), requestNoteKey{}, note))
 		next.ServeHTTP(w, r)
 		// Transfer tokens are one-shot capabilities - they never reach
 		// logs. Contains, not HasPrefix: uncleaned request paths like
@@ -618,7 +654,11 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		if strings.Contains(path, "/files/") {
 			path = "/files/*"
 		}
-		s.logger.Info("http request",
+		level := slog.LevelDebug
+		if note.paired {
+			level = slog.LevelInfo
+		}
+		s.logger.Log(r.Context(), level, "http request",
 			"method", r.Method,
 			"path", path,
 			"duration_ms", time.Since(start).Milliseconds(),
@@ -759,7 +799,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	// pre-release rule edits it in place). Without this assertion the mismatch
 	// would degrade into an internal error on every greeting - a silent
 	// failure where a loud one is needed.
-	if err := assertIdentitySchema(ctx, dbs.Read, migrations, cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, migrations, cfg.DBPath, cfg.FilesPath); err != nil {
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
@@ -986,7 +1026,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 //
 // A zero stored fingerprint means a database from before this existed, which is
 // by definition older than the current schema.
-func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, dbPath string) error {
+func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, dbPath, filesPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
@@ -995,7 +1035,7 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, d
 		return fmt.Errorf("inspect schema: %w", err)
 	}
 	if present != 6 {
-		return staleSchemaError(dbPath)
+		return staleSchemaError(dbPath, filesPath)
 	}
 	want, err := db.Fingerprint(migrations)
 	if err != nil {
@@ -1006,16 +1046,21 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, d
 		return err
 	}
 	if stored != want {
-		return staleSchemaError(dbPath)
+		return staleSchemaError(dbPath, filesPath)
 	}
 	return nil
 }
 
-func staleSchemaError(dbPath string) error {
+// staleSchemaError names everything a fresh start needs gone: the database with
+// its -wal and -shm siblings, its key file (047: a key file with no database
+// stops the next start too) and the attachments. A backup of this server is of
+// the same schema, so starting over is what it means.
+func staleSchemaError(dbPath, filesPath string) error {
 	return fmt.Errorf(
 		"database schema predates this build: the pre-release rule edits 001_init.sql in place, "+
-			"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
-		dbPath, dbPath)
+			"so delete %s together with its -wal and -shm siblings, its key file %s.key and the %s directory, then start again "+
+			"(a backup of this server cannot be restored onto this build either: this starts the server over)",
+		dbPath, dbPath, filesPath)
 }
 
 // sayHowToPair tells the operator, when no device can reach this machine, where

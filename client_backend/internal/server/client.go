@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -41,6 +42,10 @@ type client struct {
 	deviceKey string
 	// closeReason accompanies the close sentinel through the write queue.
 	closeReason string
+	// revoked is set by dropDevice, under Server.mu, the moment the device's
+	// row is gone: from then on the connection runs no command of its own
+	// (dispatch), however long its goodbye takes to go out.
+	revoked atomic.Bool
 	// requestHost is the address this device dialled to get here, from the
 	// request's Host header. It is the only address the server knows to be
 	// reachable from somewhere other than the machine itself, which is what an
@@ -109,6 +114,22 @@ func (c *client) closeAfterFlush(reason string) {
 	select {
 	case c.out <- nil:
 	case <-c.ctx.Done():
+	}
+}
+
+// cut ends the connection at once, with no close handshake: for a peer that
+// does not read, whose full queue would otherwise hold it for writeTimeout a
+// frame.
+//
+// Not through closeOnce: a close handshake already under way holds that, and
+// is exactly what a peer that does not read never finishes. Closing the
+// transport under it ends the handshake and any write it waits on.
+func (c *client) cut() {
+	if c.conn != nil {
+		_ = c.conn.CloseNow()
+	}
+	if c.cancel != nil {
+		c.cancel()
 	}
 }
 

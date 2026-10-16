@@ -81,6 +81,7 @@ func (s *Server) pairedKey(ctx context.Context, key string, logger *slog.Logger)
 func (s *Server) limitStrangers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if peer, ok := channelPeerFrom(r.Context()); ok && s.pairedKey(r.Context(), peer.deviceKey(), s.logger) {
+			noteRequest(r, true)
 			next.ServeHTTP(w, r)
 			return
 		}

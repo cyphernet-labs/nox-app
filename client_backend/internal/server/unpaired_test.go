@@ -676,3 +676,27 @@ func TestARequestThatClosesBeforeItsWaitTakesHoldEndsTheWait(t *testing.T) {
 		})
 	}
 }
+
+// A request of a key nobody paired is a Debug line, a paired device's an Info
+// one: anyone can mint a key and pass the check, and nothing bounds how often,
+// so strangers' lines at Info would push out what an operator needs.
+func TestAStrangersRequestIsADebugLineAndADevicesAnInfoOne(t *testing.T) {
+	buf := &syncBuffer{}
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "log.db"),
+		slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer closeAll()
+	dev, _ := firstDevice(t, ts, srv)
+	for _, who := range []struct {
+		d     *device
+		level string
+	}{{newDevice(t), "DEBUG"}, {dev, "INFO"}} {
+		resp, err := channelOf(t, ts).clientAs(who.d).Get(ts.URL + "/nothing-here")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		_ = resp.Body.Close()
+		eventually(t, "the request is logged at "+who.level, func() bool {
+			return strings.Contains(buf.String(), "level="+who.level+` msg="http request" method=GET path=/nothing-here`)
+		})
+	}
+}

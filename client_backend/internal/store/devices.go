@@ -78,11 +78,34 @@ type Revocation struct {
 // device: the person and every conversation outlive their devices, and the
 // machine link joins the next device to them (FR-015).
 func (s *Store) RevokeDevice(ctx context.Context, deviceKey string, now int64) (Revocation, error) {
+	return s.revokeDevice(ctx, "", deviceKey, now)
+}
+
+// RevokeDeviceAs is RevokeDevice asked by the device caller, which must still
+// be paired inside the same transaction, or the call is ErrDeviceUnknown - as
+// for IssueDeviceInvite and DecidePairRequest: a device revoked a moment ago
+// must not revoke the person's other devices on its way out.
+func (s *Store) RevokeDeviceAs(ctx context.Context, caller, deviceKey string, now int64) (Revocation, error) {
+	return s.revokeDevice(ctx, caller, deviceKey, now)
+}
+
+// revokeDevice is both: caller "" checks nobody.
+func (s *Store) revokeDevice(ctx context.Context, caller, deviceKey string, now int64) (Revocation, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return Revocation{}, fmt.Errorf("begin revoke device: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if caller != "" {
+		var paired int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices WHERE device_key = ?", caller).Scan(&paired); err != nil {
+			return Revocation{}, fmt.Errorf("read the revoking device: %w", err)
+		}
+		if paired == 0 {
+			return Revocation{}, ErrDeviceUnknown
+		}
+	}
 
 	var userID string
 	err = tx.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)

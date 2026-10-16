@@ -171,14 +171,14 @@ func TestAssertIdentitySchemaRefusesAStaleDatabase(t *testing.T) {
 	if _, err := d.Write.Exec("PRAGMA user_version = 1"); err != nil {
 		t.Fatalf("set user_version: %v", err)
 	}
-	if err := assertIdentitySchema(context.Background(), d.Read, os.DirFS("../../migrations"), path); err == nil {
+	if err := assertIdentitySchema(context.Background(), d.Read, os.DirFS("../../migrations"), path, path+"-files"); err == nil {
 		t.Fatal("assertIdentitySchema accepted a database with no identity tables")
 	}
 }
 
 func TestAssertIdentitySchemaAcceptsAFreshDatabase(t *testing.T) {
 	_, srv := newTestServer(t)
-	if err := assertIdentitySchema(context.Background(), readDB(t, srv), os.DirFS("../../migrations"), srv.cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(context.Background(), readDB(t, srv), os.DirFS("../../migrations"), srv.cfg.DBPath, srv.cfg.FilesPath); err != nil {
 		t.Fatalf("assertIdentitySchema rejected a freshly migrated database: %v", err)
 	}
 }
@@ -287,7 +287,7 @@ func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
 	ctx := context.Background()
 
 	// A freshly migrated database passes.
-	if err := assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path, path+"-files"); err != nil {
 		t.Fatalf("a current database was refused: %v", err)
 	}
 
@@ -301,7 +301,7 @@ func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
 	if _, err := dbs.Write.ExecContext(ctx, "PRAGMA application_id = 1"); err != nil {
 		t.Fatalf("stale fingerprint: %v", err)
 	}
-	err = assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path)
+	err = assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path, path+"-files")
 	if err == nil {
 		t.Fatal("a database missing a column was allowed to start")
 	}

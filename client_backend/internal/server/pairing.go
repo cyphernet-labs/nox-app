@@ -297,7 +297,12 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 		return
 	}
 
-	rev, err := c.srv.store.RevokeDevice(c.ctx, key, time.Now().Unix())
+	rev, err := c.srv.store.RevokeDeviceAs(c.ctx, c.deviceKey, key, time.Now().Unix())
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		// Revoked itself a moment ago: the answer its next greeting would get.
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
 	if err != nil {
 		c.logger.Error("device.revoke", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to revoke the device"))

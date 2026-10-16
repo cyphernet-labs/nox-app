@@ -11,7 +11,7 @@ import (
 func TestTheServiceLogIsAppendedToAcrossStarts(t *testing.T) {
 	dir := t.TempDir()
 	for _, line := range []string{"first start\n", "second start\n"} {
-		f, err := openServiceLog(dir, 1<<20)
+		f, _, err := openServiceLog(dir, 1<<20)
 		if err != nil {
 			t.Fatalf("openServiceLog: %v", err)
 		}
@@ -45,7 +45,7 @@ func TestAFullServiceLogIsSetAsideAtAStartAndReplacesTheOldOne(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	f, err := openServiceLog(dir, 64)
+	f, _, err := openServiceLog(dir, 64)
 	if err != nil {
 		t.Fatalf("openServiceLog: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestTheServiceLogIsReadableByItsOwnerOnly(t *testing.T) {
 		t.Skip("Windows keeps who may read a file in its ACL, which the folder's gives it, not in mode bits")
 	}
 	dir := t.TempDir()
-	f, err := openServiceLog(dir, 1<<20)
+	f, _, err := openServiceLog(dir, 1<<20)
 	if err != nil {
 		t.Fatalf("openServiceLog: %v", err)
 	}
@@ -80,5 +80,33 @@ func TestTheServiceLogIsReadableByItsOwnerOnly(t *testing.T) {
 	}
 	if mode := info.Mode().Perm(); mode&0o077 != 0 {
 		t.Fatalf("log mode = %v, want no access for others", mode)
+	}
+}
+
+// A log that cannot be set aside - another program holds it on Windows - is
+// no reason not to start: the server logs on into it and says why.
+func TestALogThatCannotBeSetAsideStillOpens(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, serviceLogName)
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 64)+"\n"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// A folder where the set-aside copy goes: no rename lands on it.
+	if err := os.MkdirAll(filepath.Join(path+".1", "held"), 0o700); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	f, aside, err := openServiceLog(dir, 64)
+	if err != nil {
+		t.Fatalf("openServiceLog: %v", err)
+	}
+	if aside == nil {
+		t.Fatal("a log that was not set aside was not reported")
+	}
+	if _, err := f.WriteString("on\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = f.Close()
+	if got, _ := os.ReadFile(path); !strings.HasSuffix(string(got), "\non\n") {
+		t.Fatalf("the log = %q, want this start's line after the old ones", got)
 	}
 }

@@ -38,13 +38,16 @@ func underServiceManager() bool {
 // or the server stops by itself, and returns the process's exit code. The log
 // goes to noxd.log beside the database.
 func runService(cfg config.Config, migrations fs.FS) int {
-	logFile, err := openServiceLog(filepath.Dir(cfg.DBPath), serviceLogKeepBytes)
+	logFile, aside, err := openServiceLog(filepath.Dir(cfg.DBPath), serviceLogKeepBytes)
 	if err != nil {
 		// Nowhere to say it: the manager records the exit code.
 		return 1
 	}
 	defer func() { _ = logFile.Close() }()
 	logger := slog.New(slog.NewJSONHandler(logFile, nil))
+	if aside != nil {
+		logger.Warn("the service log grows past its cap: it could not be set aside", "err", aside)
+	}
 
 	h := &service{
 		logger: logger,

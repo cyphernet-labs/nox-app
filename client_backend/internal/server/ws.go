@@ -97,6 +97,13 @@ func (c *client) readLoop() {
 }
 
 func (c *client) dispatch(cmd protocol.Command) {
+	// A revoked device's connection runs nothing more of its own while its
+	// goodbye goes out: what a revoked device asks is what an unknown one
+	// would be answered (contract §2.1).
+	if c.revoked.Load() {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
 	// pair and pair.cancel are the exceptions to "hello first", and not for
 	// convenience: an unpaired device proved a key the server does not know,
 	// and its greeting would be refused, so requiring one first would make

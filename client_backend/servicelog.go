@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,20 +20,23 @@ const serviceLogKeepBytes = 16 << 20
 
 // openServiceLog opens the service's log in dir for appending, first setting
 // the current one aside if it reached keepBytes.
-func openServiceLog(dir string, keepBytes int64) (*os.File, error) {
+//
+// Setting it aside is a size cap, never a condition of starting: a log another
+// program holds open without delete sharing cannot be renamed on Windows, and
+// a server that stopped over it could not even be unlocked. Then the log grows
+// on, and the rename's error comes back as aside for the caller to log. Only a
+// log that cannot be opened at all is an error.
+func openServiceLog(dir string, keepBytes int64) (f *os.File, aside error, err error) {
 	path := filepath.Join(dir, serviceLogName)
 	info, err := os.Stat(path)
-	switch {
-	case err == nil && info.Size() >= keepBytes:
-		if err := os.Rename(path, path+".1"); err != nil {
-			return nil, fmt.Errorf("set the log aside: %w", err)
+	if err == nil && info.Size() >= keepBytes {
+		if rerr := os.Rename(path, path+".1"); rerr != nil {
+			aside = fmt.Errorf("set the log aside: %w", rerr)
 		}
-	case err != nil && !errors.Is(err, os.ErrNotExist):
-		return nil, fmt.Errorf("look at the log: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open the log: %w", err)
+		return nil, nil, fmt.Errorf("open the log: %w", err)
 	}
-	return f, nil
+	return f, aside, nil
 }

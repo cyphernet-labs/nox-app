@@ -776,3 +776,85 @@ func TestTheFirstDeviceAnnouncesToNobody(t *testing.T) {
 	}
 	bystander.expectNoFrame(300 * time.Millisecond)
 }
+
+// A revoked device's connection runs nothing more of its own while its
+// goodbye goes out - however long that takes, its commands get the answer an
+// unknown key's would: it cannot revoke the person's other devices, or write,
+// on its way out (contract §2.1, §8A).
+func TestARevokedConnectionRunsNoCommandWhileItsGoodbyeGoesOut(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := firstDevice(t, ts, srv)
+	second, _ := pairDevice(t, ts, mustMachineLink(t, srv))
+	victim := dialAs(t, ts, srv, second)
+	victim.expectGreeting()
+	victim.hello(1, "")
+
+	// The moment dropDevice marks it, before its close reaches the wire.
+	srv.mu.Lock()
+	for c := range srv.conns {
+		if c.deviceKey == second.pub {
+			c.revoked.Store(true)
+		}
+	}
+	srv.mu.Unlock()
+	victim.send(fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
+	victim.expectErr(2, protocol.ErrUnauthenticated)
+	victim.send(`{"id":3,"cmd":"identity.setLabel","data":{"label":"Mallory"}}`)
+	victim.expectErr(3, protocol.ErrUnauthenticated)
+	if _, found, err := srv.store.DeviceOwner(context.Background(), dev.pub); err != nil || !found {
+		t.Fatalf("the other device is gone (found=%v, err=%v)", found, err)
+	}
+}
+
+// A device whose row is already gone cannot revoke another one, even before
+// its connection learns it was revoked: the store checks the caller in the
+// same transaction.
+func TestADeviceRevokedInTheStoreCannotRevokeAnother(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := firstDevice(t, ts, srv)
+	second, _ := pairDevice(t, ts, mustMachineLink(t, srv))
+	victim := dialAs(t, ts, srv, second)
+	victim.expectGreeting()
+	victim.hello(1, "")
+	if _, err := srv.store.RevokeDevice(context.Background(), second.pub, time.Now().Unix()); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	victim.send(fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
+	victim.expectErr(2, protocol.ErrUnauthenticated)
+	if _, found, err := srv.store.DeviceOwner(context.Background(), dev.pub); err != nil || !found {
+		t.Fatalf("the other device is gone (found=%v, err=%v)", found, err)
+	}
+}
+
+// A revoked device that stops reading does not hold its connection for
+// writeTimeout a queued frame: past the flush budget it is cut.
+func TestARevokedConnectionThatDoesNotReadIsCut(t *testing.T) {
+	ts, srv := newTestServer(t)
+	srv.revokedFlush = 200 * time.Millisecond
+	_, _ = firstDevice(t, ts, srv)
+	second, _ := pairDevice(t, ts, mustMachineLink(t, srv))
+	victim := dialAs(t, ts, srv, second)
+	victim.expectGreeting()
+	victim.hello(1, "")
+
+	var server *client
+	srv.mu.Lock()
+	for c := range srv.conns {
+		if c.deviceKey == second.pub {
+			server = c
+		}
+	}
+	srv.mu.Unlock()
+	if server == nil {
+		t.Fatal("the device's connection is not registered")
+	}
+	// A writer that never gets its turn: the queue is held by a frame the
+	// test never lets out, the way a peer that stops reading holds it.
+	server.closeOnce.Do(func() {})
+	srv.dropDevice(second.pub)
+	select {
+	case <-server.ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the revoked connection was not cut within its flush budget")
+	}
+}
