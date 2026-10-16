@@ -101,7 +101,7 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   its WAL with the data key. `modernc.org/sqlite` has no encrypting VFS, and
   writing one over it means rewriting SQLite's VFS layer; SQLCipher is CGO.
   Its own dependencies come with it: the Wasm build of SQLite
-  (`go-sqlite3-wasm`), `lukechampine.com/adiantum` and `x/sys`. Bump it only
+  (`go-sqlite3-wasm`), `julianday`, `lukechampine.com/adiantum` and `x/sys`. Bump it only
   with the full suite run: the Wasm build carries SQLite's own version, and
   `internal/db`'s key check reads the files the way its VFS writes them.
 - **Why `lukechampine.com/adiantum` (047):** the cipher the `adiantum` VFS
@@ -258,7 +258,7 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 9. **Shutdown order:** the HTTP servers drain (the main one, then the
    service page, each on its OWN deadline - the page cancels its requests'
    contexts first, so a backup being written stops before the database it
-   reads closes) →
+   reads closes); the main one's `Shutdown` also starts the going-away close:
    registered WS conns get `Close(StatusGoingAway)`, IN PARALLEL - one close
    handshake can take 10 s, and over Tor it does (Shutdown does NOT wait for
    hijacked conns — keep the conn registry wired via `RegisterOnShutdown`) →
@@ -314,7 +314,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## File map
 
-- `main.go`              — flags, wiring, ordered startup/shutdown (~3 lines of logic)
+- `main.go`              — the subcommand dispatch, the configuration, the
+  scrubbed logger, the Windows-service branch and `server.Run`; and `noxd link`.
+  The ordered startup and shutdown of invariant 9 live in
+  `internal/server/server.go` (`Run`, `serve`)
 - `internal/config/`     — flags + `NOX_*` env, validated at start
 - `internal/db/`         — pools, pragmas, `user_version` migration runner; the
   `adiantum` VFS keyed with the data key (047), the key checked against the
@@ -347,8 +350,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the single `server_identity` row. A pair another implementation made is
   rekeyed at start (050): `ServerKey` keeps the private key, writes the public
   key RustSecureBox gives for it and lets every device go. No owner: "can
-  anybody reach this machine" is `countDevices`, the one spelling of it,
-  asked by the service page, the startup line and the last device going away
+  anybody reach this machine" is `countDevices`, asked by the service page's
+  link (`PageMachineLink`) and by the last device going away; the startup
+  line reads the device figure of `CountEverything` (`stats.go`) instead
 - `internal/store/pairing.go` — the two kinds of one-shot token and `Pair`:
   the machine link (at most one unspent - issuing one voids the others in the
   same transaction; minted by `noxd link`, by the page's buttons, and by the
@@ -388,7 +392,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   call site covers only the text its author thought of
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
-- `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
+- `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware;
+  `Run` and `serve` in `server.go` - the lock first, then the ordered startup
+  and shutdown of invariant 9
 - `internal/connauth/`  — the channel check (050): `Respond`, the server's side of
   `POST /auth` and `POST /auth2` that the channel listener runs (two requests
   read with `http.ReadRequest` under a 16 KiB bound, answers written by hand,
@@ -468,7 +474,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   `device.pairRequested` to the issuing device's greeted connections (and
   again after each of its greetings), `pair.resolved` to the new device's
   connections that have not greeted, `device.pairResolved` to the issuer;
-  and the sweeper (`Server.requestSweep`, 2 s) that closes what ran out
+  and the sweeper (`runRequestSweeper`, every `requestSweep` = 2 s) that
+  closes what ran out
 - `internal/server/gate.go` — the lock (047): the state on disk (no database
   and no key - a first password; both - locked; one without the other - no
   start), the service page's listener for the life of the process, `GET
@@ -528,7 +535,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - HTTP and WS go through the REAL front door: the test server listens through
   the channel listener, and the test client dials TCP → TLS 1.3 without
   certificate checks → `connauth.Initiate` with a device key, then speaks HTTP
-  or WebSocket over that connection (`dialAs` in `server_test.go`). NOT
+  or WebSocket over that connection (`dialChannel`/`channelOver` in
+  `server_test.go`, `dialAs` in `integration_test.go`). NOT
   `httptest.NewTLSServer`: a stock TLS server skips the check this server is
   built around.
 - "No link and no token in the log" is a test, not a promise:
@@ -599,7 +607,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the data; `GET /health` says `{"status":"locked"}`. A forgotten password is
   lost data, by decision. `-status-addr` cannot be empty, and a busy page port
   stops the start: the password has nowhere else to go.
-- Backups: `noxd backup <absolute file>` - the RUNNING server snapshots the
+- Backups: `noxd backup <file>` (the command makes the path absolute: the
+  server that writes it does not share its working directory) - the RUNNING server snapshots the
   database (`VACUUM INTO` beside it, under the same key) and writes one tar with
   the sealed key and the finished attachments, never over an existing file and
   never as anything but `<file>.partial` until it is whole. `noxd restore <file>
@@ -679,7 +688,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   its last byte, and the request's context dies with it.
 - **The continuation waits at most a second for the previous writer, and
   never refuses on it.** It runs on the connection's read loop, which also
-  reads pongs, and the direct ping gives up after 5 s. A writer that did not
+  reads pongs, and a ping gives up when its pong is late (`writeTimeout`,
+  30 s). A writer that did not
   let go in time leaves a `received` slightly behind; the PUT cuts the part
   back to its token's offset either way. A writer whose last byte is already
   in is not interrupted at all - it finishes - and the continuation reads the
@@ -806,9 +816,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   reached the server there, while the machine link has no device asking yet.
   Both carry the stored public address first and the onion address last when
   they are set (045).
-- **"Can anybody reach this machine" has ONE answer: `countDevices`.** The
-  page's two states, the startup line that says where a link is, and the last
-  device going away all ask it. There is no owner marker beside it: a second
+- **"Can anybody reach this machine" has ONE answer: the device count.** The
+  page's two states and the last device going away ask `countDevices`; the
+  startup line that says where a link is reads the same `COUNT(1) FROM
+  devices` through `CountEverything`. There is no owner marker beside it: a second
   record of one fact is the shape that eventually disagrees with itself, and
   here the disagreement would be a page that hides the link from somebody
   locked out of their own machine.
