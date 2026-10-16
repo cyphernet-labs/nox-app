@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
 import 'package:nox_app/data/local/secure/secure_store_options.dart';
@@ -352,10 +353,31 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> resetSecureStore() {
     return execute<bool>(() async {
-      await _secureStorage.deleteAll(aOptions: SecureStoreOptions.android.copyWith(resetOnError: true));
+      try {
+        await _secureStorage.deleteAll(aOptions: SecureStoreOptions.android.copyWith(resetOnError: true));
+      } catch (_) {
+        // The plugin rebuilds a store only from a key it can no longer
+        // unwrap. A key that is there but will not be read at all fails
+        // this too: the runner deletes the plugin's Keystore entries and
+        // files, and the store is asked again, empty (048 research R13).
+        if (!_androidPlatform) rethrow;
+        await _secureStoreChannel.invokeMethod<bool>('wipe');
+        await _secureStorage.deleteAll();
+      }
       return const RepositoryResult<bool>.success(data: true);
     });
   }
+
+  /// The Android runner's way to delete the secure-store plugin's store whole
+  /// (`MainActivity.wipeSecureStore`).
+  static const MethodChannel _secureStoreChannel = MethodChannel('nox/secure_store');
+
+  /// Which platform a test means: the storage mock of `flutter test` runs on
+  /// the host.
+  @visibleForTesting
+  static bool? debugAndroidPlatform;
+
+  static bool get _androidPlatform => debugAndroidPlatform ?? Platform.isAndroid;
 
   @override
   Future<RepositoryResult<bool>> outlivedItsInstall() {

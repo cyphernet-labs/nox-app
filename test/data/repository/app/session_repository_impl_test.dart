@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -235,6 +235,49 @@ void main() {
       await const FlutterSecureStorage().write(key: 'session.server_fingerprint', value: 'fp');
       expect((await repository.sweepLegacyKeys()).hasData, isTrue);
       expect(await const FlutterSecureStorage().read(key: 'session.server_fingerprint'), isNull);
+    });
+  });
+
+  group('rebuilding the secure store (048 research R13)', () {
+    const channel = MethodChannel('nox/secure_store');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() {
+      SessionRepositoryImpl.debugAndroidPlatform = null;
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+
+    test('a store the plugin will not rebuild is wiped by the runner on Android, and asked again empty', () async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final storage = _UnreadableUntilWiped();
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'wipe');
+        storage.wiped = true;
+        return true;
+      });
+      SessionRepositoryImpl.debugAndroidPlatform = true;
+      final prefs = await SharedPreferences.getInstance();
+
+      final result = await SessionRepositoryImpl(storage, prefs).resetSecureStore();
+
+      expect(result.data, isTrue);
+      expect(storage.wiped, isTrue);
+    });
+
+    test('elsewhere a store that will not be emptied is an error, and nothing else is tried', () async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final storage = _UnreadableUntilWiped();
+      SessionRepositoryImpl.debugAndroidPlatform = false;
+      final prefs = await SharedPreferences.getInstance();
+
+      final result = await SessionRepositoryImpl(storage, prefs).resetSecureStore();
+
+      expect(result.hasData, isFalse);
+      expect(storage.wiped, isFalse);
     });
   });
 
@@ -830,4 +873,24 @@ class _FailingBox implements SecureBoxApi {
 
   @override
   bool checkSignature(Uint8List publicKey, Uint8List challenge, Uint8List signature) => throw SecureBoxException(code);
+}
+
+/// A store whose Keystore key is there but will not be read: every call fails
+/// until the runner wipes it.
+class _UnreadableUntilWiped extends FlutterSecureStorage {
+  _UnreadableUntilWiped();
+
+  bool wiped = false;
+
+  @override
+  Future<void> deleteAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (!wiped) throw PlatformException(code: 'Exception encountered', message: 'UnrecoverableKeyException');
+  }
 }
