@@ -1122,7 +1122,15 @@ set_first_password() {
 			;;
 		esac
 		NOX_PASSWORD=""
-		warn "the password was not set: $out"
+		case $out in
+		*"the password was accepted"*)
+			# The key is written: the server restarts locked under this
+			# password, and only what kept it from opening is to be fixed.
+			PASSWORD_TAKEN=1
+			warn "the password was set, but the server could not open: $out"
+			;;
+		*) warn "the password was not set: $out" ;;
+		esac
 		return 1
 	done
 }
@@ -1157,8 +1165,14 @@ finish_new() {
 	step "Setting the server's password"
 	if ! set_first_password; then
 		say ""
-		say "The server is installed and running, but has no password yet. Set it on the service page,"
-		say "http://127.0.0.1:$STATUS_PORT on this machine, or with: $noxd_cmd unlock$(status_flag)"
+		if [ -n "${PASSWORD_TAKEN:-}" ]; then
+			say "The server has its password, but could not open - the reason is above, and in its log: $SERVER_LOG."
+			say "Fix that, then enter the SAME password on the service page, http://127.0.0.1:$STATUS_PORT on this"
+			say "machine, or with: $noxd_cmd unlock$(status_flag)"
+		else
+			say "The server is installed and running, but has no password yet. Set it on the service page,"
+			say "http://127.0.0.1:$STATUS_PORT on this machine, or with: $noxd_cmd unlock$(status_flag)"
+		fi
 		return 1
 	fi
 	wait_open || warn "the server took the password but has not opened yet; see its log: $SERVER_LOG"

@@ -1197,6 +1197,15 @@ function Complete-NewServer {
             continue
         }
         $script:Password = $null
+        if ($out.Output -match 'the password was accepted') {
+            # The key is written: the server restarts locked under this
+            # password, and only what kept it from opening is to be fixed.
+            Warn "the password was set, but the server could not open: $($out.Output.Trim())"
+            Say "The server has its password, but could not open - the reason is above, and in its log: $($script:ServerLog)."
+            Say "Fix that, then enter the SAME password on the service page, http://127.0.0.1:$($script:StatusPort) on this"
+            Say "machine, or with: $cmd unlock$(Get-StatusFlag)"
+            return
+        }
         Warn "the password was not set: $($out.Output.Trim())"
         Say "The server is installed and running, but has no password yet. Set it on the service page,"
         Say "http://127.0.0.1:$($script:StatusPort) on this machine, or with: $cmd unlock$(Get-StatusFlag)"
