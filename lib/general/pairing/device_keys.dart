@@ -1,57 +1,56 @@
 import 'dart:convert';
 
-import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_tor/secure_box.dart';
 
-/// The device's own key pair, and the one thing it proves.
+/// The device's own key pair, by RustSecureBox (phase 050).
 ///
-/// The private half is generated here and never leaves: it is not sent when
-/// pairing, not sent when greeting, and not written to any log. What travels
-/// is the public key and a signature — possession is demonstrated, never
-/// handed over. That is the whole difference from the identifier sign-in this
-/// replaces, where the secret itself travelled through clipboards and QR codes.
+/// Dart makes no key of its own: the pair comes from the module's
+/// RustSecureBox - the same library the server runs - and so does the public
+/// key of a private one. The private half never leaves the device: it goes to
+/// the module's channel at every open, which signs the server's challenge with
+/// it in POST /auth2, and only the public key ever travels.
 ///
 /// ⚠️ The key is stored in the OS secure store and is therefore extractable by
-/// something that already owns the device. A hardware enclave would need
-/// native work on five platforms and is out of this phase — recorded so the
-/// model's "private keys do not travel" reads as "not over the wire" rather
-/// than "protected by hardware".
+/// something that already owns the device - recorded so that "private keys do
+/// not travel" reads as "not over the wire", not "protected by hardware".
 abstract final class DeviceKeys {
-  /// Domain separation, contract §2. Without it a signature taken over a
-  /// challenge would be a valid signature over the same bytes anywhere else
-  /// the protocol later decides to sign something.
-  static const String challengePrefix = 'nox/challenge/v1:';
+  /// RustSecureBox. A test may stand in for it; the app always has the native
+  /// one.
+  @visibleForTesting
+  static SecureBoxApi box = const NativeSecureBoxApi();
 
-  static final Ed25519 _algorithm = Ed25519();
-
-  /// Mints a new pair and returns its 32-byte seed, base64.
-  ///
-  /// The seed rather than the expanded private key: half the bytes, and the
-  /// pair derives from it deterministically, so nothing is lost.
-  static Future<String> generateSeed() async {
-    final pair = await _algorithm.newKeyPair();
-    final seed = await pair.extractPrivateKeyBytes();
-    return base64.encode(seed);
+  /// A new pair, base64 - what a device makes once, before its first pairing.
+  static DeviceKeyPair generate() {
+    final pair = box.generateKeys();
+    try {
+      return DeviceKeyPair(privateKey: base64.encode(pair.privateKey), publicKey: base64.encode(pair.publicKey));
+    } finally {
+      pair.privateKey.fillRange(0, pair.privateKey.length, 0);
+    }
   }
 
-  /// The public key for a seed, base64 — what the server stores as `device_key`.
-  static Future<String> publicKey(String seed) async {
-    final pair = await _keyPair(seed);
-    final public = await pair.extractPublicKey();
-    return base64.encode(public.bytes);
+  /// The public key RustSecureBox gives for [privateKey], both base64.
+  static String publicKeyOf(String privateKey) {
+    final private = Uint8List.fromList(base64.decode(privateKey));
+    try {
+      return base64.encode(box.getChallenge(private).publicKey);
+    } finally {
+      private.fillRange(0, private.length, 0);
+    }
   }
 
-  /// Signs the server's challenge.
-  ///
-  /// The RAW challenge bytes are signed, not their base64 spelling: two
-  /// implementations disagreeing about padding would disagree about the
-  /// signature, and one of them would be locked out for reasons neither side
-  /// could see.
-  static Future<String> signChallenge({required String seed, required String challenge}) async {
-    final pair = await _keyPair(seed);
-    final message = <int>[...utf8.encode(challengePrefix), ...base64.decode(challenge)];
-    final signature = await _algorithm.sign(message, keyPair: pair);
-    return base64.encode(signature.bytes);
+  /// Whether this build's RustSecureBox makes [pair]: its public key is the
+  /// one the box gives for its private one. A private key the box refuses
+  /// outright is not one either. Any other failure of the box is thrown - it
+  /// says nothing about the pair.
+  static bool isOwn(DeviceKeyPair pair) {
+    try {
+      return publicKeyOf(pair.privateKey) == pair.publicKey;
+    } on SecureBoxException catch (error) {
+      if (error.code == SecureBoxCode.invalidArgument) return false;
+      rethrow;
+    }
   }
-
-  static Future<SimpleKeyPair> _keyPair(String seed) => _algorithm.newKeyPairFromSeed(base64.decode(seed));
 }

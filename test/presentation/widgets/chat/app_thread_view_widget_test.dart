@@ -87,6 +87,29 @@ void main() {
       expect(find.byType(AppMessageBubbleWidget), findsWidgets);
     });
 
+    testWidgets('a failed round with a known cause says it in the strip instead of No connection (phase 045)', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, AppThreadViewWidget(chat: _sampleChat(), demo: true));
+
+      await _selectScenario(tester, 'turnOnTor');
+
+      expect(find.byType(AppNoticeStripWidget), findsOneWidget);
+      expect(find.text(l10nEn.connectionProblemTurnOnTor), findsOneWidget);
+      expect(find.text(l10nEn.noConnection), findsNothing);
+      expect(find.widgetWithText(TextButton, l10nEn.actionTryAgain), findsOneWidget, reason: 'Try again stays');
+    });
+
+    testWidgets('another server behind the onion address says so', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, AppThreadViewWidget(chat: _sampleChat(), demo: true));
+
+      await _selectScenario(tester, 'pinRefused');
+
+      expect(find.text(l10nEn.connectionProblemOtherServer), findsOneWidget);
+    });
+
     testWidgets('empty scenario renders the empty-content placeholder and no bubbles', (tester) async {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));

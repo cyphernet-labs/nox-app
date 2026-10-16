@@ -1,8 +1,10 @@
 import 'dart:io';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:nox_app/di/global_aliases.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// The outgoing queue's own copies of the files it sends (phase 043).
 ///
@@ -18,33 +20,65 @@ import 'package:path_provider/path_provider.dart';
 ///
 /// One folder per send, named by its `client_message_id`, holding the file
 /// under its own name: the upload declares the name of the file it reads.
-/// Application Support, not the cache: nothing may empty it before the bytes
-/// are on the server.
+/// The app's data folder (phase 048: `AppDataRoot`), not the cache: nothing
+/// may empty it before the bytes are on the server.
+///
+/// The copy is sealed (phase 048, [SealedFile]): it is what the person was
+/// sending, and it may wait on the disk for as long as the server cannot be
+/// reached. The upload opens it chunk by chunk, and once sent it becomes this
+/// device's copy of the file where a download would land - sealed already.
 @lazySingleton
 class OutboxCopies {
-  static const String folder = 'nox_outbox';
+  OutboxCopies(this._vault);
+
+  final DeviceVault _vault;
+
+  static const String folder = AppDataRoot.outboxFolder;
+
+  /// The name of every copy in its send's folder.
+  static const String copyName = 'copy';
 
   static final String _sep = Platform.pathSeparator;
 
   String? _root;
 
-  Future<String> _rootPath() async => _root ??= '${(await getApplicationSupportDirectory()).path}$_sep$folder';
+  Future<String> _rootPath() async => _root ??= await AppDataRoot.pathOf(folder);
 
-  /// Copies [source] for the send [key] and returns the copy's path - or null
-  /// when no copy can be made, and the queue then sends from [source] as it
-  /// did before copies existed.
+  /// Copies [source] for the send [key], sealed, and returns the copy's path -
+  /// or null when no copy can be made, and the queue then sends from [source]
+  /// as it did before copies existed.
   Future<String?> keep({required String key, required String source}) async {
     final dir = Directory('${await _rootPath()}$_sep$key');
     try {
+      await _vault.ensureOpen();
       await dir.create(recursive: true);
-      final copy = await File(source).copy('${dir.path}$_sep${source.split(_sep).last}');
+      // Named for nothing: a sealed copy whose path said what the file is
+      // called would tell it to anyone who lists the folder (048, FR-004).
+      // The queue declares the picked name itself.
+      final copy = File('${dir.path}$_sep$copyName');
+      await _seal(File(source), copy);
       return copy.path;
-    } on FileSystemException catch (error) {
+    } on Exception catch (error) {
       // The type only: the message carries the path, and the path the name.
       logRepository.error(target: this, error: error.runtimeType);
       await _delete(dir);
       return null;
     }
+  }
+
+  /// [source], sealed into [copy] a chunk at a time - never the whole file in
+  /// memory. A source that changes length while it is read is no one file,
+  /// and makes no copy.
+  static Future<void> _seal(File source, File copy) async {
+    final writer = await SealedWriter.create(copy, total: await source.length());
+    try {
+      await for (final bytes in source.openRead()) {
+        await writer.add(bytes);
+      }
+    } finally {
+      await writer.close();
+    }
+    if (!writer.isComplete) throw const SealedFileException(SealedFileError.truncated);
   }
 
   /// Whether [path] is the copy made for the send [key]. Nothing else is ever
@@ -79,13 +113,32 @@ class OutboxCopies {
         try {
           await copy.rename(destination);
         } on FileSystemException {
-          // Another volume: rename cannot cross one.
-          await copy.copy(destination);
+          // A rename refused - on Windows, a file another handle holds open,
+          // the bubble drawing the picture being sent among them. Copied
+          // under a name of its own and renamed into place: the destination
+          // only ever holds a whole file, since being there is what tells a
+          // download its bytes are complete.
+          final next = File('$destination.next');
+          try {
+            await copy.copy(next.path);
+            await next.rename(destination);
+          } on FileSystemException {
+            if (next.existsSync()) next.deleteSync();
+            rethrow;
+          }
         }
       }
     } on FileSystemException catch (error) {
       logRepository.error(target: this, error: error.runtimeType);
       return false;
+    }
+    // A copy under its own name that a pass did not live to rename: the
+    // bytes are at the destination now, by this pass or that one.
+    try {
+      final stale = File('$destination.next');
+      if (stale.existsSync()) await stale.delete();
+    } on FileSystemException {
+      // Best effort, like every delete of a wipe.
     }
     await drop(key);
     return true;

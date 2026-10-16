@@ -364,7 +364,7 @@ abstract class ItemRepository {
 - Пагинированный список возвращает `RepositoryResult<(List<T>, PageMetadata)>` — кортеж со срезом страницы и метаданными `PageMetadata{hasMore, nextPage}` (см. §6c и `07-pagination.md`); та же форма обслуживает и seq-cursor-путь истории сообщений, где `nextPage` остаётся `null`.
 - Возвраты **всегда** обёрнуты в `RepositoryResult<T>` — никогда голый `Future<T>` (кроме `clean()`, который возвращает `Future<void>`).
 
-> **Сверка со скелетом.** Контракт выше — **полная** референс-форма. Реальный `lib/domain/repository/item/item_repository.dart` в скелете Feature-001 урезан до network-only-среза (паттерн «первая реальная фича / список чатов»): только `getItems({required GetItemsConfig config})` + `clean()`. Cache-first `watchItem`/`fetchItem` и CRUD (`createItem`/`updateItem`/`deleteItem`) — это полный пример блюпринта; они прибывают с фичей, которой нужен кэш.
+> **Сверка со скелетом.** Контракт выше — **полная** референс-форма. Реальный `lib/domain/repository/item/item_repository.dart` в скелете Feature-001 урезан до network-only-среза (замороженная верификационная форма; продуктовый список чатов — cache-first с read-through, `07-pagination.md`): только `getItems({required GetItemsConfig config})` + `clean()`. Cache-first `watchItem`/`fetchItem` и CRUD (`createItem`/`updateItem`/`deleteItem`) — это полный пример блюпринта; они прибывают с фичей, которой нужен кэш.
 
 ---
 
@@ -400,7 +400,7 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
 
 > `defaultPage` — **1** (1-based). Никогда `GetItemsConfig(page: 0, pageSize: 50)`; никаких магических чисел страницы в BLoC — первая страница выражается только фабрикой `Get<Name>sConfig.firstPage()`. `pageSize` — статическая константа (20), не поле конфига; `page` — единственное обязательное поле, `search` опционален.
 
-> Продуктовый аналог этой формы — `GetChatsConfig` (`page` + `search?`, те же `pageSize` / `defaultPage`, PAGED-путь контракта v0 §4). Второй реальный путь конфигом отличается: `GetMessagesConfig{chatId, int? beforeSeq, limit}` (seq-cursor, §5) с фабриками `tail()` / `olderThan(beforeSeq:)` вместо `firstPage()` / `nextPage()` — номеров страниц у истории сообщений нет.
+> Продуктовый аналог этой формы — `GetChatsConfig` (`page` + `search?` + `@Default(false) bool cachedOnly`, те же `pageSize` / `defaultPage`, PAGED-путь контракта v0 §4). Второй реальный путь конфигом отличается: `GetMessagesConfig{chatId, int? beforeSeq, limit, cachedOnly}` (seq-cursor, §5) с фабриками `tail()` / `olderThan(beforeSeq:)` вместо `firstPage()` / `nextPage()` — номеров страниц у истории сообщений нет. `cachedOnly: true` в обоих — «отдать срез из кэша, не трогая сервер» (первое чтение экрана и реактивный тик, `07-pagination.md`).
 
 ### 5b. Одиночный конфиг — `GetItemConfig`
 
@@ -421,7 +421,7 @@ abstract class GetItemConfig with _$GetItemConfig implements RepositoryConfig {
 }
 ```
 
-Семантика `cacheOnly` (единая по кодовой базе):
+Семантика `cacheOnly` шаблона (у продуктовых списочных конфигов флаг называется `cachedOnly` и означает только «не трогать сервер», §5a):
 - `true` → читать только кэш; вернуть `notFound`, если пусто (сеть не трогается).
 - `null` или `false` → cache-first: вернуть кэш, если есть, иначе сходить в сеть.
 
@@ -617,7 +617,7 @@ class EntityConverter<E> implements JsonConverter<E?, dynamic> {
 
 > **Правило сопровождения:** любой новый entity, используемый через `ResponseEntity<T>`, добавляется в **обе** цепочки в `entity_converter.dart`. Реестр поддерживается руками, не кодогенерируется.
 
-> **Сверка с кодом.** Реестр давно не пустой: с феатуры 018/S4 в `entity_converter.dart` зарегистрированы обе цепочки для `ItemEntity` / `ItemsEntity` (референс-харня) **и** для продуктовых wire-обёрток контракта v0 — `ChatWireEntity` / `ChatsWireEntity` / `MessageWireEntity` / `MessagesWireEntity`. Моки собирают конверт напрямую (не через `fromJson`); пришедший с феатурой 026 транспорт делает то же — `Real*RemoteDataSource` строят `ResponseEntity` явными парсерами (`ChatsWireEntity.fromJson` и т. п. передаются аргументом в хелперы `toEnvelope` / `toWrappedEnvelope` из `socket_envelope.dart`; сами вызовы — в `lib/data/remote/datasource/real/real_chat_remote_data_source.dart` и `real_message_remote_data_source.dart`), — поэтому диспетчер `EntityConverter.fromJson` по-прежнему прогоняют только round-trip-тесты. Незарегистрированный `T` по-прежнему бросает `ArgumentError` — «нет конвертера» остаётся явной ошибкой.
+> **Сверка с кодом.** В `entity_converter.dart` зарегистрированы обе цепочки для `bool`, для `ItemEntity` / `ItemsEntity` (референс-харня) **и** для продуктовых wire-обёрток контракта v0 — `ChatWireEntity` / `ChatsWireEntity` / `MessageWireEntity` / `MessagesWireEntity` / `UploadTicketWireEntity` / `DownloadTicketWireEntity`. Моки собирают конверт напрямую (не через `fromJson`); транспорт делает то же — `Real*RemoteDataSource` строят `ResponseEntity` явными парсерами (`ChatsWireEntity.fromJson` и т. п. передаются аргументом в хелперы `toEnvelope` / `toWrappedEnvelope` из `lib/data/remote/datasource/real/socket_envelope.dart`; вызовы — в `real_chat_remote_data_source.dart`, `real_message_remote_data_source.dart` и `real_file_remote_data_source.dart` той же папки), — поэтому диспетчер `EntityConverter.fromJson` прогоняют только round-trip-тесты. Незарегистрированный `T` по-прежнему бросает `ArgumentError` — «нет конвертера» остаётся явной ошибкой.
 
 ---
 
@@ -705,65 +705,109 @@ class ItemMapper extends BaseMapper<ItemEntity, ItemModel, dynamic, dynamic> {
 
 > Слой данных **не** заводит типизированную иерархию исключений (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило данного блюпринта, см. [04-data-layer.md](04-data-layer.md) §5). DAO **не** оборачивает ошибки в типизированный `DaoException`: при сбое хранилища он бросает **сырое** исключение Sembast (его поймает catch-all-ветка `execute` → `RepositoryException.unknown`), а отсутствие записи / ошибку парсинга отдаёт как `null`. Решение «cache-miss → `notFound`» принимает **callback репозитория**, проверяя `null` и явно возвращая `RepositoryResult.error(exception: RepositoryException.notFound)` (см. §11c), а не DAO.
 
-### 9a. `AppDatabase` — env-scoped (Dev/Prod = IO, Test = memory)
+### 9a. `AppDatabase` — env-scoped (Dev/Prod = IO под ключом локальной базы, Test = memory)
 
 **Целевой путь:** `lib/data/local/app_database.dart`
 
 ```dart
+import 'dart:io';
+
 import 'package:injectable/injectable.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:sembast/sembast.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/vault_codec.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:sembast/sembast_io.dart';
 import 'package:sembast/sembast_memory.dart';
 
 abstract class AppDatabase {
   Future<Database> get db;
 
+  /// Closes the database when it is open. The next [db] opens it again.
+  Future<void> close();
+
+  /// Closes the database and deletes it. On the disk that is every database
+  /// sealed under the local-data key, the other environment's too: it runs
+  /// when the key goes (a logout, data whose key is lost), and the key is
+  /// shared ([AppDataRoot.databaseFiles]).
   Future<void> clearEntireDatabase();
 }
 
-@LazySingleton(as: AppDatabase, env: [Environment.prod])
-class AppDatabaseProd implements AppDatabase {
-  static const String _dbName = 'app.db';
+/// The database on the disk (phase 048): in the app's data folder, every line
+/// of it sealed under the local-data key ([VaultCodec]), opened only once the
+/// key is in the module. Opened under another key it does not open at all
+/// (`DatabaseException.invalidCodec`), which the start reads as data whose
+/// key is gone.
+abstract class _DiskAppDatabase implements AppDatabase {
+  _DiskAppDatabase(this._vault, this._name);
 
-  Database? _database;
+  final DeviceVault _vault;
+  final String _name;
+
+  /// The opening, shared by everyone who asks while it runs, and forgotten
+  /// when it fails: a vault that could not open now may open on the next ask.
+  Future<Database>? _opening;
 
   @override
-  Future<Database> get db async => _database ??= await _initDb();
+  Future<Database> get db => _opening ??= _open().catchError((Object error, StackTrace stackTrace) {
+    _opening = null;
+    Error.throwWithStackTrace(error, stackTrace);
+  });
 
-  Future<Database> _initDb() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return databaseFactoryIo.openDatabase('${dir.path}/$_dbName');
+  Future<Database> _open() async {
+    await _vault.ensureOpen();
+    return databaseFactoryIo.openDatabase(await AppDataRoot.pathOf(_name), codec: VaultCodec.sembast);
+  }
+
+  @override
+  Future<void> close() async {
+    final opening = _opening;
+    _opening = null;
+    if (opening == null) return;
+    try {
+      await (await opening).close();
+    } on Object {
+      // An opening that failed has nothing to close.
+    }
   }
 
   @override
   Future<void> clearEntireDatabase() async {
-    final dir = await getApplicationDocumentsDirectory();
-    await databaseFactoryIo.deleteDatabase('${dir.path}/$_dbName');
-    _database = null;
+    await close();
+    final own = await AppDataRoot.pathOf(_name);
+    // Every other database file goes first: the other environment's, sealed
+    // under the same key, and the compaction files Sembast leaves. Left behind,
+    // one would read as data whose key is lost to every launch of either
+    // environment, and the wipe of neither would delete it: no database would
+    // open on this device again, nor would a new key ever be made.
+    for (final path in await AppDataRoot.databasePaths()) {
+      if (path == own) continue;
+      try {
+        final file = File(path);
+        if (file.existsSync()) await file.delete();
+      } on FileSystemException catch (error) {
+        // The type only: the message names the path. Best effort, file by
+        // file - one that will not go must not keep the rest; a launch that
+        // still finds it retires it again.
+        logRepository.error(target: this, error: error.runtimeType);
+      }
+    }
+    // This one last. Until it goes, a read that races the wipe finds a
+    // database with no key and opens nothing; once it has gone, the next read
+    // makes a new key and a new database - and nothing after this deletes them
+    // from under it.
+    await databaseFactoryIo.deleteDatabase(own);
   }
 }
 
+@LazySingleton(as: AppDatabase, env: [Environment.prod])
+class AppDatabaseProd extends _DiskAppDatabase {
+  AppDatabaseProd(DeviceVault vault) : super(vault, 'app.db');
+}
+
 @LazySingleton(as: AppDatabase, env: [Environment.dev])
-class AppDatabaseDev implements AppDatabase {
-  static const String _dbName = 'app_dev.db';
-
-  Database? _database;
-
-  @override
-  Future<Database> get db async => _database ??= await _initDb();
-
-  Future<Database> _initDb() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return databaseFactoryIo.openDatabase('${dir.path}/$_dbName');
-  }
-
-  @override
-  Future<void> clearEntireDatabase() async {
-    final dir = await getApplicationDocumentsDirectory();
-    await databaseFactoryIo.deleteDatabase('${dir.path}/$_dbName');
-    _database = null;
-  }
+class AppDatabaseDev extends _DiskAppDatabase {
+  AppDatabaseDev(DeviceVault vault) : super(vault, 'app_dev.db');
 }
 
 @LazySingleton(as: AppDatabase, env: [Environment.test])
@@ -774,6 +818,13 @@ class AppDatabaseTest implements AppDatabase {
 
   @override
   Future<Database> get db async => _database ??= await databaseFactoryMemory.openDatabase(_dbName);
+
+  @override
+  Future<void> close() async {
+    final open = _database;
+    _database = null;
+    await open?.close();
+  }
 
   @override
   Future<void> clearEntireDatabase() async {
@@ -902,7 +953,7 @@ class ItemDao {
 
 ## 10. Обработка ошибок слоя данных — без типизированной иерархии исключений
 
-> **Правило данного блюпринта:** слой данных **не** заводит собственную иерархию типизированных исключений — `ApiException`, `DaoException` и `BaseDomainExceptionHelper` намеренно отсутствуют. Единственный механизм — тонкий mixin `BaseRepositoryHelper.execute<TD>()` (см. §11): он оборачивает операцию репозитория в guarded try/catch, **обязательно** логирует через `LogRepository` и мапит ошибки в доменный `RepositoryException`. Веток **три**: уже смапленный доменный сбой (`on BaseRepositoryException`) проходит насквозь неразбавленным, `DioException` мапится по типу соединения и HTTP-статусу (`_mapDioException`), всё остальное → `unknown`. Конкретный доменный код callback может вернуть и сам — явным `return RepositoryResult.error(exception: RepositoryException.<code>)` (например `notFound` при cache-miss) либо бросив его через `unwrapEnvelope` (§11b). Полное описание — в [04-data-layer.md](04-data-layer.md) §5; шаблон `RepositoryException`-enum — в §3e выше.
+> **Правило данного блюпринта:** слой данных **не** заводит собственную иерархию типизированных исключений — `ApiException`, `DaoException` и `BaseDomainExceptionHelper` намеренно отсутствуют. Единственный механизм — тонкий mixin `BaseRepositoryHelper.execute<TD>()` (см. §11): он оборачивает операцию репозитория в guarded try/catch, **обязательно** логирует через `LogRepository` и мапит ошибки в доменный `RepositoryException`. Веток **четыре**: уже смапленный доменный сбой (`on BaseRepositoryException`) проходит насквозь неразбавленным, мёртвый канал (`on SocketUnavailableException`) становится `connection`, `DioException` мапится по типу соединения и HTTP-статусу (`_mapDioException`), всё остальное → `unknown`. Конкретный доменный код callback может вернуть и сам — явным `return RepositoryResult.error(exception: RepositoryException.<code>)` (например `notFound` при cache-miss) либо бросив его через `unwrapEnvelope` (§11b). Полное описание — в [04-data-layer.md](04-data-layer.md) §5; шаблон `RepositoryException`-enum — в §3e выше.
 
 ---
 
@@ -926,11 +977,12 @@ abstract class LogRepository {
 
 **Целевой путь:** `lib/data/exception/base_repository_helper.dart`
 
-Mixin оборачивает операцию в try/catch, **обязательно логирует через `LogRepository`** и мапит ошибки в доменный `RepositoryException`. `executionFunction` возвращает **уже-обёрнутый** `RepositoryResult<TD>` (callback заканчивается `return RepositoryResult.success(data: …)` или `return RepositoryResult.error(exception: RepositoryException.<code>)`). Никакого `on BaseDomainExceptionHelper`, никакого `ApiException` / `DaoException` — три catch-ветки плюс хелпер разворачивания конверта.
+Mixin оборачивает операцию в try/catch, **обязательно логирует через `LogRepository`** и мапит ошибки в доменный `RepositoryException`. `executionFunction` возвращает **уже-обёрнутый** `RepositoryResult<TD>` (callback заканчивается `return RepositoryResult.success(data: …)` или `return RepositoryResult.error(exception: RepositoryException.<code>)`). Никакого `on BaseDomainExceptionHelper`, никакого `ApiException` / `DaoException` — четыре catch-ветки плюс хелпер разворачивания конверта.
 
 ```dart
 import 'package:dio/dio.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -946,6 +998,12 @@ mixin BaseRepositoryHelper {
       // `unknown` by the catch-all.
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: e);
+    } on SocketUnavailableException catch (e, stackTrace) {
+      // The live channel is down, or a command went unanswered. Without this
+      // branch it lands in the catch-all as `unknown`, and every cache fallback
+      // guarded on `connection` becomes unreachable code.
+      logRepository.error(target: this, error: e, stackTrace: stackTrace);
+      return RepositoryResult<TD>.error(exception: RepositoryException.connection);
     } on DioException catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: _mapDioException(e));
@@ -1251,9 +1309,9 @@ class ApiClient {
 
 > На non-2xx Dio бросает `DioException` — он пробрасывается до `DioException`-ветки `execute`, где `_mapDioException` (§11b) переводит его в доменный код **по типу и HTTP-статусу**: таймауты и `connectionError` → `connection`; `401` → `unauthenticated`, `403` → `authentication`, `404` → `notFound`, прочие HTTP → `internal`. Плоского «всё в `internal`» нет. API-класс **не** мапит в типизированный `ApiException` (его нет — см. §10) и **не** заводит собственный `_mapDioException`: маппинг живёт единственный раз в `BaseRepositoryHelper`. Сохраняем паттерн `RequestBuilder`/`RequestBuilderHelper`.
 
-> Транспорт выбран: контракт v0 ходит по **WebSocket-конверту**, и сам конвертный клиент приехал с феатурой 026. Защита канала построена фазой **036**: `socket_channel_factory.dart` передаёт в `IOWebSocketChannel.connect(customClient:)` единственный на процесс `HttpClient` из `PinnedHttpClient` — с `SecurityContext(withTrustedRoots: false)` и проверкой отпечатка **листа** предъявленной цепочки (`SecureSocket.peerCertificate`) внутри `HttpClient.connectionFactory`. Схема всегда `wss`, адрес и порт приезжают ссылкой спаривания, а не из сборки. REST остаётся **только** для блобов — `file.uploadBegin` → `PUT` → `message.send{attachment:{file_id}}` и `file.downloadBegin` → `GET` с `Range` (одноразовые 10-минутные токены). Поэтому Dio-обвязка ниже — это путь загрузки/скачивания файлов, а не основной канал команд. Схема авторизации в интерсепторе (`Authorization: Bearer <token>`, `getUserAuthIdToken`) остаётся **примером**: аутентификация/пейринг — это stage 2 контракта, он ещё не закрыт. У NOX **один** бэкенд-хост, поэтому `ApiClient` несёт **единственный** Dio/host (`initBase` / `baseClient`); второго хоста нет.
+> Транспорт выбран: контракт v0 ходит по **WebSocket-конверту**, и сам конвертный клиент приехал с феатурой 026. Каждое соединение — канал нативного модуля `packages/nox_tor`: `socket_channel_factory.dart` передаёт в `IOWebSocketChannel.connect(customClient:)` клиент сокета из `ChannelHttpClient`, Dio получает его клиент передач (`transferClient`), и у обоих `HttpClient.connectionFactory` открывает канал — TCP или поток Tor → TLS 1.3 → проверка `POST /auth` → `POST /auth2` против ключа сервера из ссылки спаривания — и отдаёт готовый `ChannelSocket` ([14-networking-and-auth.md](14-networking-and-auth.md) §6.0). Схема всегда `wss`/`https`; адрес, порт и ключ сервера приезжают ссылкой спаривания, а не из сборки. REST остаётся **только** для блобов — `file.uploadBegin` → `PUT` → `message.send{attachment:{file_id}}` и `file.downloadBegin` → `GET` с `Range` (одноразовые 10-минутные токены). Поэтому Dio-обвязка ниже — это путь загрузки/скачивания файлов, а не основной канал команд. Схема авторизации в интерсепторе (`Authorization: Bearer <token>`, `getUserAuthIdToken`) остаётся **примером**: соединение аутентифицирует канал, доступ устройство получает спариванием (контракт §8A), и заголовков авторизации контракт v0 не несёт. У NOX **один** бэкенд-хост, поэтому `ApiClient` несёт **единственный** Dio/host (`initBase` / `baseClient`); второго хоста нет.
 
-> **Сверка с кодом.** Шаблон выше — целевая форма со static-фабрикой по пути `lib/data/remote/api/base/api_client.dart`. Реальный `ApiClient` живёт по плоскому пути `lib/data/remote/api_client.dart` и остаётся **тонкой** `@lazySingleton`-обёрткой над `Dio` (ctor `ApiClient(this._config) : dio = Dio(BaseOptions(connectTimeout: ..., receiveTimeout: ...))`, без static-фабрик), но уже несёт идемпотентный `initBase()`: он ставит `baseUrl` из `AppConfig.apiUrl` и **один раз** добавляет `AuthInterceptor` (феатура 019/S5). Обвязка **инертна**: `initBase()` из кода приложения не вызывается и ни один data source `ApiClient` не инжектит — после DI-флипа (феатура 026) команды идут WS-конвертом, а Dio ждёт файловой цепочки (феатура 028). При этом `AppConfig.apiUrl` уже **не** `null`: stage-флейвор несёт адрес локального `noxd` (`config/stage.json`, ключ `app.apiUrl`), и по нему открывает сокет `LiveSessionStarter`; в prod он по-прежнему `null`.
+> **Сверка с кодом.** Шаблон выше — целевая форма со static-фабрикой по пути `lib/data/remote/api/base/api_client.dart`. Реальный `ApiClient` живёт по плоскому пути `lib/data/remote/api_client.dart` и остаётся **тонкой** обёрткой над `Dio`, зарегистрированной только в окружении `dev` (`@LazySingleton(env: [Environment.dev])`; ctor `ApiClient(this._config, this._channels) : dio = Dio(BaseOptions(connectTimeout: ..., receiveTimeout: ...))` — `AppConfigRepository` и `ChannelHttpClient`, без static-фабрик). Его идемпотентный `initBase({required String address})` ставит `baseUrl` на адрес соединения (`https://…`), вешает `IOHttpClientAdapter` на `ChannelHttpClient.transferClient` и **один раз** добавляет `AuthInterceptor` (феатура 019/S5). Зовёт его только `LiveSessionStarter` — при старте с адресом из ссылки спаривания, затем на каждом приветствии с адресом пути, по которому оно пришло; `AppConfig.apiUrl` его источником не является. Инжектит `ApiClient` один data source — `RealFileRemoteDataSource` (байты вложений, феатура 028); команды идут WS-конвертом (DI-флип, феатура 026).
 
 ### 12b. `BaseApiRepository` + `RequestBuilder<T>` + `RequestBuilderHelper`
 
@@ -1265,7 +1323,8 @@ import 'package:nox_app/data/remote/api/base/api_client.dart';
 
 abstract class BaseApiRepository {
   /// The single NOX backend host (noxd). REST carries blob upload/download only;
-  /// commands ride the WS envelope. Auth headers stay TBD until contract stage 2.
+  /// commands ride the WS envelope. No auth headers: the channel's check
+  /// (POST /auth, POST /auth2) authenticates every connection (contract v0 §1).
   /// One host only; there is no second client.
   dio.Dio get baseClient => ApiClient.initBase();
 }
@@ -1358,7 +1417,7 @@ class GetItemsApiRequestBuilder extends RequestBuilder<GetItemsConfig> {
 
 > Путь эндпоинта (`v1/items`) и имена query-параметров (`page` / `page_size` / `search`) принадлежат **замороженному** верификационному слайсу `Item` — это не продуктовый REST NOX. Реальные команды (в т. ч. список чатов и история сообщений) ходят WS-конвертом контракта v0 (феатура 026), а REST остаётся только под загрузку/скачивание блобов. Переиспользуется здесь именно паттерн: request builder + обёртка ответа в `ResponseEntity`.
 
-> **Сверка со скелетом.** Шаблон выше (`GetItemsApi extends BaseApiRepository with RequestBuilderHelper` + отдельный `GetItemsApiRequestBuilder`) — целевая форма реальной сетевой фичи. В коде `lib/data/remote/api/item/get_items_api.dart` — самодостаточный `@lazySingleton`-**мок** (без `BaseApiRepository`, без `RequestBuilderHelper`, без `buildPath`): он синтезирует страницы `ItemEntity` (всего 47 записей) и возвращает `ResponseEntity<ItemsEntity>(success: true, data: ...)`; репозиторий добирается до него через `MockItemRemoteDataSource` (seam 016). Дерева `lib/data/remote/request_builder/` и `base_api_repository.dart` в коде **нет** — не потому, что бэкенд не выбран (он выбран), а потому что продуктовые команды ходят WS-конвертом (феатура 026), и REST-обвязка понадобится только под блобовые upload/download-эндпоинты.
+> **Сверка со скелетом.** Шаблон выше (`GetItemsApi extends BaseApiRepository with RequestBuilderHelper` + отдельный `GetItemsApiRequestBuilder`) — целевая форма реальной сетевой фичи. В коде `lib/data/remote/api/item/get_items_api.dart` — самодостаточный `@lazySingleton`-**мок** (без `BaseApiRepository`, без `RequestBuilderHelper`, без `buildPath`): он синтезирует страницы `ItemEntity` (всего 47 записей) и возвращает `ResponseEntity<ItemsEntity>(success: true, data: ...)`; репозиторий добирается до него через `MockItemRemoteDataSource` (seam 016). Дерева `lib/data/remote/request_builder/` и `base_api_repository.dart` в коде **нет**: продуктовые команды ходят WS-конвертом (феатура 026), а единственный REST — байты вложений — `RealFileRemoteDataSource` шлёт прямо через `ApiClient.dio` (`PUT`/`GET` по `/files/<token>`, фазы 028 и 043), без `BaseApiRepository` и `RequestBuilder`.
 
 ---
 
@@ -1822,7 +1881,7 @@ class _ItemListPageState extends BaseStatePage<ItemListPage> {
 - Рендер — `switch (state)` по Freezed-вариантам (`Initializing` / `Error` / `Initialized`).
 - Список — `PagedListView<String, T>.separated` (v5 stateless, `K = String = item id`: `state: pagingState`, `fetchNextPage` диспетчит событие, не фетчит). Pull-to-refresh — `AppRefreshIndicatorWidget`, разрешающий completer.
 
-> **Сверка со скелетом.** Шаблон выше — целевая форма навигируемой страницы (`routeName` + `route()` + собственный `Scaffold` + pull-to-refresh + навигация по тапу; Принцип 5.1 / инвариант 3a). Реальный `lib/presentation/pages/item_list_page/item_list_page.dart` в скелете Feature-001 — verification-харня на мок-данных, отрендеренная как тело таба Chats **внутри** `AppShell` (свой `Scaffold` не заводит, `routeName`/`route()` нет, без pull-to-refresh/навигации). Это допустимое упрощение скелета (placeholder-страницы пока stateless, у `AppShell` нет своего BLoC) до прихода реальных фич; целевая форма — шаблон выше.
+> **Сверка с кодом.** Шаблон выше — целевая форма навигируемой страницы (`routeName` + `route()` + собственный `Scaffold` + pull-to-refresh + навигация по тапу; Принцип 5.1). Реальный `lib/presentation/pages/item_list_page/item_list_page.dart` — verification-харня Feature-001 на мок-данных, рассчитанная на тело таба внутри скелетного `AppShell` (свой `Scaffold` не заводит, `routeName`/`route()` нет, без pull-to-refresh/навигации); ни она, ни `AppShell` в приложении не смонтированы — живая оболочка `TabBarShell` хостит продуктовые `ChatsListPage` и `SettingsRootPage`. Продуктовый список (`ChatsListPage`) оборачивает `PagedListView` стоковым `RefreshIndicator`; виджета `AppRefreshIndicatorWidget` (§15d) в `lib/` нет.
 
 ### 15c. Страница с параметром — `ItemDetailsPage`
 
@@ -2014,6 +2073,8 @@ LogRepository get logRepository => getIt<LogRepository>();
 ItemRepository get itemRepository => getIt<ItemRepository>();
 ```
 
+> **Сверка с кодом.** Реальный `global_aliases.dart` держит ещё `settingsRepository`, `chatRepository`, `appStateRepository`, `authRepository`, `sessionRepository`, `cameraPermissionService`, `notificationPermissionService` и `qrImageDecodeService`. BLoC-и обычно резолвят свои зависимости полями `getIt<X>()`, а не через алиасы; конструкторной инъекции нет ни там, ни там.
+
 ### 17d. `feature_flags.dart`
 
 **Целевой путь:** `lib/general/feature_flags.dart`
@@ -2115,18 +2176,19 @@ abstract final class AppTextStyleTokens {
 ```dart
 import 'package:flutter/services.dart';
 
-/// System UI overlay (status/nav bar) styles per brightness.
+/// System UI overlay (status bar) styles per brightness. Nav-bar fields are
+/// intentionally omitted (Android-only; NOX targets five platforms).
 abstract final class AppOverlayStyleTokens {
   const AppOverlayStyleTokens._();
 
   static const SystemUiOverlayStyle light = SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
+    statusBarColor: Color(0x00000000),
     statusBarIconBrightness: Brightness.dark,
     statusBarBrightness: Brightness.light,
   );
 
   static const SystemUiOverlayStyle dark = SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
+    statusBarColor: Color(0x00000000),
     statusBarIconBrightness: Brightness.light,
     statusBarBrightness: Brightness.dark,
   );
@@ -2145,7 +2207,7 @@ abstract final class NoxIcons {
 
   static SvgGenImage get forum => Assets.svg.icons.forum; // Chats tab — outlined
   static SvgGenImage get forumFill => Assets.svg.icons.forumFill; // Chats tab — filled
-  // … 41 getters total — see lib/design/nox_icons.dart
+  // … 58 getters total — see lib/design/nox_icons.dart
 }
 ```
 
@@ -2194,6 +2256,7 @@ void main() {
 }
 ```
 
+> **Сверка с кодом.** Шаблон — минимальная форма. Реальный `lib/main.dart` держит порядок, который несёт нагрузку: `AppDataRoot.useLocalFolderOnWindows()` (до любого вопроса о папке) → `configureDependencies(env)` → `getIt.allReady()` → `AppConfigRepository.initialize(flavorType:)` → `sessionRepository.sweepLegacyKeys()` → `runApp(const AppRoot())` с `appStateRepository.holdUntil(_start())`. `_start()` идёт под сплэшем: метка «вне бэкапов» → удаление открытых данных прошлых сборок → временные копии → `authRepository.openLocalData()` (база под ключом локальной базы, фича 048) → `retireLegacySession()` → копии выбора файлов, которых не держит очередь → `LiveSessionStarter.start()` → `OutboxService.start()`. Первая навигация ждёт конец `_start()`.
 > `AppFlavor.getFlavor()` читает `String.fromEnvironment('app.flavor')`; маппинг `AppFlavorType.prod → Environment.prod`, `AppFlavorType.stage → Environment.dev` — в `09-build-and-secrets-infra.md`.
 > `setPreferredOrientations([portraitUp])` — лок ориентации для iOS/Android; десктоп (Windows / macOS / Linux) этот вызов игнорирует (одно окно, ориентацией не управляет). На все пять платформ значения flavor приходят через `--dart-define-from-file` (см. `09-build-and-secrets-infra.md`).
 > Отдельного BLoC-обозревателя нет: логирование ошибок уже происходит на уровне репозиториев через обязательный `LogRepository` (`BaseRepositoryHelper.execute` всегда логирует), а ошибки BLoC-обработчиков оборачиваются `BaseBloc.executeLogic` — поэтому отдельный `Bloc.observer` не нужен.
@@ -2214,7 +2277,7 @@ void main() {
 - [ ] `BaseMapper<E, M, AdResult, AdParam>` + mapper `@lazySingleton`, вся коэрция enum/DateTime внутри него.
 - [ ] Env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory) + реактивный DAO (`watch`/`onSnapshots`/`transaction`/`mutate`); **без типизированного `DaoException`** — сырой throw при сбое хранилища, `null`/no-op при отсутствии записи.
 - [ ] Слой данных **без** типизированной иерархии исключений: нет `ApiException`, нет `DaoException`, нет `BaseDomainExceptionHelper` — единственный механизм — `BaseRepositoryHelper.execute` (`BaseRepositoryException` — насквозь, `DioException` — через `_mapDioException`, прочее → `unknown`).
-- [ ] `BaseRepositoryHelper.execute<TD>(Function executionFunction)` (`with BaseRepositoryHelper` только, без `on`-ограничения; три catch-ветки; callback возвращает уже-обёрнутый `RepositoryResult`) + `unwrapEnvelope<TD>(response, what)` с `RepositoryException.fromWireCode`, с **обязательным** `LogRepository.error` (никакого `print`) + impl `@LazySingleton(as: Interface, env:[dev,prod,test])` с DAO-stream-subscribed `BehaviorSubject` и `@disposeMethod`; пагинированный список — network-only.
+- [ ] `BaseRepositoryHelper.execute<TD>(Function executionFunction)` (`with BaseRepositoryHelper` только, без `on`-ограничения; четыре catch-ветки — доменная насквозь, `SocketUnavailableException` → `connection`, `DioException` по типу/статусу, прочее → `unknown`; callback возвращает уже-обёрнутый `RepositoryResult`) + `unwrapEnvelope<TD>(response, what)` с `RepositoryException.fromWireCode`, с **обязательным** `LogRepository.error` (никакого `print`) + impl `@LazySingleton(as: Interface, env:[dev,prod,test])` с DAO-stream-subscribed `BehaviorSubject` и `@disposeMethod`; network-only — только замороженный список `Item`-харни (продуктовые списки — read-through через DAO, `07-pagination.md`).
 - [ ] Dio `ApiClient` + `RequestBuilder<T>` + `RequestBuilderHelper` + `GetItemsApi` (обёртка в `ResponseEntity`).
 - [ ] Freezed BLoC-трио: `<Feature>ListEvent` (`@freezed sealed`: `Initialize`/`LoadItems`/`RefreshRequested`/`UpdateSearchQuery`/`ShowItemDetails`), `<Feature>ListState` (`@freezed sealed`: `Initializing`/`Initialized{pagingState,items,nextPage,isLastPage,…}` — без поля `total`/`Error`), `<Feature>ListBloc extends BaseBloc` с `applyPage`, `PublishSubject` side-effects, restartable-поиском. Никакого ручного `Equatable`.
 - [ ] `PagingStateExt.applyPage` (v5 stateless, generic over `K = String = item id`, возвращает запись `(updatedList, pagingState, nextPage)`, принимает `(List<T>, PageMetadata)`; конец списка — `!meta.hasMore`, один helper на оба пути контракта v0); ошибки идут в `pagingState.error`.

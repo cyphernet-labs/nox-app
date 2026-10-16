@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -12,21 +15,48 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/config"
+	"nox.app/client-backend/internal/connauth"
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
+	"nox.app/client-backend/internal/vault"
 )
+
+// testDataKey is the data key every test database and files directory built
+// by openStack is encrypted with (047). Fixed, so a test that stops a stack
+// and starts another over the same files opens them again.
+var testDataKey = bytes.Repeat([]byte{0x47}, 32)
+
+// testKDF are Argon2id costs a test can afford many times over: what is under
+// test around the lock is the lock, not Argon2's price. The production costs
+// have a test of their own in the vault package.
+var testKDF = vault.Params{MemoryKiB: 64, Iterations: 1, Parallelism: 1}
+
+// testPassword is the password tests set and enter.
+const testPassword = "correct horse battery"
 
 // newTestServer builds the full stack over a temp database and returns the
 // running httptest server plus the Server for direct inspection.
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	return newTestServerLogging(t, nil)
+}
+
+// newTestServerWith is newTestServer with tweaks applied to the Server before
+// anything serves - fixing the machine's interfaces, moving its bind address,
+// scaling a timeout.
+func newTestServerWith(t *testing.T, tweak ...func(*Server)) (*httptest.Server, *Server) {
+	t.Helper()
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"), nil, tweak...)
+	t.Cleanup(closeAll)
+	return ts, srv
 }
 
 // newTestServerLogging is newTestServer with somewhere to read the log from.
@@ -44,11 +74,11 @@ func newTestServerLogging(t *testing.T, logger *slog.Logger) (*httptest.Server, 
 // the whole stack against the same file.
 //
 // tweak runs on the Server after New and before anything serves - where a test
-// swaps in a fake tor, fixes the machine's interfaces or scales a timeout.
+// fixes the machine's interfaces or scales a timeout.
 func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Server)) (*httptest.Server, *Server, func()) {
 	t.Helper()
 
-	dbs, err := db.Open(path)
+	dbs, err := db.Open(path, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -57,10 +87,19 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
-	bl, err := blob.Open(path + "-files")
+	bl, err := blob.Open(path+"-files", testDataKey)
 	if err != nil {
 		_ = dbs.Close()
 		t.Fatalf("blob.Open: %v", err)
+	}
+
+	// The main entry's socket first, so the configured address is the real
+	// one: links carry it, and a link with port 0 is one no parser reads.
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = bl.Close()
+		_ = dbs.Close()
+		t.Fatalf("listen: %v", err)
 	}
 
 	h := hub.New()
@@ -74,7 +113,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
+	cfg := config.Config{Addr: raw.Addr().String(), DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
 	st := store.New(dbs.Read, dbs.Write)
 	// Mirror Run: the store identity is minted in Go once the schema exists,
 	// and the greeting hands it to clients.
@@ -82,19 +121,26 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		t.Fatalf("EnsureJournal: %v", err)
 	}
 	// Mirror Run again: the machine's key is settled before anything serves,
-	// because the certificate is built from it.
-	machine, err := st.EnsureServerIdentity(t.Context())
-	if err != nil {
+	// because the channel proves it on every connection.
+	if _, err := st.EnsureServerIdentity(t.Context(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	serverKey, _, err := st.ServerKey(t.Context(), testBox)
+	if err != nil {
+		t.Fatalf("ServerKey: %v", err)
 	}
 	srv := New(cfg, st, h, bl, logger)
 	// The machine "has" no interfaces unless a test says otherwise: the
 	// address list must not depend on the network of whoever runs the suite.
 	srv.listIPs = func() []net.IP { return nil }
 	srv.pingInterval = 50 * time.Millisecond
-	// Long write timeout keeps slow-consumer tests deterministic: the
-	// overflow drop (policy violation) must win over a ping/write timeout.
-	srv.writeTimeout = 30 * time.Second
+	// The request sweep at test speed: a request whose time ran out closes
+	// within a few tens of milliseconds rather than seconds.
+	srv.requestSweep = 20 * time.Millisecond
+	// The write timeout stays the slow path's 30 s: slow-consumer tests rely
+	// on it, because the overflow drop (policy violation) must win over a
+	// ping or write timeout.
+	//
 	// Mirror Run's startup order: the orphan sweep runs before endpoints open.
 	if err := srv.sweepOrphans(context.Background(), time.Now().Add(-24*time.Hour).Unix()); err != nil {
 		t.Fatalf("startup sweep: %v", err)
@@ -104,12 +150,19 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	}
 	// Mirror Run again: the first address snapshot exists before anything
 	// serves, and the watcher - the only sender of server.addresses - runs.
-	srv.refreshAddresses()
+	srv.refreshAddresses(t.Context())
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
 		srv.runAddressWatcher(watchCtx)
+	}()
+	// And the request sweeper, which Run starts beside the watcher (046).
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		srv.runRequestSweeper(sweepCtx)
 	}()
 
 	dispDone := make(chan struct{})
@@ -118,32 +171,22 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		_ = srv.runDispatcher(hubCtx)
 	}()
 
-	// TLS through the server's OWN config, not httptest.NewTLSServer.
-	//
-	// NewTLSServer installs a stock certificate of its own and hands back a
-	// client that trusts it, which would make every test here pass over a
-	// transport the product never uses - and would leave this feature's one
-	// real question, whether the presented key is the pinned one, untested.
-	tlsCfg, err := srv.serverTLSConfig(t.Context())
+	// The channel exactly as Run builds it: TLS on a throwaway certificate,
+	// then the check, and only then the handler. NOT httptest.NewTLSServer: its
+	// stock TLS would put the handler behind something the product never uses,
+	// and leave this feature's one real question - who proved which key -
+	// untested.
+	tlsCfg, err := channelTLSConfig(time.Now())
 	if err != nil {
-		t.Fatalf("serverTLSConfig: %v", err)
+		t.Fatalf("channelTLSConfig: %v", err)
 	}
-	ts := httptest.NewUnstartedServer(srv.Handler())
-	ts.TLS = tlsCfg
-	// Transport-level complaints go nowhere: several tests refuse a handshake
-	// on purpose, and http.Server would print each one to stderr.
-	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
-	ts.Config.RegisterOnShutdown(srv.CloseConnections)
-	ts.StartTLS()
-	// StartTLS hands back a client trusting its own certificate as a root, and
-	// ours is a leaf that is nobody's authority. Replace the transport with the
-	// pin - the same check the app runs, so the tests dial the way the product
-	// does.
-	ts.Client().Transport = &http.Transport{TLSClientConfig: PinnedTLSConfig(machine.Fingerprint)}
+	ts := serveChannel(t, srv, raw, tlsCfg, serverKey, &testDevices{})
 	closeAll := func() {
 		ts.Close()
 		stopWatch()
 		<-watchDone
+		stopSweep()
+		<-sweepDone
 		stopHub()
 		<-hubDone
 		<-dispDone
@@ -153,33 +196,204 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	return ts, srv, closeAll
 }
 
-func TestHealthServes200(t *testing.T) {
-	ts, _ := newTestServer(t)
+// serveChannel serves srv's handler behind the channel on raw, the way Run
+// serves the main port, and returns an httptest.Server whose client dials the
+// way the app does. ts.URL is https: it names the TLS the channel carries, and
+// the client's transport is the one that knows how to open it.
+func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, key securebox.PrivateKey, devices *testDevices) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	_ = ts.Listener.Close()
+	ts.Listener = srv.newChannelListener(raw, cfg, key, srv.channelTimeout)
+	srv.configureMain(ts.Config)
+	// Transport-level complaints go nowhere: several tests break connections
+	// on purpose, and http.Server would print each one to stderr.
+	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
+	ts.Config.RegisterOnShutdown(srv.CloseConnections)
+	ts.Start()
+	ts.URL = "https://" + raw.Addr().String()
+	public, err := testBox.PublicKey(key)
+	if err != nil {
+		t.Fatalf("the server's public key: %v", err)
+	}
+	ts.Client().Transport = newTestChannel(raw.Addr().String(), public[:], devices)
+	return ts
+}
 
+// testChannel is every test server's client transport: TCP, TLS 1.3 that
+// checks no certificate, then POST /auth and POST /auth2 as a device against
+// the server's key - and only then HTTP. It is what the app's Rust module does,
+// and it is why ts.Client() and ts.URL go on working unchanged.
+type testChannel struct {
+	*http.Transport
+	addr      string
+	serverKey []byte
+	devices   *testDevices
+}
+
+// testDevices remembers which device the plain client presents: the last one
+// a helper paired or greeted. /files wants a PAIRED key on the connection, and
+// the tests that move bytes do it right after greeting - so the device that
+// just greeted is the one to send them as. Before any, it is a stranger.
+type testDevices struct {
+	mu       sync.Mutex
+	last     *device
+	stranger *device
+}
+
+func (d *testDevices) use(dev *device) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.last = dev
+}
+
+func (d *testDevices) current() (*device, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.last != nil {
+		return d.last, nil
+	}
+	if d.stranger == nil {
+		stranger, err := makeDevice()
+		if err != nil {
+			return nil, err
+		}
+		d.stranger = stranger
+	}
+	return d.stranger, nil
+}
+
+func newTestChannel(addr string, serverKey []byte, devices *testDevices) *testChannel {
+	ch := &testChannel{addr: addr, serverKey: serverKey, devices: devices}
+	ch.Transport = ch.transportAs(nil)
+	return ch
+}
+
+// transportAs dials every connection as d; nil means whichever device
+// testDevices names at the moment of the dial.
+func (ch *testChannel) transportAs(d *device) *http.Transport {
+	return &http.Transport{
+		DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			dev := d
+			if dev == nil {
+				var err error
+				if dev, err = ch.devices.current(); err != nil {
+					return nil, err
+				}
+			}
+			return dialChannel(ctx, ch.addr, ch.serverKey, dev.priv)
+		},
+	}
+}
+
+// clientAs is an HTTP client whose every connection proves d's key.
+func (ch *testChannel) clientAs(d *device) *http.Client {
+	return &http.Client{Transport: ch.transportAs(d)}
+}
+
+// channelOf is the channel transport of a test server.
+func channelOf(t *testing.T, ts *httptest.Server) *testChannel {
+	t.Helper()
+	ch, ok := ts.Client().Transport.(*testChannel)
+	if !ok {
+		t.Fatal("this test server's client does not dial the channel")
+	}
+	return ch
+}
+
+// dialChannel opens one channel as the device priv belongs to: everything a
+// device does before its first byte of HTTP of its own, and nothing else. The
+// returned connection is the checked TLS session with no deadline left on it.
+func dialChannel(ctx context.Context, addr string, serverKey []byte, priv securebox.PrivateKey) (net.Conn, error) {
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return channelOver(ctx, raw, serverKey, priv)
+}
+
+// channelOver runs the channel on a transport that is already open - a TCP
+// connection, or a stream through Tor - and closes it on any failure.
+func channelOver(ctx context.Context, raw net.Conn, serverKey []byte, priv securebox.PrivateKey) (net.Conn, error) {
+	var expected securebox.PublicKey
+	if len(serverKey) != len(expected) {
+		_ = raw.Close()
+		return nil, fmt.Errorf("the expected server key is %d bytes", len(serverKey))
+	}
+	copy(expected[:], serverKey)
+	tc := tls.Client(raw, testClientTLS())
+	if err := tc.HandshakeContext(ctx); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	checked, err := connauth.Initiate(ctx, tc, testBox, priv, raw.RemoteAddr().String(), expected)
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	if err := checked.SetDeadline(time.Time{}); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return checked, nil
+}
+
+// testClientTLS is the device's TLS: 1.3 only, no certificate check - the
+// certificate is technical, /auth and /auth2 decide - no SNI, since no name
+// is set, and no resumption.
+func testClientTLS() *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify:     true, //nolint:gosec // the channel check is the check; see the doc comment
+		MinVersion:             tls.VersionTLS13,
+		NextProtos:             []string{"http/1.1"},
+		SessionTicketsDisabled: true,
+	}
+}
+
+// serverKeyOf reads the machine's public key, as a link names it.
+func serverKeyOf(t *testing.T, srv *Server) []byte {
+	t.Helper()
+	id, err := srv.store.ServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	return id.PublicKey
+}
+
+// /health answers on the service page's listener and nowhere else (044): the
+// main port says nothing to anybody before the channel check, and a liveness
+// probe proves no key.
+func TestHealthServes200OnTheServicePageMux(t *testing.T) {
+	_, srv := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.StatusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); body != `{"status":"ok"}` {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestHealthIsNotOnTheMainPort(t *testing.T) {
+	ts, _ := newTestServer(t)
 	resp, err := ts.Client().Get(ts.URL + "/health")
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if string(body) != `{"status":"ok"}` {
-		t.Fatalf("body = %s", body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /health on the main port = %d, want 404", resp.StatusCode)
 	}
 }
 
 // readDB opens a second read handle over the server's own database file, so a
 // test can assert on rows the command surface does not expose. Same process,
-// so invariant 1 (one process per file) holds.
+// so invariant 1 (one process per file) holds. A harness server's database is
+// encrypted with testDataKey.
 func readDB(t *testing.T, srv *Server) *sql.DB {
 	t.Helper()
-	d, err := db.Open(srv.cfg.DBPath)
+	d, err := db.Open(srv.cfg.DBPath, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open for reading: %v", err)
 	}
@@ -187,101 +401,64 @@ func readDB(t *testing.T, srv *Server) *sql.DB {
 	return d.Read
 }
 
-// The startup line has to tell the two situations apart, because they ask
-// different things of the person reading it: a machine nobody has claimed is
-// about to get an owner, while one whose owner lost every device is about to
-// let that same owner back in. Before ownership was explicit the two were
-// indistinguishable and the message said "no owner yet" for both.
-func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "announce.db")
-	dbs, err := db.Open(path)
+// readWriteDB is readDB's writing twin, for the one thing a test needs it for:
+// leaving the database the way a hand edit or a partial restore would.
+func readWriteDB(t *testing.T, srv *Server) *sql.DB {
+	t.Helper()
+	d, err := db.Open(srv.cfg.DBPath, testDataKey)
 	if err != nil {
-		t.Fatalf("db.Open: %v", err)
+		t.Fatalf("db.Open for writing: %v", err)
 	}
-	t.Cleanup(func() { _ = dbs.Close() })
-	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
-		t.Fatalf("db.Migrate: %v", err)
-	}
-	st := store.New(dbs.Read, dbs.Write)
+	t.Cleanup(func() { _ = d.Close() })
+	return d.Write
+}
+
+// The startup line says where a link for a first device is and never what it
+// is (046, FR-005; 045, FR-022): the link is a way in, from anywhere since a
+// device can pair through the onion service, and a log is copied to places it
+// may not go. There is always a page to name: since 047 a server without one
+// does not start (TestAServerWithoutItsPageIsRefused), its password being
+// entered there. Once a device can reach the machine there is nothing to say.
+func TestTheStartupLineSaysWhereTheLinkIsAndNeverCarriesOne(t *testing.T) {
+	st := startStore(t)
 	ctx := context.Background()
-
-	fresh := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
-		t.Fatalf("announceClaim on a fresh store: %v", err)
+	if err := st.ApplyAddressParam(ctx, store.AddressOnion, testOnionAddr, testOnionAddr); err != nil {
+		t.Fatalf("ApplyAddressParam: %v", err)
 	}
-	if !strings.Contains(fresh.String(), "no owner yet") {
-		t.Fatalf("fresh store announced %q", fresh.String())
-	}
-
-	// Claim it, then take the device away - which is what logging out does.
-	token, err := st.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := st.Pair(ctx, token, "dev-a", "test", store.PairOptions{}, 100); err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
+	page := config.Config{Addr: "127.0.0.1:8080", StatusAddr: "127.0.0.1:8081"}
+	say := func(cfg config.Config) string {
+		t.Helper()
+		logs := &syncBuffer{}
+		if err := sayHowToPair(ctx, st, cfg, slog.New(ScrubLogs(slog.NewTextHandler(logs, nil)))); err != nil {
+			t.Fatalf("sayHowToPair: %v", err)
+		}
+		return logs.String()
 	}
 
-	owned := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(owned, nil))); err != nil {
-		t.Fatalf("announceClaim on an owned store: %v", err)
-	}
-	if strings.Contains(owned.String(), "no owner yet") {
-		t.Fatalf("a server that still has an owner claims to have none: %q", owned.String())
-	}
-	if !strings.Contains(owned.String(), "get back in") {
-		t.Fatalf("owned-but-empty store announced %q", owned.String())
-	}
-
-	// And the third: a store that holds the person but lost the marker. This is
-	// the state feature 037 traded the old refusal for, so it is the one line an
-	// operator reads while recovering. Ordering matters here - Owned implies
-	// HasPerson, so a switch that tested HasPerson first would swallow the case
-	// above and pass every other assertion in this test.
-	handle, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
-	}
-	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("forget the owner: %v", err)
-	}
-	_ = handle.Close()
-
-	stranded := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
-		t.Fatalf("announceClaim on a store with no marker: %v", err)
-	}
-	if !strings.Contains(stranded.String(), "sign in as the person it belongs to") {
-		t.Fatalf("a store that holds somebody announced %q", stranded.String())
-	}
-	for _, wrong := range []string{"no owner yet", "get back in"} {
-		if strings.Contains(stranded.String(), wrong) {
-			t.Fatalf("announced %q, which is the copy for another state: %q", wrong, stranded.String())
+	out := say(page)
+	for _, want := range []string{"no device can reach this server yet", "http://127.0.0.1:8081", "noxd link"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the line does not say %q:\n%s", want, out)
 		}
 	}
-}
-
-// mustIdentity mints or reads the machine identity startup settles first.
-func mustIdentity(t *testing.T, st *store.Store) store.ServerIdentity {
-	t.Helper()
-	id, err := st.EnsureServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
+	// Not even masked: no line is ever handed a link or the onion address.
+	for _, leak := range []string{"nox://pair/", "[link]", "[onion]"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("the line carries %q:\n%s", leak, out)
+		}
 	}
-	return id
-}
 
-// mustOwnership reads the snapshot startup would hand to announceClaim.
-func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
-	t.Helper()
-	state, err := st.ReadOwnershipState(context.Background())
+	now := time.Now().Unix()
+	link, err := st.IssueMachineLink(ctx, now)
 	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
+		t.Fatalf("IssueMachineLink: %v", err)
 	}
-	return state
+	if _, err := st.Pair(ctx, link.Token, "dev-a", "linux", now); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if out := say(page); out != "" {
+		t.Fatalf("a machine a device can reach still points at a link:\n%s", out)
+	}
 }
 
 // A startup that is going to abort must not rotate the journal on its way out.
@@ -290,7 +467,7 @@ func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
 // still has a way back, right up until something destroys it for them.
 func TestAnAbortedStartupDoesNotRotateTheJournal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "restore.db")
-	dbs, err := db.Open(path)
+	dbs, err := db.Open(path, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -306,7 +483,7 @@ func TestAnAbortedStartupDoesNotRotateTheJournal(t *testing.T) {
 	}
 
 	st := store.New(dbs.Read, dbs.Write)
-	if _, err := st.EnsureServerIdentity(ctx); err == nil {
+	if _, err := st.EnsureServerIdentity(ctx, testBox); err == nil {
 		t.Fatal("a store with people and no server identity was handed a new key")
 	}
 

@@ -54,6 +54,7 @@ class _ScriptedFiles implements FileRepository {
   Future<RepositoryResult<String>> upload({
     required String path,
     required String mime,
+    String? name,
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,

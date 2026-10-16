@@ -35,10 +35,13 @@ class QrScanBloc extends BaseBloc<QrScanEvent, QrScanState> {
   void _onDetected(Detected event, Emitter<QrScanState> emit) {
     // Single-shot: ignore everything after the first accepted code.
     if (state.decodedId != null) return;
-    // The QR carries a pairing link now, and the whole link is what the
-    // sign-in path needs: the address, the server key and the token travel
-    // together, so nothing is extracted out of it here.
-    if (PairingLink.tryParse(event.raw) == null) {
+    // The QR carries a pairing link, and the whole link is what the sign-in
+    // path needs: the addresses, the server key and the token travel
+    // together, so nothing is extracted out of it here. A link from a newer
+    // server is handed on as well: it is the person's link, and the sign-in
+    // screen says to update the app (FR-017) rather than this one calling it
+    // somebody else's code.
+    if (!PairingLink.isPairingLink(event.raw)) {
       // Foreign / unreadable QR — keep scanning, surface a one-shot inline error.
       emit(state.copyWith(invalid: true));
       return;

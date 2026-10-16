@@ -9,6 +9,7 @@ import 'package:nox_app/presentation/pages/file_view_page/bloc/file_view_bloc.da
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -22,6 +23,8 @@ import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
 import 'package:nox_app/presentation/widgets/media/app_video_player_widget.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart';
 
@@ -106,12 +109,14 @@ class _FileViewPageState extends State<FileViewPage> {
       return;
     }
     try {
-      // Real save (F2): the user picks a destination, then the file is copied there.
+      // Real save (F2): the user picks a destination, then the file is written there.
       final dest = await getIt<FilePickerService>().pickSaveLocation(suggestedName: widget.file.name);
       if (dest == null || !mounted) return; // cancelled
-      // Streamed copy — never materializes the whole file in RAM (Save is reachable for
+      // The PLAIN file (phase 048, FR-008): the copy on this device is sealed,
+      // and the place the person chose gets what they can open. Streamed a
+      // chunk at a time - never the whole file in RAM (Save is reachable for
       // any type, incl. large video/archive attachments).
-      await File(path).copy(dest);
+      await getIt<LocalFilesService>().saveTo(path: path, destination: dest);
       if (!mounted) return;
       showAppSnackBar(context, text: context.l10n.savedToDownloads);
     } catch (_) {
@@ -280,6 +285,30 @@ class _FileViewPageState extends State<FileViewPage> {
         path.isNotEmpty;
   }
 
+  /// Where the player goes: the player itself once its plain copy is made
+  /// (phase 048), what the screen has to say when it could not be, and the
+  /// player's own wait while it is being made.
+  Widget _player(BuildContext context, FileViewState state) {
+    final playback = state.playbackPath;
+    if (playback != null) return AppVideoPlayerWidget(key: const Key('video-player'), localPath: playback);
+    if (state.openFailed) {
+      final colorScheme = Theme.of(context).colorScheme;
+      return Padding(
+        key: const Key('file-open-error'),
+        padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s24),
+        child: Text(
+          context.l10n.fileOpenError,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colorScheme.error),
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s24),
+      child: AppSpinnerWidget(size: AppDimensionTokens.icon.lg),
+    );
+  }
+
   // ---- Shared file info (glyph + name + size [+ progress caption]) ------------
 
   Widget _info(BuildContext context, FileViewState state) {
@@ -293,15 +322,16 @@ class _FileViewPageState extends State<FileViewPage> {
         // that could not play it looks exactly as it did before playback
         // existed rather than advertising something absent.
         if (_playable(state))
-          AppVideoPlayerWidget(key: const Key('video-player'), localPath: state.file.localPath!)
+          _player(context, state)
         // A screen called "file view" that shows a glyph for a picture it has
         // already downloaded is withholding the thing the person tapped for.
         else if (_showsPicture(state))
           ClipRRect(
             key: const Key('image-preview'),
             borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
-            child: Image.file(
-              File(state.file.localPath!),
+            // From memory (phase 048, FR-006): the file on the disk is sealed.
+            child: Image(
+              image: LocalFileImage(state.file.localPath!),
               fit: BoxFit.contain,
               // Any decode or read failure falls back to the glyph, the same way
               // the thread's thumbnail does - never a broken-image box.

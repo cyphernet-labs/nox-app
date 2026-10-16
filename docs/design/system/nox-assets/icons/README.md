@@ -5,12 +5,15 @@ This folder ships the **real SVG files** (`svg/`) plus the authoritative machine
 **list** (`icons.json`) mapping each icon to its SVG file, Flutter constant and usage.
 
 ## SVG files (`svg/`)
-37 optimized SVGs from the official [`@material-symbols/svg-400`](https://www.npmjs.com/package/@material-symbols/svg-400)
+38 optimized SVGs from the official [`@material-symbols/svg-400`](https://www.npmjs.com/package/@material-symbols/svg-400)
 package (Apache-2.0). Each: `width/height 48`, `viewBox="0 -960 960 960"`, single `<path fill="currentColor">`
 — so they recolor via CSS `color` / SVG `fill` and drop straight into Flutter `SvgPicture.asset(...)`.
 
 - Outlined (FILL 0): `svg/<name>.svg`
 - Filled (FILL 1): `svg/<name>-fill.svg` (only for icons used filled: forum, settings, send, flashlight_on)
+
+The app's bundle `assets/svg/icons/` is a superset: these 38 plus 22 glyphs added from the same
+package — 60 files, 58 of them exposed as `NoxIcons` getters (see `../README.md`).
 
 > Two names differ from the variable font: this svg package version has no `audiotrack` /
 > `insert_drive_file`, so the visually identical **`music_note`** (audio) and **`draft`** (other file)
@@ -47,5 +50,6 @@ Or the built-in Material Icons: `Icon(Icons.forum)` / `Icon(Icons.forum_outlined
 Grouped by role (navigation · actions · status · fileTypes · emptyStates · misc). Each entry:
 `{ name, fill, svg, flutter, symbols, use }` — `name` is a valid base ligature, `svg` points to the
 exact file in `svg/`, and outlined vs filled is the **FILL axis** (`fill` 0/1), since Material
-Symbols has no `*_outlined` ligature. 33 unique ligatures, 38 references, 37 SVG files.
+Symbols has no `*_outlined` ligature. 34 unique ligatures, 39 references, pointing at 36 of the 38
+SVG files (`flashlight_on.svg` and `send.svg` are not referenced: both icons are used filled).
 See `../index.html` for the visual grid (renders the actual SVGs).

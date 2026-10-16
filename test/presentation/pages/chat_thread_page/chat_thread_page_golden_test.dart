@@ -233,13 +233,20 @@ void main() {
       // pinRefused (036) joins them: the wrong machine answered, which is a
       // different glyph, a different sentence and an action `offline` has not
       // got - so its own baseline on both surfaces.
+      // turnOnTor (phase 045): a failed round with a known cause, which the
+      // strip says in place of «No connection» - its own baseline on both.
       for (final scenario in const [
         ChatThreadScenario.offline,
         ChatThreadScenario.pinRefused,
+        ChatThreadScenario.turnOnTor,
         ChatThreadScenario.empty,
         ChatThreadScenario.fatal,
       ]) {
-        final name = scenario == ChatThreadScenario.pinRefused ? 'pin_refused' : scenario.name;
+        final name = switch (scenario) {
+          ChatThreadScenario.pinRefused => 'pin_refused',
+          ChatThreadScenario.turnOnTor => 'turn_on_tor',
+          _ => scenario.name,
+        };
 
         testWidgets('mobile $name matches the $suffix theme', (tester) async {
           AppClock.freeze(kGoldenClock);

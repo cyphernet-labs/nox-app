@@ -1,46 +1,55 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/general/pairing/server_pin.dart';
+import 'package:nox_app/general/connection/address_format.dart';
+import 'package:nox_tor/channel.dart';
 
 /// What one round of direct attempts found (phase 040).
 class DirectProbeResult {
   const DirectProbeResult({this.address, this.notHome = const <String>[]});
 
-  /// The first candidate that answered with the right key and a healthy
-  /// `/health`; null when none did within the budget.
+  /// The first candidate where this person's server proved its key; null when
+  /// none did within the budget.
   final String? address;
 
-  /// Candidates that answered with ANOTHER key. They do not lead home right
-  /// now (FR-005) - an address is a place, and on another network the same one
-  /// is somebody else's machine. Never a reason to call the server foreign.
+  /// Candidates where a machine proved ANOTHER key. They do not lead home right
+  /// now - an address is a place, and on another network the same one is
+  /// somebody else's machine. Never a reason to call the server foreign, and
+  /// never shown to anybody.
   final List<String> notHome;
 }
 
 /// Tries the server's direct addresses (phase 040).
 abstract class DirectProber {
-  /// Tries [candidates] in order of preference and returns the first that
-  /// answers as the server [fingerprint] names.
-  Future<DirectProbeResult> probe(List<String> candidates, {required String fingerprint});
+  /// Tries [candidates] in order of preference and returns the first where the
+  /// server proves [serverKey] to a device proving the key of [devicePrivateKey].
+  ///
+  /// Both are copied before this returns: the caller's arrays stay the
+  /// caller's, and it may wipe them while the round is still running.
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey});
 }
 
-/// Over connections of its own, never the transport's client.
+/// Probes by opening a channel and closing it at once (phase 044).
 ///
-/// The transport learns of a refused pin from a counter on its shared client;
-/// a probe running beside a socket dial would have its refusal blamed on the
-/// socket (research decision 8). A probe owns its sockets, so each refusal
-/// belongs to exactly one address.
-///
-/// The check is the transport's: TLS with nobody trusted, then the LEAF's key
-/// against the fingerprint - see `PinnedHttpClient` for why it must be the
-/// leaf. A probe only says which address to dial; the socket that follows is
-/// checked again on its own handshake.
+/// Nothing short of the channel's own check says whose machine answered: the
+/// TLS certificate is technical, and `/health` is not served on the main port
+/// any more. An open that succeeds is "mine"; one refused as `wrongServer` is
+/// "not mine" - silently passed over; anything else is "no answer". A probe
+/// only says which address to dial: the socket's own connection is checked
+/// again on its own channel.
 @LazySingleton(as: DirectProber, env: [Environment.dev])
-class TlsDirectProber implements DirectProber {
-  /// One address may take this long, handshake and `/health` together.
-  static const Duration attemptTimeout = Duration(milliseconds: 2500);
+class ChannelDirectProber implements DirectProber {
+  ChannelDirectProber(this._api);
+
+  final NoxChannelApi _api;
+
+  /// One address may take this long, transport, TLS and the check together:
+  /// a name to resolve, TCP, TLS 1.3, then `/auth` and `/auth2` one after
+  /// the other - five round trips, so a path of up to about 900 ms answers.
+  /// The rest of the round starts after [stagger], so the last attempt still
+  /// ends within [budget].
+  static const Duration attemptTimeout = Duration(milliseconds: 4500);
 
   /// The first candidate goes alone for this long - the one that answered last
   /// time usually answers again - and then the rest go together.
@@ -51,9 +60,24 @@ class TlsDirectProber implements DirectProber {
   static const Duration budget = Duration(seconds: 5);
 
   @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required String fingerprint}) async {
-    if (candidates.isEmpty || fingerprint.isEmpty) return const DirectProbeResult();
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) async {
+    if (candidates.isEmpty) return const DirectProbeResult();
+    // The round's own copies: the caller may wipe its key while attempts
+    // started later in the round still need it. Wiped when the round is over.
+    final key = Uint8List.fromList(serverKey);
+    final device = Uint8List.fromList(devicePrivateKey);
+    try {
+      return await _round(candidates, serverKey: key, devicePrivateKey: device);
+    } finally {
+      device.fillRange(0, device.length, 0);
+    }
+  }
+
+  Future<DirectProbeResult> _round(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) async {
     final won = Completer<String?>();
+    // Opens still under way when the round is settled are dropped in the
+    // module, not left to run out their time.
+    final roundOver = Completer<void>();
     final notHome = <String>[];
     var started = 0;
     var finished = 0;
@@ -71,7 +95,7 @@ class TlsDirectProber implements DirectProber {
     void attempt(String candidate) {
       started++;
       unawaited(
-        _try(candidate, fingerprint).then((outcome) {
+        _try(candidate, serverKey: serverKey, devicePrivateKey: devicePrivateKey, cancel: roundOver.future).then((outcome) {
           finished++;
           switch (outcome) {
             case _Outcome.home:
@@ -103,47 +127,37 @@ class TlsDirectProber implements DirectProber {
     final address = await won.future;
     staggerTimer.cancel();
     budgetTimer.cancel();
+    roundOver.complete();
     return DirectProbeResult(address: address, notHome: List<String>.unmodifiable(notHome));
   }
 
-  Future<_Outcome> _try(String candidate, String fingerprint) async {
-    final uri = Uri.tryParse('https://$candidate');
-    if (uri == null || uri.host.isEmpty || !uri.hasPort) return _Outcome.unreachable;
-    final deadline = Stopwatch()..start();
-    ConnectionTask<SecureSocket>? task;
-    SecureSocket? socket;
-    var abandoned = false;
+  Future<_Outcome> _try(
+    String candidate, {
+    required Uint8List serverKey,
+    required Uint8List devicePrivateKey,
+    required Future<void> cancel,
+  }) async {
+    // Host and port off the text, the one reading every address gets: through
+    // a `Uri` an address on 443 - the scheme's default, which `Uri` drops -
+    // read as portless and was never dialled. An onion address is never a
+    // direct one: it goes through Tor or nowhere, and the reading refuses it.
+    final address = AddressFormat.parseServerAddress(candidate);
+    if (address == null) return _Outcome.unreachable;
     try {
-      task = await SecureSocket.startConnect(
-        uri.host,
-        uri.port,
-        context: SecurityContext(withTrustedRoots: false),
-        onBadCertificate: (_) => true,
-        supportedProtocols: const <String>['http/1.1'],
+      final channel = await _api.open(
+        DirectTarget(address.host, address.port),
+        devicePrivateKey: devicePrivateKey,
+        serverKey: serverKey,
+        timeout: attemptTimeout,
+        cancel: cancel,
       );
-      final pending = task;
-      socket = await pending.socket.timeout(
-        attemptTimeout,
-        onTimeout: () {
-          abandoned = true;
-          pending.cancel();
-          // A handshake that finishes after all is closed on arrival.
-          unawaited(pending.socket.then((late) => late.destroy(), onError: (Object _) {}));
-          throw TimeoutException('direct probe');
-        },
-      );
-      if (abandoned) return _Outcome.unreachable;
-      if (!ServerPin.matches(socket.peerCertificate?.der, fingerprint)) return _Outcome.otherKey;
-      socket.write('GET /health HTTP/1.1\r\nHost: ${uri.authority}\r\nConnection: close\r\n\r\n');
-      await socket.flush();
-      final left = attemptTimeout - deadline.elapsed;
-      if (left <= Duration.zero) return _Outcome.unreachable;
-      final status = await utf8.decoder.bind(socket).transform(const LineSplitter()).first.timeout(left);
-      return status.startsWith('HTTP/1.1 200') || status.startsWith('HTTP/1.0 200') ? _Outcome.home : _Outcome.unreachable;
+      // Proved: that is all a probe wanted. Nothing is sent on it.
+      channel.close();
+      return _Outcome.home;
+    } on ChannelOpenException catch (e) {
+      return e.failure == ChannelFailure.wrongServer ? _Outcome.otherKey : _Outcome.unreachable;
     } on Object {
       return _Outcome.unreachable;
-    } finally {
-      socket?.destroy();
     }
   }
 }

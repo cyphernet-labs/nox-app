@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
@@ -18,9 +20,9 @@ const SessionModel kTestSession = SessionModel(
   onboardingComplete: true,
 );
 
-/// A stand-in for the thirty-two bytes a pairing link carries: base64 of a
-/// sha256, which is all any caller of the fake needs it to look like.
-const String kTestFingerprint = 'tVP0vGf0PzSYF6Lg5lg6Nsgxwkar8AVxzhHQIRP7SUs=';
+/// A stand-in for the server's Ed25519 key a pairing link carries: 32 bytes,
+/// base64 - all any caller of the fake needs it to look like.
+const String kTestServerKey = 'tVP0vGf0PzSYF6Lg5lg6Nsgxwkar8AVxzhHQIRP7SUs=';
 
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).
@@ -46,6 +48,15 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> sweepLegacyKeys() => throw UnimplementedError();
 
   @override
+  Future<RepositoryResult<String?>> storageKey() => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<bool>> saveStorageKey({required String key}) => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<bool>> forgetStorageKey() => throw UnimplementedError();
+
+  @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) async {
     _label = label;
     labelDirty = true;
@@ -67,34 +78,54 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) => throw UnimplementedError();
 
   @override
-  Future<RepositoryResult<String>> deviceSecret() async =>
-      const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=');
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey() async => const RepositoryResult<DeviceKeyPair>.success(
+    data: DeviceKeyPair(
+      privateKey: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+      publicKey: 'cHVibGljLWtleS1vZi10aGlzLWRldmljZS0zMmJ5dGU=',
+    ),
+  );
 
   @override
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) async =>
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) async =>
       const RepositoryResult<bool>.success(data: true);
 
   @override
   Future<RepositoryResult<String?>> serverAddress() async => const RepositoryResult<String?>.success(data: '127.0.0.1:8080');
 
-  /// A paired install has one, always: an address without a fingerprint is a
+  /// A paired install has one, always: an address without a server key is a
   /// connection nothing can check, and the starter refuses to make it.
   @override
-  Future<RepositoryResult<String?>> serverFingerprint() async => const RepositoryResult<String?>.success(data: kTestFingerprint);
+  Future<RepositoryResult<String?>> serverKey() async => const RepositoryResult<String?>.success(data: kTestServerKey);
+
+  @override
+  Future<RepositoryResult<bool>> predatesServerKey() async => const RepositoryResult<bool>.success(data: false);
+
+  @override
+  Future<RepositoryResult<bool>> predatesSecureBox() async => const RepositoryResult<bool>.success(data: false);
+
+  @override
+  Future<RepositoryResult<bool>> outlivedItsInstall() async => const RepositoryResult<bool>.success(data: false);
+
+  @override
+  Future<RepositoryResult<bool>> resetSecureStore() => throw UnimplementedError();
 
   /// Raised by [updateLabel] the way the real store raises it: a greeting states
   /// a name only after a rename.
   bool labelDirty = false;
 
   @override
-  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) async =>
-      const RepositoryResult<bool>.success(data: false);
-
-  @override
   Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);
 
+  /// Nothing waits for approval here: a paired session is what this fake
+  /// stands for.
   @override
-  void noteOnboardingStartedHere() {}
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing() async => const RepositoryResult<PendingPairing?>.success(data: null);
+
+  @override
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing) => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<bool>> clearPendingPairing() async => const RepositoryResult<bool>.success(data: true);
 
   @override
   Future<RepositoryResult<bool>> discardSignIn() => throw UnimplementedError();

@@ -7,11 +7,13 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
-import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/video_playback_capability.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'file_view_bloc.freezed.dart';
@@ -34,6 +36,7 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
   final FileRepository _files = getIt<FileRepository>();
   final AttachmentDownloadService _downloads = getIt<AttachmentDownloadService>();
   final SessionPhaseService _phase = getIt<SessionPhaseService>();
+  final LocalFilesService _localFiles = getIt<LocalFilesService>();
 
   /// The message this attachment belongs to, when it has one. The download
   /// service records the fetched bytes against it, so the thumbnail and Save
@@ -52,6 +55,11 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
     final listening = _listening;
     _listening = null;
     if (listening != null) _downloads.stopListening(listening);
+    // The player closes with the screen, and its plain copy goes with it
+    // (FR-007) - once, however many times the bloc is closed. Not awaited:
+    // closing does not wait on a delete.
+    final copy = state.playbackPath;
+    if (copy != null && !isClosed) unawaited(_localFiles.releaseCopy(copy));
     return super.close();
   }
 
@@ -89,6 +97,7 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
           status: FileViewStatus.ready,
         ),
       );
+      await _openForPlayback(emit);
       return;
     }
 
@@ -119,25 +128,49 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
     final result = await _downloads.fetch(messageId: messageId, attachment: file, onProgress: heard);
     if (identical(_listening, heard)) _listening = null;
 
-    result.match<void>(
-      onData: (path) {
-        emit(
-          state.copyWith(
-            file: state.file.copyWith(localPath: path),
-            progress: 1,
-            status: FileViewStatus.ready,
-          ),
-        );
-      },
-      onError: (exception) {
-        // Contract §2.1 draws the line here, and draws it deliberately: bytes
-        // that are gone are a TERMINAL state on this screen, without a retry
-        // button — and expressly "not the fatal screen of the whole app". A
-        // server that kept refusing is the other thing entirely and keeps its
-        // retry, which starts the ladder over.
-        final gone = exception == RepositoryException.attachmentGone || exception == RepositoryException.notFound;
-        emit(state.copyWith(status: gone ? FileViewStatus.gone : FileViewStatus.failed));
-      },
+    final path = result.data;
+    if (path == null) {
+      // Contract §2.1 draws the line here, and draws it deliberately: bytes
+      // that are gone are a TERMINAL state on this screen, without a retry
+      // button — and expressly "not the fatal screen of the whole app". A
+      // server that kept refusing is the other thing entirely and keeps its
+      // retry, which starts the ladder over.
+      final exception = result.exception;
+      final gone = exception == RepositoryException.attachmentGone || exception == RepositoryException.notFound;
+      emit(state.copyWith(status: gone ? FileViewStatus.gone : FileViewStatus.failed));
+      return;
+    }
+    emit(
+      state.copyWith(
+        file: state.file.copyWith(localPath: path),
+        progress: 1,
+        status: FileViewStatus.ready,
+      ),
     );
+    await _openForPlayback(emit);
+  }
+
+  /// A video plays from a plain copy (phase 048, FR-007): the file on the
+  /// disk is sealed, and a player reads only a plain file. Made once per
+  /// screen, where the platform has a player at all; one that cannot be made
+  /// is said on the screen, in place of the player.
+  Future<void> _openForPlayback(Emitter<FileViewState> emit) async {
+    final file = state.file;
+    final path = file.localPath;
+    if (file.type != FileType.video || !VideoPlaybackCapability.isAvailable || path == null) return;
+    if (state.playbackPath != null) return;
+    try {
+      final copy = await _localFiles.openCopy(path: path, name: file.name);
+      if (isClosed) {
+        unawaited(_localFiles.releaseCopy(copy));
+        return;
+      }
+      emit(state.copyWith(playbackPath: copy, openFailed: false));
+    } catch (error, stackTrace) {
+      // The type only: a file system error quotes the path, and the path the
+      // file's name.
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+      if (!isClosed) emit(state.copyWith(openFailed: true));
+    }
   }
 }

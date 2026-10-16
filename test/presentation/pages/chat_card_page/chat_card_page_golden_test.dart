@@ -144,6 +144,8 @@ const List<_CardVariant> _cardVariants = [
   // The wrong machine answered (036): a different glyph, a different sentence
   // and an action `offline` does not have, so its own baseline.
   (name: 'pin_refused', scenario: ChatCardScenario.pinRefused, viewMode: null),
+  // A failed round with a known cause (phase 045): the strip says why.
+  (name: 'turn_on_tor', scenario: ChatCardScenario.turnOnTor, viewMode: null),
   (name: 'empty', scenario: ChatCardScenario.empty, viewMode: null),
   (name: 'fatal', scenario: ChatCardScenario.fatal, viewMode: null),
   (name: 'grid', scenario: null, viewMode: FilesViewMode.grid),

@@ -140,35 +140,21 @@ func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Ident
 // insertDevice authorises a key for a person. Called only from pairing: a
 // greeting can no longer bring a device into existence, which is the whole
 // point - an unknown key is refused, not enrolled.
-func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform, accessKey string, now int64) error {
-	// An empty access key is NULL, and COALESCE keeps the one the device
-	// already had: re-pairing without a key must not take its onion access
-	// away, and re-pairing with one replaces it - one key per device (039).
-	var access any
-	if accessKey != "" {
-		taken, err := accessKeyTaken(ctx, tx, deviceKey, accessKey)
-		if err != nil {
-			return err
-		}
-		if taken {
-			return ErrAccessKeyTaken
-		}
-		access = accessKey
-	}
+func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform string, now int64) error {
 	_, err := tx.ExecContext(ctx,
 		// The row is refreshed but NEVER re-bound to another person. Rebinding
 		// looks like the fix for "the reply and the row must say the same
-		// thing", and it is a device takeover: device_key is public - it rides
-		// every greeting and device.list lists it - so anyone able to issue an
-		// invite for themselves could name somebody else's key and walk off
-		// with their paired device. The other way to make the two agree is to
-		// refuse the pair, and that is what Pair does (see deviceOwnerOf below).
-		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at, access_key) VALUES (?, ?, ?, ?, ?, ?)
+		// thing", and it is a device takeover: device_key is public -
+		// device.list lists it - and a pairing that ever got a key other than
+		// the one its channel proved would let anyone able to issue an invite
+		// for themselves walk off with somebody else's paired device. The other
+		// way to make the two agree is to refuse the pair, and that is what
+		// Pair does (see deviceOwnerOf below).
+		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (device_key) DO UPDATE SET
 		     platform = excluded.platform,
-		     last_seen_at = excluded.last_seen_at,
-		     access_key = COALESCE(excluded.access_key, devices.access_key)`,
-		deviceKey, userID, platform, now, now, access)
+		     last_seen_at = excluded.last_seen_at`,
+		deviceKey, userID, platform, now, now)
 	if err != nil {
 		return fmt.Errorf("insert device: %w", err)
 	}
@@ -263,4 +249,22 @@ func (s *Store) EnsureJournal(ctx context.Context) error {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
 	return nil
+}
+
+// RotateJournal gives the store a new identity and returns it (047). A
+// restored backup is exactly the case the identity exists for: the devices
+// may have seen more than the backup holds, and a new journal_id is what makes
+// each of them drop its cached world and read the conversation again
+// (contract §3). Everything else stays, the machine's key and the paired
+// devices included, so nobody pairs again.
+func (s *Store) RotateJournal(ctx context.Context) (string, error) {
+	id := "j_" + randomID()
+	res, err := s.write.ExecContext(ctx, "UPDATE journal SET journal_id = ? WHERE id = 1", id)
+	if err != nil {
+		return "", fmt.Errorf("rotate journal: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return "", fmt.Errorf("rotate journal: the store has no journal to rotate")
+	}
+	return id, nil
 }

@@ -3,16 +3,22 @@ import 'dart:async';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/service/phase_connection_status_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
+
+import '../../../../utils/fixed_connection_status.dart';
 
 void main() {
   setUpAll(() async {
@@ -290,6 +296,44 @@ void main() {
     });
   });
 
+  group('why there is no connection (phase 045)', () {
+    late FixedConnectionStatusService status;
+
+    Future<ChatCardBloc> boot(ConnectionStatus initial) async {
+      status = FixedConnectionStatusService(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(status);
+      // The container lives for the whole file here: put the real one back.
+      addTearDown(() => getIt.registerSingleton<ConnectionStatusService>(PhaseConnectionStatusService()));
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return bloc;
+    }
+
+    test('a failed round with a known cause carries it, and a greeting takes it away', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.offline, problem: ConnectionProblem.onionUnreachable));
+      expect((bloc.state as Initialized).problem, ConnectionProblem.onionUnreachable);
+
+      status.emit(FixedConnectionStatusService.tor);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect((bloc.state as Initialized).problem, isNull);
+      expect((bloc.state as Initialized).isOffline, isFalse);
+    });
+
+    test('the debug stand-in plays offline with its cause', () async {
+      final bloc = await boot(FixedConnectionStatusService.direct);
+
+      bloc.add(const ChatCardEvent.setScenario(ChatCardScenario.turnOnTor));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      final state = bloc.state as Initialized;
+      expect(state.isOffline, isTrue);
+      expect(state.problem, ConnectionProblem.turnOnTor);
+    });
+  });
+
   group('the server that is not the one the link named (036)', () {
     late _FakePhase phase;
 
@@ -310,6 +354,7 @@ void main() {
       final state = bloc.state as Initialized;
       expect(state.isServerMismatch, isTrue);
       expect(state.isOffline, isFalse);
+      expect(state.problem, ConnectionProblem.otherServer, reason: 'behind the onion address it is another server (phase 045)');
     });
 
     test('the files stay listed under it - nothing local is thrown away', () async {

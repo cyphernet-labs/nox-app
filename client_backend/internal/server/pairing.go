@@ -1,10 +1,6 @@
 package server
 
 import (
-	"crypto/ecdh"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,59 +8,44 @@ import (
 
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
-	"nox.app/client-backend/internal/tor"
 )
 
-// challengePrefix separates domains: without it a signature taken over a
-// challenge would be a valid signature over the same bytes anywhere else the
-// protocol later decides to sign something. Sixteen bytes now is cheaper than
-// proving the absence of an overlap later.
-const challengePrefix = "nox/challenge/v1:"
-
-// verifyChallenge reports whether sig is deviceKey's signature over the
-// prefixed challenge. Every input arrives as base64 from an untrusted peer, so
-// every decode failure is simply "does not verify" - there is nothing useful
-// to tell the caller apart.
-//
-// The RAW challenge bytes are signed, not their base64 spelling: two
-// implementations disagreeing about padding would disagree about the
-// signature, and one of them would be locked out for reasons neither could see.
-func verifyChallenge(deviceKey, challenge, sig string) bool {
-	pub, err := base64.StdEncoding.DecodeString(deviceKey)
-	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return false
-	}
-	raw, err := base64.StdEncoding.DecodeString(challenge)
-	if err != nil {
-		return false
-	}
-	signature, err := base64.StdEncoding.DecodeString(sig)
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		return false
-	}
-	return ed25519.Verify(ed25519.PublicKey(pub), append([]byte(challengePrefix), raw...), signature)
-}
-
+// pairRequest mirrors contract §8A. There is no device_key since 044: the key
+// being paired is the one this connection proved in the channel check, so a
+// device can only ever pair itself - and an older client that still sends the
+// field has it ignored, never believed. The same goes for access_key since
+// 045: there are no onion access keys any more, and the field is skipped like
+// any other this server does not know.
 type pairRequest struct {
-	Token     string `json:"token"`
-	DeviceKey string `json:"device_key"`
-	Platform  string `json:"platform"`
-	// AccessKey is the device's onion access key (039): an x25519 PUBLIC
-	// key, base64, optional. An older server ignores it; this one writes it in
-	// the same transaction as the device row.
-	AccessKey string `json:"access_key"`
+	Token    string `json:"token"`
+	Platform string `json:"platform"`
 }
 
-// pairReply carries the identity `pair` produced. There is no status field:
-// the command always finishes, so a field with one possible value would only
-// look like information - the same argument the contract makes about `owner`.
+// pairReply is one of two shapes (contract §8A), never both:
+//
+//   - {identity} - the device is paired: a machine link, or an invite whose
+//     request was allowed already (the repeat of an answer that got lost);
+//   - {status, request_id, expires_at} - an invite's request: "pending" while
+//     it waits for the issuing device, or the outcome it closed with -
+//     "denied", "expired" or "cancelled".
+//
+// status reuses pair.resolved's outcome words on purpose: the event and the
+// repeat of `pair` are the two halves of one answer, and the device reads the
+// outcome the same way whichever reached it.
 type pairReply struct {
-	Identity *identity `json:"identity"`
+	Identity  *identity `json:"identity,omitempty"`
+	Status    string    `json:"status,omitempty"`
+	RequestID string    `json:"request_id,omitempty"`
+	ExpiresAt int64     `json:"expires_at,omitempty"`
 }
 
-// handlePair is the only command accepted before the greeting: an unpaired
-// device has nothing to sign the challenge with, so requiring hello first
-// would make pairing impossible rather than merely awkward.
+// statusPending is the status of a request still waiting for an answer.
+const statusPending = "pending"
+
+// handlePair is one of the two commands accepted before the greeting: an
+// unpaired device's key is one the server does not know, and its greeting
+// would be refused - so requiring hello first would make pairing impossible
+// rather than merely awkward.
 func (c *client) handlePair(cmd protocol.Command) {
 	if c.helloDone {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "already greeted"))
@@ -78,29 +59,19 @@ func (c *client) handlePair(cmd protocol.Command) {
 	}
 
 	token := strings.TrimSpace(req.Token)
-	deviceKey := strings.TrimSpace(req.DeviceKey)
 	platform := strings.TrimSpace(req.Platform)
-	if token == "" || deviceKey == "" || platform == "" {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token, device_key and platform are required"))
+	if token == "" || platform == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token and platform are required"))
 		return
 	}
-	if raw, err := base64.StdEncoding.DecodeString(deviceKey); err != nil || len(raw) != ed25519.PublicKeySize {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "device_key is not an Ed25519 public key"))
+	if !knownPlatform(platform) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "platform must be ios, android, macos, windows or linux"))
 		return
 	}
-	// A malformed key refuses the pairing rather than pairing without one: a
-	// client that sends garbage here has a bug, and a device paired without
-	// onion access looks fine until the day it leaves the house.
-	accessKey := strings.TrimSpace(req.AccessKey)
-	if accessKey != "" {
-		if _, err := tor.ParseAccessKey(accessKey); err != nil {
-			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not a usable x25519 public key"))
-			return
-		}
-	}
-
-	res, err := c.srv.store.Pair(c.ctx, token, deviceKey, platform,
-		store.PairOptions{AccessKey: accessKey, ViaOnion: c.viaOnion}, time.Now().Unix())
+	// Whatever path this connection came by (FR-008): a connection from tor
+	// arrives on the main port like any other, proved its key the same way,
+	// and nothing here could tell it apart if it tried.
+	res, err := c.srv.store.Pair(c.ctx, token, c.deviceKey, platform, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrTokenInvalid):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidToken, "pairing token is not usable"))
@@ -108,28 +79,60 @@ func (c *client) handlePair(cmd protocol.Command) {
 	case errors.Is(err, store.ErrTokenExpired):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrTokenExpired, "pairing token has expired"))
 		return
-	case errors.Is(err, store.ErrAccessKeyTaken):
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is already in use"))
-		return
 	case err != nil:
 		c.logger.Error("pair", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to pair"))
 		return
 	}
 
+	if !res.Paired {
+		// An invite: the device waits for the issuing device's answer, or is
+		// told how its request already ended.
+		r := *res.Request
+		status := r.Outcome
+		if status == "" {
+			status = statusPending
+			// The device waits here for an answer that can take the invite's
+			// ten minutes, so the connection waits with it, free of a
+			// stranger's two minutes and of being pushed out for a newcomer
+			// (unpaired.go) - set up before the reply, so neither can land
+			// between the two.
+			c.awaitAnswer(r)
+		}
+		c.sendFrame(protocol.OKReply(cmd.ID, pairReply{Status: status, RequestID: r.RequestID, ExpiresAt: r.ExpiresAt}))
+		// After the reply, like every fan-out (§9): the issuing device is asked
+		// only when THIS call opened the request - a repeat is the same request,
+		// and the issuer already has it - and both sides hear of a request this
+		// call found run out and closed.
+		switch {
+		case res.Opened:
+			c.logger.Info("pairing request opened")
+			c.srv.announcePairRequested(r)
+		case res.Closed:
+			c.srv.announcePairClosed(r, nil)
+		}
+		return
+	}
+
+	// The key is a paired device's now, so the connection leaves the limits
+	// a stranger's is held to - before the reply, so its deadline cannot land
+	// between the two.
+	c.srv.settleUnpaired(c)
+	// A machine link spent is the strongest credential the server issues: an
+	// Info line says so once - never a repeat - with no key and no token. An
+	// invite's pairing says so through its request.
+	if res.Joined {
+		c.logger.Info("device paired", "by", "machine link", "created", res.Identity.Created)
+	}
+
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client
 	// to offer the naming step. Computed from whether a row was inserted - not
 	// from the token kind, and not from the fact that pairing succeeded.
-	c.sendFrame(protocol.OKReply(cmd.ID, pairReply{
-		Identity: &identity{
-			greetingIdentity: greetingIdentity{ID: res.UserID, Label: res.Label},
-			Created:          res.Created,
-		},
-	}))
+	c.sendFrame(protocol.OKReply(cmd.ID, pairReply{Identity: wireIdentity(res.Identity)}))
 
-	// The other devices of this person learn about the new one here, and only
-	// here: nothing else on the wire says the set of devices changed.
+	// The other devices of this person learn about the new one here: nothing
+	// else on the wire says the set of devices changed.
 	//
 	// AFTER the reply, the way device.revoke does it, and the order is
 	// load-bearing. send blocks on a full queue until that connection's context
@@ -137,7 +140,7 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// stranger's backlog: one wedged connection of the same person - a slow
 	// consumer whose drop is still finishing its close handshake - and the
 	// device waits out the client's send timeout for a command that has already
-	// burned a one-shot token and written its row.
+	// spent a one-shot token and written its row.
 	//
 	// What it does NOT buy: the fan-out still runs on this connection's read
 	// goroutine, so the same wedged recipient delays whatever this device sends
@@ -147,17 +150,106 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// with no order relative to the frames around them.
 	//
 	// It fires on a replayed pair too, where nothing changed: the store answers
-	// a device that spent this token before, and the handler cannot tell that
-	// from a first pass. The receiver re-reads either way, so the cost of the
-	// repeat is one list read - and the alternative, teaching the store to
-	// report a replay, spreads a pairing detail through a type the greeting
-	// shares. Written down in contract §8A rather than papered over.
-	c.announcePaired(res.UserID)
-	// The key set may have moved: a new device key, or an onion invite's
-	// one-time key spent by this very pairing. After the reply, like every
-	// fan-out - a republish ahead of it could cut the connection the reply is
-	// travelling on. An unchanged set is a no-op in the supervisor.
-	c.srv.tor.KeysChanged()
+	// a device that spent this token before, and the event is a hint the
+	// receiver answers by re-reading the list (contract §8A, "at least once").
+	c.announcePaired(res.Identity.UserID)
+}
+
+// wireIdentity is the identity object of the pair reply and of pair.resolved:
+// the same person, described the same way, whichever frame carried it.
+func wireIdentity(id store.Identity) *identity {
+	return &identity{greetingIdentity: greetingIdentity{ID: id.UserID, Label: id.Label}, Created: id.Created}
+}
+
+type pairCancelRequest struct {
+	Token string `json:"token"`
+}
+
+// handlePairCancel withdraws the request this device opened with an invite
+// (FR-010): the token is spent, the issuing device's dialog closes, and Allow
+// pressed afterwards does nothing.
+//
+// Accepted before the greeting, like `pair`: the device asking is not paired -
+// that is what it is waiting for. Idempotent: no waiting request of this key
+// under this token is answered with the same {} - the state the device asked
+// for holds. Closing the app does NOT cancel (FR-011); only this does.
+func (c *client) handlePairCancel(cmd protocol.Command) {
+	var req pairCancelRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed pair.cancel data"))
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token is required"))
+		return
+	}
+	r, cancelled, err := c.srv.store.CancelPairRequest(c.ctx, token, c.deviceKey, time.Now().Unix())
+	if err != nil {
+		c.logger.Error("pair.cancel", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to cancel the request"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+	if cancelled {
+		// Both sides, the new device included (contract §8A): pair.resolved is
+		// how every connection of the device learns the request is over, the
+		// one that asked among them, and device.pairResolved closes the dialog.
+		c.srv.announcePairClosed(r, nil)
+	}
+}
+
+type deviceApproveRequest struct {
+	RequestID string `json:"request_id"`
+	// Allow is a pointer so a missing answer is told apart from "deny": a
+	// frame that forgot the field must not decide anything.
+	Allow *bool `json:"allow"`
+}
+
+// handleDeviceApprove is the issuing device's answer to a request (FR-009).
+//
+// Allow pairs the new device - written, token spent, request closed in one
+// transaction - and then the new device is told with its identity, the
+// issuing device that the request is over, and the person's devices that the
+// set of devices changed. Deny closes the request; the new device and the
+// issuer are told. The reply goes first, the fan-out after it (§9).
+func (c *client) handleDeviceApprove(cmd protocol.Command) {
+	var req deviceApproveRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed device.approve data"))
+		return
+	}
+	requestID := strings.TrimSpace(req.RequestID)
+	if requestID == "" || req.Allow == nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "request_id and allow are required"))
+		return
+	}
+	dec, err := c.srv.store.DecidePairRequest(c.ctx, requestID, c.deviceKey, *req.Allow, time.Now().Unix())
+	switch {
+	case errors.Is(err, store.ErrDeviceUnknown):
+		// Revoked while the answer was on its way: the answer its next greeting
+		// would get.
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	case errors.Is(err, store.ErrRequestNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "no such request waiting for this device"))
+		return
+	case err != nil:
+		c.logger.Error("device.approve", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to answer the request"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+
+	if dec.Request.Outcome != store.OutcomeAllowed {
+		c.srv.announcePairClosed(dec.Request, nil)
+		return
+	}
+	c.srv.announcePairClosed(dec.Request, wireIdentity(dec.Identity))
+	// Every connection of the person, the answering one included: its device
+	// list is as stale as the others', and the new device is not among them -
+	// it has not greeted yet.
+	c.srv.announceDevicesChanged(dec.Identity.UserID, nil)
 }
 
 type deviceListReply struct {
@@ -211,7 +303,13 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 		return
 	}
 
-	if err := c.srv.store.RevokeDevice(c.ctx, key); err != nil {
+	rev, err := c.srv.store.RevokeDeviceAs(c.ctx, c.deviceKey, key, time.Now().Unix())
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		// Revoked itself a moment ago: the answer its next greeting would get.
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
+	if err != nil {
 		c.logger.Error("device.revoke", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to revoke the device"))
 		return
@@ -219,103 +317,81 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 	// Revoking a key that is not there is a success: the caller asked for a
 	// state and that state holds, so a retry after a dropped connection does
 	// not look like a failure.
-	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
-	c.srv.dropDevice(key)
-	// Its access key went with the row, and its live invites were burned:
-	// the onion service has to lose them, and its circuits cut, now.
-	c.srv.tor.KeysChanged()
-}
-
-type setAccessKeyRequest struct {
-	AccessKey string `json:"access_key"`
-}
-
-// handleDeviceSetAccessKey registers the onion access key of the device this
-// connection greeted as (039, contract §8A).
-//
-// There is no parameter naming the device: a connection can only ever set its
-// own key. A device that vanished mid-session - revoked from another device -
-// is told unauthenticated, the same answer its next greeting would get.
-func (c *client) handleDeviceSetAccessKey(cmd protocol.Command) {
-	var req setAccessKeyRequest
-	if err := json.Unmarshal(cmd.Data, &req); err != nil {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed device.setAccessKey data"))
-		return
+	//
+	// Another device is dropped BEFORE the answer: sending it can wait on this
+	// connection's full queue, and all that time the revoked one would go on
+	// running commands. A device revoking itself is answered first: its
+	// logout waits for that OK, and the device.revoked echo on this very
+	// connection comes after it (contract §8A).
+	if key != c.deviceKey {
+		c.srv.dropDevice(key)
+		c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+	} else {
+		c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+		c.srv.dropDevice(key)
 	}
-	accessKey := strings.TrimSpace(req.AccessKey)
-	if _, err := tor.ParseAccessKey(accessKey); err != nil {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not a usable x25519 public key"))
-		return
-	}
-	changed, err := c.srv.store.SetAccessKey(c.ctx, c.srv.currentDeviceKey(c), accessKey)
-	if errors.Is(err, store.ErrDeviceUnknown) {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
-		return
-	}
-	if errors.Is(err, store.ErrAccessKeyTaken) {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is already in use"))
-		return
-	}
-	if err != nil {
-		c.logger.Error("device.setAccessKey", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to set the access key"))
-		return
-	}
-	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
-	if changed {
-		c.srv.tor.KeysChanged()
+	// The requests the revoked device took part in closed with it. The device
+	// waiting on each is told, its connection a stranger again (endWait); so
+	// is the device asked to answer it, unless that is the one just revoked -
+	// its connections are closing, and the dialog goes with the device.
+	for _, r := range rev.Closed {
+		c.logger.Info("pairing request closed", "outcome", r.Outcome)
+		c.srv.endWait(r)
+		c.srv.tellNewDevice(r, nil)
+		if r.IssuerKey != key {
+			c.srv.tellIssuer(r)
+		}
 	}
 }
 
 type inviteReply struct {
 	Token string `json:"token"`
 	Link  string `json:"link"`
-	// Onion says the link is version 2 and carries the onion address with a
-	// one-time access key (039). An older client ignores it.
-	Onion bool `json:"onion"`
-}
-
-// inviteRequest is read leniently: `onion` absent, null or anything but a
-// boolean is false. The field is a wish, not an obligation, and a client that
-// sends something odd still gets the invite it would have got before 039.
-type inviteRequest struct {
-	Onion any `json:"onion"`
+	// Onion says the link names the onion address, Public that it names the
+	// public one (045, contract §8A). With both false the invite works only
+	// at home, and the app says so under it. Written out, never omitted: an
+	// older client reads a missing field as "unknown".
+	Onion  bool `json:"onion"`
+	Public bool `json:"public"`
 }
 
 // handleDeviceInvite mints a token that binds another device to this person,
 // and renders the link to show.
 //
+// The request's `onion` is accepted and ignored (contract §8A): true, false,
+// junk or nothing, the link names every address this machine has to offer, so
+// there is nothing left to read it for - and nothing in it can refuse the
+// command.
+//
 // The link is built here rather than on the device because only the server
-// knows its own public key and the address it is reachable at. A device
-// revoked while this command was on its way is told unauthenticated, as
-// device.setAccessKey tells it: the store issues nothing for a device that is
-// gone.
+// knows its own public key and the addresses it is reachable at. A device
+// revoked while this command was on its way is told unauthenticated: the store
+// issues nothing for a device that is gone.
 func (c *client) handleDeviceInvite(cmd protocol.Command) {
-	var req inviteRequest
-	_ = json.Unmarshal(cmd.Data, &req) // lenient by contract: anything odd is "no onion"
-	wantOnion, _ := req.Onion.(bool)
-
 	id, err := c.srv.store.ServerIdentity(c.ctx)
 	if err != nil {
 		c.logger.Error("server identity", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read the server identity"))
 		return
 	}
-	// The direct host. Over onion, Host is the onion name - useless to a
-	// device at home and to an older client alike - so the list is asked.
+	// Read before the token is minted: a failure after it would leave an
+	// invite nobody was handed alive for ten minutes.
+	conf, err := c.srv.configuredAddresses(c.ctx)
+	if err != nil {
+		c.logger.Error("read addresses", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read the addresses"))
+		return
+	}
+	// The direct host. Through the onion service, Host is the onion name -
+	// useless to a device at home - so the list is asked. The name is the only
+	// sign of that path left: the connection itself came in on the main port
+	// like any other (045).
 	addr := inviteAddress(c.srv.cfg.Addr, c.requestHost)
-	if c.viaOnion {
+	if onionHost(c.requestHost) {
 		addr = c.srv.inviteDirectAddress()
 	}
 
-	// An onion invite only when it would work: Tor on and tor connected. One
-	// that cannot be used outside is worse than an honest "home only".
-	if wantOnion && c.srv.tor.ReadyForInvite() {
-		c.issueOnionInvite(cmd, addr, id.Fingerprint)
-		return
-	}
-
-	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.srv.currentDeviceKey(c), time.Now().Unix())
+	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.deviceKey, time.Now().Unix())
 	if errors.Is(err, store.ErrDeviceUnknown) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
 		return
@@ -325,50 +401,16 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
 		return
 	}
-	link, err := BuildPairingLink(addr, id.Fingerprint, token)
+	link, carries, err := buildLink(id.PublicKey, token, addr, conf)
 	if err != nil {
+		// The error can quote the host it could not encode, and that host came
+		// from the Host header - the onion name, through the onion service. The
+		// log's handler masks it (logscrub.go).
 		c.logger.Error("build invite link", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
 		return
 	}
-	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link}))
-}
-
-// issueOnionInvite mints an invite carrying the onion address and a one-time
-// access key (039).
-//
-// The key pair is made here and the halves part at once: the PUBLIC half goes
-// to the store, where it opens the onion service for as long as the invite
-// lives; the PRIVATE half goes into the link and nowhere else - not the
-// store, not the log (FR-020).
-func (c *client) issueOnionInvite(cmd protocol.Command, addr, fingerprint string) {
-	oneTime, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		c.logger.Error("generate one-time access key", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
-		return
-	}
-	accessPub := base64.StdEncoding.EncodeToString(oneTime.PublicKey().Bytes())
-	token, err := c.srv.store.IssueOnionInvite(c.ctx, c.srv.currentDeviceKey(c), accessPub, time.Now().Unix())
-	if errors.Is(err, store.ErrDeviceUnknown) {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
-		return
-	}
-	if err != nil {
-		c.logger.Error("device.invite onion", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
-		return
-	}
-	link, err := BuildPairingLinkV2(addr, fingerprint, token, c.srv.tor.OnionPublicKey(), tor.OnionPort, oneTime.Bytes())
-	if err != nil {
-		c.logger.Error("build onion invite link", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
-		return
-	}
-	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link, Onion: true}))
-	// The one-time key has to be in the service before the new device dials
-	// it. After the reply, like every other change of the set.
-	c.srv.tor.KeysChanged()
+	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link, Onion: carries.Onion, Public: carries.Public}))
 }
 
 type setLabelRequest struct {
@@ -417,4 +459,17 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 	// Nothing in the reply depends on this - the label it echoes is the one
 	// already written to the store.
 	c.srv.refreshLabel(c.identity.UserID, label, c)
+}
+
+// knownPlatform reports whether p is one of the OS families a device may name
+// itself by (contract §8A). Anything else is refused before a token is looked
+// at: the name is shown in the Allow dialog of the device that issued the
+// invite, and free text there would let whoever holds a leaked invite pass
+// itself off as whatever it liked.
+func knownPlatform(p string) bool {
+	switch p {
+	case "ios", "android", "macos", "windows", "linux":
+		return true
+	}
+	return false
 }

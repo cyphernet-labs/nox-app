@@ -2,8 +2,9 @@ part of 'chat_thread_bloc.dart';
 
 /// Debug-selectable thread scenario (5.2, dev-only) — reproduces the server-dependent
 /// states on stub data (FR-005 / FR-029). `sendError` flips the next send to `error`;
-/// `offline` keeps sends queued as `pending`.
-enum ChatThreadScenario { normal, empty, offline, pinRefused, fatal, sendError }
+/// `offline` keeps sends queued as `pending`; `turnOnTor` is offline with a known
+/// cause, which the strip says in place of «No connection» (phase 045).
+enum ChatThreadScenario { normal, empty, offline, pinRefused, fatal, sendError, turnOnTor }
 
 @freezed
 sealed class ChatThreadState with _$ChatThreadState {
@@ -34,6 +35,11 @@ sealed class ChatThreadState with _$ChatThreadState {
     /// but with nothing to try - a restart of the channel ends the same way
     /// (phase 042).
     @Default(false) bool isUnsupported,
+
+    /// Why there is no connection, when that is known (phase 045): the strip
+    /// says it in place of «No connection». Rides with [isOffline] and
+    /// [isServerMismatch]; null otherwise.
+    ConnectionProblem? problem,
 
     /// Sends wait: the channel is not current, or it belongs to the wrong
     /// machine. Apart from [isOffline], which waits for a whole failed round

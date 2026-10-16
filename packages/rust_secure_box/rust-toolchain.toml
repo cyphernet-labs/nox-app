@@ -1,0 +1,5 @@
+[toolchain]
+# The app's Rust module pins the same channel (packages/nox_tor/rust); this file
+# matters for the WebAssembly build of the server's copy (build-wasm.sh).
+channel = "1.93.1"
+targets = ["wasm32-unknown-unknown"]

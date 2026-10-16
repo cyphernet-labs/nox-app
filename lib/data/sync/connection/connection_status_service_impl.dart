@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -18,6 +19,9 @@ import 'package:rxdart/rxdart.dart';
 /// `connecting` until a whole round of path selection has failed, and as
 /// `offline` from then until a connection is greeted - the banner neither
 /// blinks on every retry nor waits for a network the device does not have.
+///
+/// The problem rides with it (phase 045): what the failed round found while
+/// offline, and "another server" behind the onion address.
 @LazySingleton(as: ConnectionStatusService, env: [Environment.dev])
 class LiveConnectionStatusService implements ConnectionStatusService {
   LiveConnectionStatusService(this._socket, this._selector, this._tor) {
@@ -63,6 +67,11 @@ class LiveConnectionStatusService implements ConnectionStatusService {
       LinkState.online || LinkState.catchingUp || LinkState.connecting => selection.path,
       _ => null,
     };
-    return ConnectionStatus(state: state, path: path, torObsolete: obsolete);
+    final problem = switch (state) {
+      LinkState.serverMismatch => ConnectionProblem.otherServer,
+      LinkState.offline => selection.problem,
+      _ => null,
+    };
+    return ConnectionStatus(state: state, path: path, torObsolete: obsolete, problem: problem);
   }
 }

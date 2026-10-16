@@ -30,7 +30,7 @@ lib/
 │       ├── nox_tokens.dart             # GENERATED: NoxSpacing / NoxRadius(+bubble) / NoxElevation / NoxDuration / NoxEasing
 │       ├── nox_brand.dart              # GENERATED-база: NoxBrand + noxAvatarColor / noxInitials; noxAccountInitials ДОПИСАН руками
 │       ├── nox_component_themes.dart   # РУКОПИСНЫЙ: per-component M3 sub-themes (AppBar / Button / TextField / …)
-│       ├── nox_opacity.dart            # РУКОПИСНЫЙ: NoxOpacity — scrim / disabled / ring
+│       ├── nox_opacity.dart            # РУКОПИСНЫЙ: NoxOpacity — scrim / disabled / ring / overPhoto
 │       └── nox_scrims.dart             # РУКОПИСНЫЙ: NoxScrims — brand-fixed чёрные скримы над живым QR-превью
 └── general/
     ├── constants.dart                  # final class Constants: конфиг, regex, размеры, railBreakpoint
@@ -40,8 +40,10 @@ lib/
     ├── feature_flags.dart              # abstract final FeatureFlags: compile-time тогглы
     └── formatters/
         ├── value_formatter.dart        # @lazySingleton: locale-aware форматирование чисел (intl)
-        └── date_formatter.dart         # static DateFormat-хелперы (short / time)
+        └── date_formatter.dart         # static DateFormat-хелперы (short / time / relative / daySeparator / momentShort)
 ```
+
+В дереве `lib/general/` показаны только файлы, о которых этот документ; там же лежат часы `app_clock.dart`, разбор ссылки сопряжения и ключи устройства (`pairing/`), проверка формата адресов (`connection/`), предикаты возможностей платформы (`*_capability.dart`), прочие форматтеры (`chat_preview_formatter.dart`, `file_size_formatter.dart`) и др.
 
 Архитектурное решение по темизации в NOX — **generated-handoff поверх Material 3 + точечное `ThemeExtension`-расширение**:
 
@@ -281,7 +283,7 @@ class AppTheme {
 
 ### 3.1 Потребление в `MaterialApp`
 
-Полная сборка root-виджета — в `05-presentation-layer.md`. `AppRootBloc` (он же app-level BLoC) держит `themeMode` в своём состоянии — это канонический пример **минимального value-BLoC** (одно поле, одно состояние); тот же паттерн применяется к любой logic-less навигируемой странице (Инвариант 3a: у неё всё равно свой минимальный BLoC; переиспользуемые виджеты `lib/presentation/widgets/` BLoC не требуют). `MaterialApp` читает обе темы статически и переключается реактивно:
+Полная сборка root-виджета — в `05-presentation-layer.md`. `AppRootBloc` (он же app-level BLoC) держит `themeMode` в своём состоянии — это канонический пример **value-BLoC** (одно состояние, обновляемое через `copyWith`); тот же паттерн доступен любой logic-less навигируемой странице (Принцип 5.1 в `08-conventions-and-constitution.md`; фазовое исключение для чисто презентационных экранов — `05-presentation-layer.md` §5; переиспользуемые виджеты `lib/presentation/widgets/` BLoC не требуют). `MaterialApp` читает обе темы статически и переключается реактивно:
 
 ```dart
 BlocBuilder<AppRootBloc, AppRootState>(
@@ -296,9 +298,9 @@ BlocBuilder<AppRootBloc, AppRootState>(
 );
 ```
 
-> **Перекрёстная ссылка.** `AppRootState` — это **одновариантный** `@freezed`-value-объект с единственным полем `themeMode` (НЕ трио `Initializing`/`Initialized`/`Error` — те подсостояния относятся к фичевым BLoC, не к app-level; см. `05-presentation-layer.md`). `MaterialApp` читает `state.themeMode` напрямую (никогда `state.theme`). Само переключение темы инициируется событием (`AppRootEvent.setTheme(...)` / эквивалент), персистится через настройки и эмиттится в новое состояние через `copyWith`.
+> **Перекрёстная ссылка.** `AppRootState` — это **одновариантный** `@freezed`-value-объект (НЕ трио `Initializing`/`Initialized`/`Error` — те подсостояния относятся к фичевым BLoC, не к app-level; см. `05-presentation-layer.md`). Тему несёт его поле `themeMode`; рядом живут двухфазная спина app-state (`lastAppState`/`appliedAppState`/`isReady`), счётчик `settingsSaveErrorTick` и вопрос о сопряжении нового устройства (`pairRequest`/`pairAnswering`/`pairAnswerFailed`, фича 046). `BlocBuilder` вокруг `MaterialApp` перестраивается только по смене `themeMode` (`buildWhen`). `MaterialApp` читает `state.themeMode` напрямую (никогда `state.theme`). Само переключение темы инициируется событием `AppRootEvent.setTheme(themeMode:)`, персистится через настройки и эмиттится в новое состояние через `copyWith`.
 >
-> **Дивергенция со скелетом.** В текущем скелете `AppShell` своего BLoC не имеет, а placeholder-страницы — stateless. Это допустимые упрощения скелета до прихода реальных фич; целевая норма (свой BLoC у каждого навигируемого `*Page`) — Инвариант 3a.
+> **Оболочка без BLoC.** Живая оболочка `TabBarShell` своего BLoC не имеет (фазовое исключение `05-presentation-layer.md` §5; маркер `// TODO(blueprint-shell-bloc)`), как и чисто презентационные простые экраны. Скелетный `AppShell` фичи 001 не смонтирован и остаётся верификационным кодом.
 
 ---
 
@@ -317,7 +319,7 @@ MediaQuery(                                          // (1) снаружи: уб
     designSize: Constants.designSize,                //     Size(360, 779)
     fontSizeResolver: AppTextStyleTokens.fontSizeResolver, // (2a) ОБЯЗАТЕЛЬНО: кламп `.sp` 0.90–1.00
     builder: (context, child) => MaterialApp(
-      // theme / darkTheme / themeMode / onGenerateRoute ...
+      // theme / darkTheme / themeMode / locale / home: SplashPage() ...
       builder: (context, child) => MediaQuery(       // (3) внутри: повторно пиним textScaler = 1.0
         data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
         child: child ?? const SizedBox.shrink(),
@@ -553,14 +555,14 @@ abstract final class AppOverlayStyleTokens {
 
 **Забандленные наборы (`assets/`, перечислены в `pubspec.yaml::flutter.assets`):**
 
-- `assets/svg/icons/` — 43 SVG Material Symbols Rounded (`currentColor`); семантический доступ — `NoxIcons` (§7.1). Бандл ушёл вперёд корпуса `nox-assets/` (его README и `manifest.json` всё ещё говорят про 37) — считайте по факту содержимого `assets/`.
+- `assets/svg/icons/` — 60 SVG Material Symbols Rounded (`currentColor`); семантический доступ — `NoxIcons` (§7.1). Бандл ушёл вперёд корпуса `nox-assets/` (его README и `manifest.json` всё ещё говорят про 37) — считайте по факту содержимого `assets/`.
 - `assets/svg/illustrations/` — 3 плейсхолдера пустых состояний (`Assets.svg.illustrations.emptyChats` / `.emptyMessages` / `.emptyFiles`).
 - `assets/png/logo.png` — бренд-логотип (растровый плейсхолдер, splash) — `Assets.png.logo`.
 - `assets/fonts/*.ttf` — `Roboto` 400/500/700 + `Roboto Mono` 400 (объявлены в `fonts:`, см. §1/§5).
 
 ### 7.1 Семантический icon-реестр — `NoxIcons`
 
-**Файл (рукописный):** `lib/design/nox_icons.dart`. `abstract final class NoxIcons` с именованными геттерами, **ссылающимися** на flutter_gen-аксессоры `Assets.svg.icons.*` (без сырых строк путей). Несёт семантику и ось FILL из `nox-assets/icons/icons.json`: outlined/filled — это `name.svg` / `name-fill.svg` (`forum`/`forumFill`, `settings`/`settingsFill`, `sendFill`, `flashlightOnFill`/`flashlightOff`, …). Из 43 забандленных SVG реестр выставляет 41 геттер; оставшиеся outlined-варианты, чья используемая форма — filled (`flashlight_on.svg`, `send.svg`), доступны через `Assets.svg.icons.*`, но в реестр не входят. Иконки перекрашиваются цветом темы на месте вызова (`currentColor`, цвет не зашит):
+**Файл (рукописный):** `lib/design/nox_icons.dart`. `abstract final class NoxIcons` с именованными геттерами, **ссылающимися** на flutter_gen-аксессоры `Assets.svg.icons.*` (без сырых строк путей). Несёт семантику и ось FILL из `nox-assets/icons/icons.json`: outlined/filled — это `name.svg` / `name-fill.svg` (`forum`/`forumFill`, `settings`/`settingsFill`, `sendFill`, `flashlightOnFill`/`flashlightOff`, …). Из 60 забандленных SVG реестр выставляет 58 геттеров; оставшиеся outlined-варианты, чья используемая форма — filled (`flashlight_on.svg`, `send.svg`), доступны через `Assets.svg.icons.*`, но в реестр не входят. Иконки перекрашиваются цветом темы на месте вызова (`currentColor`, цвет не зашит):
 
 ```dart
 NoxIcons.forum.svg(colorFilter: ColorFilter.mode(cs.onSurfaceVariant, BlendMode.srcIn));
@@ -616,7 +618,7 @@ final class Constants {
 
 ### 8.2 PlatformUtils
 
-Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. На мобильных таргетах основной путь — `isMobile`; десктоп-геттеры (`isDesktop` / `isMacOS` / …) используются на десктопных таргетах (Windows/Linux/macOS), которые входят в scope (конституция v1.3.0, принцип VI — паритет mobile↔desktop).
+Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. На мобильных таргетах основной путь — `isMobile`; десктоп-геттеры (`isDesktop` / `isMacOS` / …) используются на десктопных таргетах (Windows/Linux/macOS), которые входят в scope (конституция, принцип VI — паритет mobile↔desktop).
 
 **Файл:** `lib/general/platform_utils.dart`
 
@@ -633,10 +635,14 @@ class PlatformUtils {
   static bool get isAndroid => Platform.isAndroid;
   static bool get isIOS => Platform.isIOS;
   static bool get isMacOS => Platform.isMacOS;
+  static bool get isLinux => Platform.isLinux;
+
+  /// The OS family, as the server records it against a device key.
+  static String get family { /* 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'unknown' */ }
 }
 ```
 
-> Для ветвления по конкретной desktop-ОС добавляйте `Platform.isWindows` / `Platform.isLinux` по месту (в скелете явные геттеры заведены под `isMacOS`; `isWindows`/`isLinux` добавляются с первым их потребителем).
+> Явные per-OS геттеры заведены под `isAndroid`/`isIOS`/`isMacOS`/`isLinux`; `isWindows` добавляется с первым потребителем, до тех пор — `Platform.isWindows` по месту. `family` — семейство ОС, которое устройство сообщает серверу при сопряжении: только семейство, без модели, чтобы сервер не держал лишнего отпечатка устройства.
 
 ### 8.3 UI-микрокопи и фиче-флаги
 
@@ -644,7 +650,7 @@ class PlatformUtils {
 
 Вся пользовательская микрокопи живёт в ARB-файлах и достаётся через сгенерированный `AppLocalizations`. **Рукописного `lib/general/text_constants.dart` больше нет** — класс `TextConstants` удалён вместе с миграцией на l10n; любой упоминающий его код или док устарел. Строковых литералов копи в виджетах по-прежнему нет.
 
-- **Источник:** `lib/l10n/app_en.arb` + `lib/l10n/app_uk.arb` — **140 ключей с идентичными наборами ключей**; новая строка обязана появиться в **обоих** файлах.
+- **Источник:** `lib/l10n/app_en.arb` + `lib/l10n/app_uk.arb` — **213 ключей с идентичными наборами ключей**; новая строка обязана появиться в **обоих** файлах.
 - **Конфиг:** `flutter: generate: true` в `pubspec.yaml` + `l10n.yaml` (`arb-dir: lib/l10n`, template `app_en.arb`, `output-class: AppLocalizations`, `nullable-getter: false`). Сгенерированный `app_localizations*.dart` — **gitignored**, поэтому после правки ARB и на свежем клоне обязателен `fvm flutter gen-l10n` (входит в `make generate`).
 - **Доступ:** `lib/general/l10n_extension.dart` даёт `extension L10nExtension on BuildContext` → виджеты читают копи как `context.l10n.chats`.
 - **Живое переключение:** `LocaleController` (`lib/general/locale_controller.dart`) держит активный язык и через `MaterialApp.locale` переключает EN↔UK без рестарта.
@@ -763,10 +769,19 @@ class DateFormatter {
   static String short(DateTime date) => _short.format(date);
 
   static String time(DateTime date) => _time.format(date);
+
+  /// 5.1 / M4 relative-time ladder: now / N min / N h / Yesterday / d MMM / d MMM y.
+  static String relative(DateTime when, {required AppLocalizations l10n, DateTime? now}) { /* … */ }
+
+  /// 5.2 date separator: Today / Yesterday / d MMM / d MMM y.
+  static String daySeparator(DateTime when, {required AppLocalizations l10n, DateTime? now}) { /* … */ }
+
+  /// Device list moment: `8 Jun 14:32` within the year, `8 Jun 2025` beyond it.
+  static String momentShort(DateTime when, {required AppLocalizations l10n, DateTime? now}) { /* … */ }
 }
 ```
 
-> Текущий набор узкий (`short` `MMM dd, yyyy` + `time` `HH:mm`). Более богатый набор (`formatLong`/`formatIso`/`formatRelative`) — план; добавляется с реальной потребностью. **Не путайте имена:** метод называется `short(...)`, а не `formatShort(...)`.
+> Набор: `short` (`MMM dd, yyyy`) и `time` (`HH:mm`) — фиксированный `en_US`; `relative`, `daySeparator` и `momentShort` берут слова и названия месяцев из активной UI-локали (`l10n`), «сейчас» — из `AppClock.now()` (в тестах передаётся `now`). Новые хелперы добавляются с реальной потребностью. **Не путайте имена:** метод называется `short(...)`, а не `formatShort(...)`.
 
 #### 8.4.3 Расширение `NumFormatterExt` на числовых типах (план — пока не в коде)
 
@@ -827,7 +842,7 @@ void main() {
 
 В коде фич (`lib/presentation/`) **запрещены** сырые конструкции внешнего вида:
 
-- сырой `Color(...)` / `Colors.xxx` → только `Theme.of(context).colorScheme.xxx` (роли M3), `NoxBrand.*` (бренд-фикс), `NoxScrims.*` (скримы над QR-камерой), `NoxOpacity.*` (альфы поверх ролей) или `context.appColors.xxx` (двухполевой skeleton, §2) — единственные каналы цвета;
+- сырой `Color(...)` / `Colors.xxx` → только `Theme.of(context).colorScheme.xxx` (роли M3), `NoxBrand.*` (бренд-фикс), `NoxScrims.*` (скримы над QR-камерой), `NoxOpacity.*` (альфы поверх ролей) или `context.appColors.xxx` (двухполевой skeleton, §2) — единственные каналы цвета; допустимы только именованные `Colors.transparent` и `Colors.white` (заливки выделения, инициалы аватара);
 - сырой `EdgeInsets`/`SizedBox` с числовым литералом → только семантические роли `AppDimensionTokens.*` (предпочтительно), сырой шаг `AppSpacingTokens.sN` для разовых зазоров, или фиксированные `NoxSpacing.*`, где скейл нежелателен;
 - сырой `TextStyle(...)` → только `Theme.of(context).textTheme.*` (`noxTextTheme`) или фабрики `AppTextStyleTokens.xxx(...)`;
 - сырой `SystemUiOverlayStyle(...)` → только `AppOverlayStyleTokens.xxx` (по канону §6.1);
@@ -835,7 +850,7 @@ void main() {
 - сырая копи в виджете (`Text('Chats')`) → только `context.l10n.<key>` (ARB EN + UK, §8.3.0);
 - `.sp`/`.w`/`.h`/`.r`-extension'ы `flutter_screenutil` напрямую в коде фич — **нет**; только внутри классов-токенов.
 
-Единственные легитимные места объявления сырых значений цвета — сгенерированные файлы темы (`lib/design/theme/nox_*.dart`), файл доп-ролей (`app_colors.dart` — skeleton-литералы) и файлы токенов (`lib/design/app_*_tokens.dart`, например `AppOverlayStyleTokens` с его `const Color`-литералами). Это правило закреплено в `08-conventions-and-constitution.md`, проверяется на ревью, а его ассетная часть — тестом `test/design/single_channel_guard_test.dart`.
+Единственные легитимные места объявления сырых значений цвета — сгенерированные файлы темы (`lib/design/theme/nox_*.dart`), файл доп-ролей (`app_colors.dart` — skeleton-литералы) и файлы токенов (`lib/design/app_*_tokens.dart`, например `AppOverlayStyleTokens` с его `const Color`-литералами); вне UI ещё один литерал — заливка офскрин-холста в `lib/data/service/qr_image_decode_service_impl.dart`. Это правило закреплено в `08-conventions-and-constitution.md`, проверяется на ревью, а его ассетная часть — тестом `test/design/single_channel_guard_test.dart`.
 
 ---
 
@@ -905,11 +920,11 @@ Widget buildItemRow(BuildContext context, ItemModel item) {
 - [ ] `lib/design/app_overlay_style_tokens.dart`: `abstract final class`, `static const SystemUiOverlayStyle light`/`dark` — **только** поля статус-бара (нав-бар Android-specific, опущен); применяются по канону §6.1 (глобально в `AppRoot` по `Brightness`, `AnnotatedRegion` — задокументированное исключение).
 - [ ] Картиночные ассеты: `lib/design/gen/assets.gen.dart` (flutter_gen, gitignored, `Assets.png/.svg/.animation`) — **единственный** канал, подключён в `pubspec.yaml::flutter_gen`; семантика иконок — `NoxIcons` (§7.1); рукописного `AppImagesTokens` **нет**, гард — `test/design/single_channel_guard_test.dart`; директории — в `pubspec.yaml::flutter.assets`.
 - [ ] `lib/general/constants.dart`: `final class Constants` с приватным ctor — `databaseName = 'nox_app_db'`, `defaultLocale`, `defaultUserLabel = 'User7421'`, `designSize`, `railBreakpoint = 840` (единственный источник брейкпоинта оболочки), regex.
-- [ ] `lib/general/platform_utils.dart`: `PlatformUtils` с `isMobile`/`isDesktop` (desktop в scope, конституция v1.3.0, принцип VI) и per-OS геттерами, приватный ctor.
-- [ ] UI-строки: ARB `lib/l10n/app_en.arb` + `app_uk.arb` (идентичные наборы ключей, 140 шт.), `flutter: generate: true` + `l10n.yaml`, доступ через `context.l10n` (`lib/general/l10n_extension.dart`), живое переключение — `LocaleController`; локали ровно `en` + `uk`. **`lib/general/text_constants.dart` / `TextConstants` НЕ существует** — упоминание в коде или доке значит устаревший источник.
+- [ ] `lib/general/platform_utils.dart`: `PlatformUtils` с `isMobile`/`isDesktop` (desktop в scope, конституция, принцип VI) и per-OS геттерами, приватный ctor.
+- [ ] UI-строки: ARB `lib/l10n/app_en.arb` + `app_uk.arb` (идентичные наборы ключей, 213 шт.), `flutter: generate: true` + `l10n.yaml`, доступ через `context.l10n` (`lib/general/l10n_extension.dart`), живое переключение — `LocaleController`; локали ровно `en` + `uk`. **`lib/general/text_constants.dart` / `TextConstants` НЕ существует** — упоминание в коде или доке значит устаревший источник.
 - [ ] `lib/general/feature_flags.dart`: `abstract final FeatureFlags` — compile-time тогглы (`enableSearch`, `enablePullToRefresh`).
 - [ ] `lib/general/formatters/value_formatter.dart`: `@lazySingleton`, текущий скелет (no-arg ctor, дефолт `Constants.defaultLocale`), `intl` `NumberFormat`; settings-coupled вариант (`SettingsRepository` + `RepositoryResult.match`) — задокументированный план.
-- [ ] `lib/general/formatters/date_formatter.dart`: статические `short(...)` (`MMM dd, yyyy`) / `time(...)` (`HH:mm`), приватный ctor; богатый набор — план.
+- [ ] `lib/general/formatters/date_formatter.dart`: статические `short(...)` (`MMM dd, yyyy`) / `time(...)` (`HH:mm`) / `relative(...)` / `daySeparator(...)` / `momentShort(...)`, приватный ctor.
 - [ ] (План — пока не в коде) `lib/presentation/extension/value_formatter_ext.dart`: `extension NumFormatterExt on num` через `getIt<ValueFormatter>()`.
 - [ ] `context.appColors` резолвится в светлом И тёмном режиме (нет throw из-за отсутствующего расширения) — проверено переключением `themeMode`.
 - [ ] У каждого класса-токена и утилиты явный приватный конструктор `._()`.

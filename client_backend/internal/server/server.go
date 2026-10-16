@@ -4,15 +4,16 @@
 package server
 
 import (
+	"container/list"
 	"context"
-	"crypto/tls"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,24 +30,51 @@ import (
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
-	"nox.app/client-backend/internal/tor"
+	"nox.app/client-backend/internal/vault"
 )
 
 const (
+	// slowPathTimeout is the budget of every wait a round trip through Tor can
+	// stretch: one frame write, one ping's wait for its pong, the request
+	// headers, and TLS with the channel check (channel.go). It is every
+	// connection's budget, not only the onion ones' (045, FR-009): tor
+	// forwards the onion service to the main port, and a connection from it
+	// looks like any other. A round trip through Tor can take seconds; 30 s
+	// covers a 10 s one three times over.
+	slowPathTimeout     = 30 * time.Second
 	defaultPingInterval = 25 * time.Second
-	defaultWriteTimeout = 5 * time.Second
-	shutdownTimeout     = 5 * time.Second
-	readHeaderTimeout   = 5 * time.Second
-	// onionTimeout is the write and pong timeout of a connection that came in
-	// over onion, and the onion entry's header timeout (039, FR-012). A round
-	// trip through Tor can take seconds; the 5 s of the direct path would cut
-	// healthy connections. 30 s covers a 10 s round trip three times over.
-	onionTimeout = 30 * time.Second
+	// defaultWriteTimeout bounds one frame write and one ping's wait for its
+	// pong.
+	defaultWriteTimeout = slowPathTimeout
+	// defaultRevokedFlush bounds the goodbye of a revoked device's connection:
+	// enough for device.revoked through Tor behind a short queue, and no
+	// writeTimeout per frame for a peer that stopped reading.
+	defaultRevokedFlush = 5 * time.Second
+	// readHeaderTimeout bounds the request headers that follow the channel
+	// check on the main port.
+	readHeaderTimeout = slowPathTimeout
+	// defaultIdleTimeout bounds how long a connection kept for its next HTTP
+	// request may wait for it. Only a paired device's connection is kept - a
+	// stranger's ends with its answer (limitStrangers) - but a device can be
+	// revoked while its connection sits idle, and without a limit that
+	// connection would stay for as long as its holder liked. Well above the
+	// 15 s after which dart:io's client lets an idle connection go by default,
+	// so the server never closes one the app still means to use.
+	defaultIdleTimeout = 2 * time.Minute
+	// defaultBodyTimeout bounds a request's body where nothing of ours reads
+	// it (boundRequestBody): the slow path's budget, like the headers before
+	// it.
+	defaultBodyTimeout = slowPathTimeout
+	// pageReadHeaderTimeout is the service page's: a browser on this same
+	// machine, never a path through Tor.
+	pageReadHeaderTimeout = 5 * time.Second
+	shutdownTimeout       = 5 * time.Second
 	// drainTimeout bounds the wait for connection handlers at shutdown. Longer
-	// than one onion close handshake (5 s write + 5 s wait for the peer), so a
-	// goodbye still in flight through Tor is not cut off by the database
-	// closing under it.
+	// than one close handshake (the library's 5 s write + 5 s wait for the
+	// peer), which a connection through Tor can use whole, so a goodbye still
+	// in flight is not cut off by the database closing under it.
 	drainTimeout = 15 * time.Second
 	// outBuffer is the per-connection outbound queue (replies + replay +
 	// forwarded live events). Overflow on the LIVE path means a slow
@@ -78,13 +106,24 @@ type Server struct {
 
 	pingInterval time.Duration
 	writeTimeout time.Duration
-	// onionTimeout replaces writeTimeout for connections that came in over
-	// onion. A field so tests can scale it.
-	onionTimeout time.Duration
+	// revokedFlush is how long a revoked device's connection gets to take its
+	// device.revoked before it is cut (dropDevice). A field so tests can
+	// scale it.
+	revokedFlush time.Duration
+	// channelTimeout is the budget for TLS and the channel check together
+	// (044). A field so tests can scale it.
+	channelTimeout time.Duration
+	// idleTimeout is the main port's http.Server.IdleTimeout. A field so tests
+	// can scale it.
+	idleTimeout time.Duration
+	// bodyTimeout bounds a request's body where nothing of ours reads it
+	// (boundRequestBody). A field so tests can scale it.
+	bodyTimeout time.Duration
+	// maxUnpaired and unpairedTimeout bound the /ws connections of keys
+	// nobody paired (unpaired.go). Fields so tests can scale them.
+	maxUnpaired     int
+	unpairedTimeout time.Duration
 
-	// tor is the onion side (039): the supervisor, tor.Disabled() without
-	// Tor, a fake in tests. Never nil.
-	tor torService
 	// addrs is the current address snapshot. After startup only the watcher
 	// writes it; greetings read it.
 	addrs atomic.Pointer[addressSet]
@@ -108,29 +147,86 @@ type Server struct {
 	// part became its file and before the database hears of it - the window a
 	// client hanging up, a continuation or a crash lands in. Nil outside tests.
 	afterFinalize func(fileID string)
+	// And in pairing (046): right after `pair` found its request waiting and
+	// before the connection's wait takes hold - the window an Allow, a Deny,
+	// a cancel or the sweep can close the request in with nobody waiting on
+	// it yet. Nil outside tests.
+	beforeWait func(requestID string)
 	// What the service page shows about the process itself. Set once at
 	// startup: the schema version the migrator reported, the moment this
 	// process began. A person who closed that terminal has no other way to it.
 	schemaVersion int
 	startedAt     time.Time
+	// addrWarnings are the start parameters that were not applied (045). Set
+	// once at startup before anything serves, read by the page after.
+	addrWarnings []addressWarning
+	// box is RustSecureBox (050): the keys and signatures of the channel
+	// check. One per process; safe for every connection at once.
+	box *securebox.Box
+	// boxIsStub is whether that RustSecureBox is the stub (FR-022): the page
+	// says so for as long as it is. Set once at startup, before anything
+	// serves.
+	boxIsStub bool
+	// formToken is what the service page's forms carry - Set, the link
+	// buttons and the password forms - and what every POST of the page
+	// checks: 32 random bytes per process, hex. A page from another site
+	// cannot read it, so it cannot forge the form even from this machine's
+	// own browser. Run hands in the gate's (047), so one token holds from the
+	// lock page to the open one.
+	formToken string
+	// dataKey is the key the database and the attachments are encrypted with
+	// (047), as the password unsealed it. Only a backup needs it here: the
+	// snapshot is written under it, and the archive's MAC key comes from it.
+	dataKey []byte
 
-	// claim guards the one claim link this process ever hands out.
-	claim      sync.Mutex
-	claimToken string
+	// requestSweep is how often the sweeper closes pairing requests whose time
+	// ran out (046). A field so tests can scale it.
+	requestSweep time.Duration
 
 	// kick wakes the event dispatcher after a committed mutation; capacity 1
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns; wg tracks connection handlers so shutdown can wait
-	// for hijacked connections. Infrastructure-only synchronization
-	// (ws-rest-patterns §5); business state stays goroutine-owned.
+	// mu guards conns, transfers, unpaired and waits; wg tracks connection
+	// handlers so shutdown can wait for hijacked connections.
+	// Infrastructure-only synchronization (ws-rest-patterns §5); business
+	// state stays goroutine-owned.
 	mu    sync.Mutex
 	conns map[*client]struct{}
+	// transfers holds the file transfers under way. Each runs on a connection
+	// of its own since 044, which closing a device's socket does not touch, so
+	// a revocation walks this set beside conns (dropDevice).
+	transfers map[*transfer]struct{}
+	// unpaired holds the connections in conns whose key no device row named
+	// when they connected - strangers, who may only pair - oldest first, but
+	// for those waiting on a pairing request (waits) (unpaired.go). Under mu
+	// with conns: a newcomer's handler takes the oldest out to make room, a
+	// request closing on another goroutine puts its waiting connection back,
+	// and each one's deadline, on a timer's goroutine, takes it out if it is
+	// still there. unpairedCut and unpairedWarned space the warning about the
+	// ones taken out to make room.
+	unpaired       *list.List
+	unpairedCut    int
+	unpairedWarned time.Time
+	// waits holds, by request id, the connection waiting on each pairing
+	// request an invite opened (046): the one that presented it last. Such a
+	// connection has left unpaired - held to neither of its limits while the
+	// request waits - and its request's end, by whoever brings it, finds it
+	// here. Under mu with conns, for the same reasons as unpaired.
+	waits map[string]*client
 	wg    sync.WaitGroup
 }
 
+// transfer is one /files request under way: the device key its connection
+// proved, and that connection.
+type transfer struct {
+	deviceKey string
+	conn      *channelConn
+}
+
 // New builds a Server over an opened store, a running hub and a blob store.
+// Its log goes through the scrubbing handler whatever logger it is handed
+// (logscrub.go).
 func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:              cfg,
@@ -138,7 +234,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		hub:              h,
 		blob:             bl,
 		tokens:           newTokenStore(),
-		logger:           logger,
+		logger:           scrubbedLogger(logger),
 		writers:          newUploadWriters(),
 		stallTimeout:     defaultStallTimeout,
 		checkpointBytes:  defaultCheckpointBytes,
@@ -146,16 +242,37 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		continuationWait: defaultContinuationWait,
 		pingInterval:     defaultPingInterval,
 		writeTimeout:     defaultWriteTimeout,
-		onionTimeout:     onionTimeout,
-		tor:              tor.Disabled(),
+		revokedFlush:     defaultRevokedFlush,
+		channelTimeout:   defaultChannelTimeout,
+		idleTimeout:      defaultIdleTimeout,
+		bodyTimeout:      defaultBodyTimeout,
+		maxUnpaired:      defaultMaxUnpaired,
+		unpairedTimeout:  defaultUnpairedTimeout,
 		addrKick:         make(chan struct{}, 1),
 		addressPoll:      defaultAddressPoll,
 		listIPs:          usableIPs,
 		resolveHost:      resolveHost,
 		startedAt:        time.Now(),
+		formToken:        newFormToken(),
+		box:              securebox.New(),
+		requestSweep:     defaultRequestSweep,
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
+		transfers:        make(map[*transfer]struct{}),
+		unpaired:         list.New(),
+		waits:            make(map[string]*client),
 	}
+}
+
+// newFormToken mints the service page's form token.
+func newFormToken() string {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// The platform RNG failing is fatal-grade; mirrors tokenStore.issue. A
+		// guessable token would be worse than no page.
+		panic("crypto/rand: " + err.Error())
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 // kickDispatcher signals the dispatcher that new events are committed.
@@ -213,14 +330,53 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 	}
 }
 
-// Handler returns the full HTTP surface of stage 1.
+// Handler returns the HTTP surface the main port serves behind the channel:
+// the WebSocket and the file bytes, and nothing else. /health lives on the
+// service page's loopback listener (044): the main port answers nobody who has
+// not proved a key, and a probe that has not cannot ask it anything.
+//
+// Every request passes the door first (limitStrangers), unmatched ones
+// included: the 404 and 405 the mux writes end a stranger's connection like
+// any other answer.
+//
+// The check's two steps are the start of a connection and nothing else
+// (connauth): either one again, by any method, is a step out of order - 400,
+// and the connection ends there, as for a stranger (contract §1).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
-	return s.logRequests(mux)
+	mux.HandleFunc("/auth", handleCheckAgain)
+	mux.HandleFunc("/auth2", handleCheckAgain)
+	return s.logRequests(s.limitStrangers(mux))
+}
+
+// handleCheckAgain answers a step of the check on a connection that has
+// passed it: 400 with Connection: close.
+func handleCheckAgain(w http.ResponseWriter, r *http.Request) {
+	endWithAnswer(w, r)
+	w.Header().Set("Content-Length", "0")
+	w.WriteHeader(http.StatusBadRequest)
+}
+
+// configureMain sets what the main port's http.Server holds a connection to
+// once it passed the channel: the connection - and the key it proved - in
+// every request's context; the slow path's 30 s for a request's headers, since
+// a connection from tor looks like any other (045), and bodyTimeout - the same
+// 30 s - for a body nothing of ours reads (boundRequestBody); and idleTimeout
+// between two requests. One place, so the test stack serves exactly what Run
+// serves.
+//
+// "OPTIONS *" goes to the handler like any other request. Answered by net/http
+// itself it would never reach the door, and a stranger could keep its
+// connection by asking it again within each idle timeout.
+func (s *Server) configureMain(hs *http.Server) {
+	hs.ConnContext = withChannelPeer
+	hs.ConnState = s.boundRequestBody
+	hs.ReadHeaderTimeout = readHeaderTimeout
+	hs.IdleTimeout = s.idleTimeout
+	hs.DisableGeneralOptionsHandler = true
 }
 
 // CloseConnections force-closes every live WebSocket with the going-away
@@ -228,8 +384,9 @@ func (s *Server) Handler() http.Handler {
 // waits for hijacked connections.
 //
 // In PARALLEL (039). One close handshake waits up to 5 s to write and 5 s for
-// the peer's answer, and over Tor it can use both; one after another, a few
-// onion devices would push the rest of the shutdown past every deadline.
+// the peer's answer, and a connection through Tor can use both; one after
+// another, a few devices away from home would push the rest of the shutdown
+// past every deadline.
 func (s *Server) CloseConnections() {
 	s.mu.Lock()
 	clients := make([]*client, 0, len(s.conns))
@@ -261,21 +418,46 @@ func (s *Server) WaitConnections(ctx context.Context) error {
 	}
 }
 
-// dropDevice cuts off every live connection authenticated with a revoked key,
-// and tells each one why before the socket closes.
+// dropDevice cuts off every live connection authenticated with a revoked key:
+// its sockets, each told why before it closes, and its file transfers under
+// way, cut without a word - a transfer has no frame to carry a reason on, and
+// the socket carries it.
 //
 // Immediately, not on the device's next attempt: a sold tablet would otherwise
 // keep reading the conversation for as long as it stays online, which is the
-// whole thing revocation exists to stop.
+// whole thing revocation exists to stop. For a transfer that is no figure of
+// speech: nothing but silence ends one (043), so a download already under way
+// would go on for as long as the tablet kept reading it.
+//
+// The transfers go first. Cutting one only closes a socket and never waits,
+// while telling a socket why can wait on that connection's full queue.
 func (s *Server) dropDevice(deviceKey string) {
 	s.mu.Lock()
 	doomed := make([]*client, 0, 1)
 	for c := range s.conns {
 		if c.deviceKey == deviceKey {
+			// Before anything else: a command the connection reads from now
+			// on is refused (dispatch), even one already in its buffer.
+			c.revoked.Store(true)
 			doomed = append(doomed, c)
+			// A connection on its way out holds no place and waits on
+			// nothing (unpaired.go): its goodbye can take seconds, and a
+			// request of the revoked device closing right after this must
+			// not put it back among the strangers, where it would push out
+			// one of them.
+			s.letGoLocked(c)
+		}
+	}
+	var cut []*channelConn
+	for tr := range s.transfers {
+		if tr.deviceKey == deviceKey {
+			cut = append(cut, tr.conn)
 		}
 	}
 	s.mu.Unlock()
+	for _, conn := range cut {
+		conn.cut()
+	}
 	payload, err := json.Marshal(map[string]string{"device_key": deviceKey})
 	if err != nil {
 		// Cannot fail for a map of strings, but the connections still have to
@@ -283,8 +465,15 @@ func (s *Server) dropDevice(deviceKey string) {
 		payload = json.RawMessage(`{}`)
 	}
 	for _, c := range doomed {
-		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
-		go c.closeAfterFlush("device revoked")
+		// A peer that does not read would hold the goodbye for writeTimeout
+		// a frame queued ahead of it: past the flush budget it is cut. Armed
+		// first, and the goodbye queued off this goroutine: a full queue
+		// must not hold the device that asked for the revocation.
+		time.AfterFunc(s.revokedFlush, c.cut)
+		go func() {
+			c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
+			c.closeAfterFlush("device revoked")
+		}()
 	}
 }
 
@@ -326,8 +515,23 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 }
 
 // announcePaired tells a person's OTHER live connections that a device has just
-// been added, so an open device list refreshes itself instead of showing a
-// stale one until somebody leaves the screen and comes back.
+// been added through `pair`, so an open device list refreshes itself instead of
+// showing a stale one until somebody leaves the screen and comes back.
+//
+// The connection it came from is the RECEIVER, not a parameter, and that is
+// deliberate: excluding the wrong one is then unrepresentable. It cannot be
+// asked through a socket - a device that is pairing has not greeted and so has
+// no identity to match on - and it is still live: a greeting that fails on the
+// journal id or the cursor leaves identity.UserID written and helloDone false,
+// dispatch still admits `pair` on that connection, and without the exclusion
+// the device would be told about its own pairing.
+func (origin *client) announcePaired(userID string) {
+	origin.srv.announceDevicesChanged(userID, origin)
+}
+
+// announceDevicesChanged sends device.paired to every live connection of one
+// person but except (nil for none): the set of devices changed, and the
+// receiver re-reads device.list.
 //
 // Shaped after refreshLabel and NOT after dropDevice: the two answer different
 // questions. dropDevice looks for the connections holding ONE KEY and closes
@@ -336,9 +540,7 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 //
 // Collected under s.mu and sent outside it, for refreshLabel's reason:
 // sendFrame writes to a bounded queue, and a full one under the registry lock
-// would hold up every other connection on the server. (refreshLabel says "of
-// every other person", which this server has not had since 037 - one machine,
-// one person - but the lock is shared by every connection all the same.)
+// would hold up every other connection on the server.
 //
 // The loop is sequential and send blocks, so a recipient whose queue is full
 // holds up the recipients AFTER it, in an order map iteration does not fix. It
@@ -349,43 +551,15 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 // it would change delivery for device.revoked too, which deserves its own
 // decision rather than arriving as a side effect of this one.
 //
-// The connection it came from is the RECEIVER, not a parameter, and that is
-// deliberate: excluding the wrong one is then unrepresentable. refreshLabel
-// takes an origin because its caller could legitimately pass a different one;
-// this caller never can - and no test could catch it passing nil, because the
-// pairing connection has no identity to match on in the ordinary case, so the
-// mistake would look correct through every socket in the suite.
-//
-// The exclusion is live, not a statement of intent. It is easy to read
-// the code as one - handlePair refuses an already-greeted connection, so the
-// pairing device usually has no identity to match on - but "greeted" and "has
-// an identity" are two different marks, and handleSessionHello sets the second
-// several steps before the first: a greeting that fails on the journal id or
-// the cursor leaves identity.UserID written and helloDone false, and dispatch
-// still admits `pair` on that connection. Then it DOES match, and without this
-// the device would be told about its own pairing.
-//
-// Inherited with the shape: a connection in the MIDDLE of greeting also has an
+// Inherited with the shape: a connection in the MIDDLE of greeting has an
 // empty identity.UserID, because the greeting reads the person from the store
 // and writes it to the connection a few lines later. Such a connection misses
 // this event - and reads the list when its screen opens, which is where every
 // device that was offline ends up anyway. It is the same window the rename
 // carries (see client_backend/CLAUDE.md), and it closes here when it closes
 // there.
-func (origin *client) announcePaired(userID string) {
-	s := origin.srv
-	s.mu.Lock()
-	notify := make([]*client, 0, 1)
-	for c := range s.conns {
-		if c.identity.UserID == userID && c != origin {
-			notify = append(notify, c)
-		}
-	}
-	s.mu.Unlock()
-
-	if len(notify) == 0 {
-		return
-	}
+func (s *Server) announceDevicesChanged(userID string, except *client) {
+	notify := s.connectionsWhere(func(c *client) bool { return c.identity.UserID == userID && c != except })
 	// Empty on purpose (contract §8A): the event says the set of devices
 	// changed, not how, and the receiver re-reads device.list. A device key here
 	// would be a public key on a frame nobody reads it from, and a spent token
@@ -393,22 +567,6 @@ func (origin *client) announcePaired(userID string) {
 	for _, c := range notify {
 		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDevicePaired, Data: json.RawMessage(`{}`)})
 	}
-}
-
-// setDeviceKey records which key a connection authenticated with, under the
-// same lock dropDevice reads it through.
-func (s *Server) setDeviceKey(c *client, key string) {
-	s.mu.Lock()
-	c.deviceKey = key
-	s.mu.Unlock()
-}
-
-// currentDeviceKey reads back the key a connection authenticated with, under
-// the lock setDeviceKey writes it through.
-func (s *Server) currentDeviceKey(c *client) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return c.deviceKey
 }
 
 // setIdentity records who a connection speaks as, under the same lock the
@@ -428,9 +586,9 @@ func (s *Server) setIdentity(c *client, id store.Identity) {
 // currentIdentity reads back the person this connection speaks as.
 //
 // Needed only where the LABEL is consumed: refreshLabel rewrites it from
-// another goroutine, while user_id and the ownership flag are written once by
-// the read goroutine itself and never change. The name matters because it is
-// frozen into message history at send time.
+// another goroutine, while user_id is written once by the read goroutine itself
+// and never changes. The name matters because it is frozen into message history
+// at send time.
 func (s *Server) currentIdentity(c *client) store.Identity {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -443,15 +601,54 @@ func (s *Server) track(c *client) {
 	s.mu.Unlock()
 }
 
+// untrack takes c out of the registry, and out of a stranger's limits if it was
+// still held to them: a connection that is gone holds no place and waits on
+// nothing.
 func (s *Server) untrack(c *client) {
 	s.mu.Lock()
 	delete(s.conns, c)
+	s.letGoLocked(c)
 	s.mu.Unlock()
 }
 
+// trackTransfer registers a transfer under the device key its connection
+// proved, until the returned func takes it out again.
+func (s *Server) trackTransfer(deviceKey string, conn *channelConn) (untrack func()) {
+	tr := &transfer{deviceKey: deviceKey, conn: conn}
+	s.mu.Lock()
+	s.transfers[tr] = struct{}{}
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.transfers, tr)
+		s.mu.Unlock()
+	}
+}
+
+// requestNote is what the door learns of a request for its log line: whether
+// the key its connection proved is paired.
+type requestNote struct{ paired bool }
+
+type requestNoteKey struct{}
+
+// noteRequest records on r's note, when it carries one, what the door found.
+func noteRequest(r *http.Request, paired bool) {
+	if note, ok := r.Context().Value(requestNoteKey{}).(*requestNote); ok {
+		note.paired = paired
+	}
+}
+
+// logRequests writes a line per request: at Info for a paired device's, at
+// Debug for a key nobody paired. A stranger's connection carries one request
+// and anyone can mint such a key and pass the check with it, so at Info its
+// lines would grow with the handshake rate - which nothing bounds (050) - and
+// push out what an operator needs to read; the entry's own warnings about
+// strangers are counted per minute instead (channel.go).
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		note := &requestNote{}
+		r = r.WithContext(context.WithValue(r.Context(), requestNoteKey{}, note))
 		next.ServeHTTP(w, r)
 		// Transfer tokens are one-shot capabilities - they never reach
 		// logs. Contains, not HasPrefix: uncleaned request paths like
@@ -461,7 +658,11 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		if strings.Contains(path, "/files/") {
 			path = "/files/*"
 		}
-		s.logger.Info("http request",
+		level := slog.LevelDebug
+		if note.paired {
+			level = slog.LevelInfo
+		}
+		s.logger.Log(r.Context(), level, "http request",
 			"method", r.Method,
 			"path", path,
 			"duration_ms", time.Since(start).Milliseconds(),
@@ -469,15 +670,129 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	})
 }
 
-// Run owns the whole process: opens the database, migrates, starts the hub
-// and the HTTP server, and shuts everything down in order on ctx
-// cancellation. It returns when the process is fully stopped.
+// Run owns the whole process: it waits for the password that opens the data
+// (047), then opens the database, migrates, starts the hub and the HTTP
+// server, and shuts everything down in order on ctx cancellation. It returns
+// when the process is fully stopped.
 func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger) error {
-	dbs, err := db.Open(cfg.DBPath)
+	return run(ctx, cfg, migrations, logger, vault.DefaultParams())
+}
+
+// run is Run with the Argon2id costs new keys are sealed with: the real ones
+// in production, small ones in tests, which seal and unseal a key many times.
+func run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger, kdf vault.Params) error {
+	// Every line of the process goes through the scrubbing handler, from the
+	// first one on - the lock's own lines included: the address parameters
+	// are applied once the data is open, before the main port listens
+	// (FR-022).
+	logger = scrubbedLogger(logger)
+	// What is on disk decides the state before anything listens: nothing - a
+	// first password; a database with its key - locked; one without the other
+	// - no start at all, rather than a new database beside a lost one.
+	state, err := detectLock(cfg.DBPath, cfg.KeyPath())
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
+	}
+	if cfg.StatusAddr == "" {
+		return errors.New("the service page is off (-status-addr is empty), and the password that opens this " +
+			"server's data is entered there or with noxd unlock through it")
+	}
+
+	// The service page gets its OWN listener, on loopback, and the main one
+	// never serves it. That is the whole protection: a check on RemoteAddr
+	// inside a handler is a check somebody eventually routes around with a
+	// header, and the main server is ordinarily bound to every interface -
+	// otherwise no phone could reach it.
+	//
+	// It stays PLAIN HTTP while the main listener is TLS, and that is a
+	// decision rather than an oversight: the socket carries no network traffic
+	// by construction, so there is nothing in transit to protect, and a
+	// certificate there would only teach an operator's browser to expect a
+	// warning - on the one page whose whole job is to take the password that
+	// opens this machine's data and hand out the way in to it.
+	//
+	// And it comes up FIRST, before the data is open, because the password is
+	// entered on it (047). A port somebody else holds is therefore a server
+	// that cannot start, where it used to be a page skipped: nothing else can
+	// unlock it.
+	statusListener, err := net.Listen("tcp", cfg.StatusAddr)
+	if err != nil {
+		return fmt.Errorf("service page on %s - the password is entered there, so the server cannot start without it: %w",
+			cfg.StatusAddr, err)
+	}
+	if err := assertLoopback(statusListener); err != nil {
+		// The config check catches the mistake when it is made; this is the
+		// guarantee. A name can resolve to loopback at parse time and
+		// somewhere else at bind time, and the difference between those two
+		// moments is a machine link on a network.
+		_ = statusListener.Close()
+		return err
+	}
+	g := newGate(cfg, state, kdf, logger)
+	page := startPage(statusListener, g.handler(), logger)
+	// On every way out. The open server stops it itself, earlier, in the
+	// order invariant 9 sets; this is for the ways out before that.
+	defer func() { _ = page.stop() }()
+
+	// Printed, or nobody learns it exists: the password goes in there, and
+	// later the link for a new device comes out of it. The scheme is stated on
+	// purpose: the main listener is TLS, and an operator who assumes the page
+	// followed it gets a browser error instead of a password field.
+	pageURL := "http://" + page.addr
+	if state == stateSetup {
+		logger.Info("no password is set yet - set one on the service page, or with noxd unlock; "+
+			"devices cannot reach this server until then", "url", pageURL, "tls", false)
+	} else {
+		logger.Info("this server is locked - enter its password on the service page, or with noxd unlock; "+
+			"devices cannot reach it until then", "url", pageURL, "tls", false)
+	}
+
+	key, opener, ok := g.awaitKey(ctx)
+	if !ok {
+		logger.Info("stopped while locked")
+		return nil
+	}
+	return serve(ctx, cfg, migrations, logger, key, g, page, opener)
+}
+
+// serve opens the data with key and runs the server until ctx ends: what Run
+// did before 047, from the database on.
+//
+// The request that brought the key is answered exactly once: once the main
+// port listens, or with why the server could not start - after which the
+// process goes down with the same reason in its log, as a database that failed
+// to open always did. A failure is answered BEFORE the page stops: stopping it
+// ends that request's context, and an answer given after that reached nobody,
+// so every such failure read "the server is stopping" instead of its reason.
+func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger, key []byte, g *gate,
+	page *servicePage, opener gateRequest) (err error) {
+	opened := time.Now()
+	answered := false
+	refuse := func(err error) {
+		// A server stopped while it opened has nothing to report but that,
+		// and the request hears it from the page's own stop.
+		if ctx.Err() == nil {
+			opener.answer(codeInternal, "the password was accepted, but the server cannot start and is stopping: "+err.Error())
+		}
+		answered = true
+	}
+	dbs, err := db.Open(cfg.DBPath, key)
+	if err != nil {
+		err = fmt.Errorf("open database: %w", err)
+		refuse(err)
+		return err
 	}
 	defer func() { _ = dbs.Close() }()
+	// Registered after the database's close, so it runs before it: whatever
+	// way serve ends, the page stops before the database it reads closes
+	// (invariant 9).
+	defer func() { _ = page.stop() }()
+	// Registered after the page's stop, so it runs before it - see above.
+	defer func() {
+		if err != nil && !answered {
+			refuse(err)
+		}
+	}()
 
 	version, err := db.Migrate(ctx, dbs.Write, migrations)
 	if err != nil {
@@ -488,12 +803,12 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// pre-release rule edits it in place). Without this assertion the mismatch
 	// would degrade into an internal error on every greeting - a silent
 	// failure where a loud one is needed.
-	if err := assertIdentitySchema(ctx, dbs.Read, migrations, cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, migrations, cfg.DBPath, cfg.FilesPath); err != nil {
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
 
-	bl, err := blob.Open(cfg.FilesPath)
+	bl, err := blob.Open(cfg.FilesPath, key)
 	if err != nil {
 		return fmt.Errorf("open files dir: %w", err)
 	}
@@ -501,14 +816,6 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	h := hub.New()
 	st := store.New(dbs.Read, dbs.Write)
-	// One read, one snapshot. The warning and the decision about printing a
-	// claim link are the same fact, and asking for it twice is how the two
-	// start disagreeing - an operator getting a link with no warning, or a
-	// warning with no link.
-	ownership, err := st.ReadOwnershipState(ctx)
-	if err != nil {
-		return fmt.Errorf("read ownership state: %w", err)
-	}
 	// The machine's own identity is settled BEFORE the journal is touched.
 	//
 	// EnsureServerIdentity refuses to mint a key for a store that already holds
@@ -518,23 +825,53 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// wipe its chats, messages, cursor and read marks. Running it first meant an
 	// aborted startup still destroyed every client's local world, silently and
 	// before the error that stopped it was even printed.
-	machine, err := st.EnsureServerIdentity(ctx)
+	box := securebox.New()
+	machine, err := st.EnsureServerIdentity(ctx, box)
 	if err != nil {
 		return fmt.Errorf("ensure server identity: %w", err)
 	}
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	claimToken, err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger)
+	// The machine's private key, read once: the channel listener proves it on
+	// every connection, and nothing else ever asks for it. A key made by
+	// another implementation of the check - Eidolon before 050, the stub
+	// before the real RustSecureBox - is rekeyed here, before anything reads
+	// the public key, and every device pairs again (FR-021).
+	serverKey, rekeyed, err := st.ServerKey(ctx, box)
 	if err != nil {
+		return fmt.Errorf("read the server key: %w", err)
+	}
+	if rekeyed {
+		logger.Warn("server key was made by another RustSecureBox: every device pairs again")
+		if machine, err = st.ServerIdentity(ctx); err != nil {
+			return fmt.Errorf("read the server identity: %w", err)
+		}
+	}
+	boxIsStub := box.IsStub()
+	if boxIsStub {
+		logger.Warn("RustSecureBox is a stub: devices are not really verified")
+	}
+	// The address parameters land before any listener opens, so the first
+	// greeting and the first link the page or `noxd link` hands out already
+	// name them (045, FR-003). A malformed one is a warning, never a reason to
+	// stay down.
+	addrWarnings, err := applyAddressParams(ctx, st, cfg, logger)
+	if err != nil {
+		return err
+	}
+	if err := sayHowToPair(ctx, st, cfg, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
-	// The page hands out the SAME right the terminal just printed. A second
-	// token would be a second unrevocable door, and the claim token has no
-	// expiry to close it.
-	srv.seedClaimToken(claimToken)
+	srv.addrWarnings = addrWarnings
+	srv.box = box
+	srv.boxIsStub = boxIsStub
+	srv.dataKey = key
+	// One form token for the life of the process: a form the lock page
+	// rendered is still the page's own once the server has opened.
+	srv.formToken = g.formToken
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
 	// older than a day are the only garbage under indefinite retention.
@@ -542,260 +879,135 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return fmt.Errorf("sweep orphans: %w", err)
 	}
 
-	// The certificate is built here, once, from the key settled above. There is
-	// no flag to serve without it: a channel that can be asked to downgrade is
-	// a channel somebody downgrades, and the phase exists to remove that.
-	tlsConfig, err := srv.serverTLSConfig(ctx)
+	// The TLS side of the channel, built here, once, around a throwaway key.
+	// There is no flag to serve without it, and none to serve without the check
+	// after it: a channel that can be asked to downgrade is a channel somebody
+	// downgrades.
+	tlsConfig, err := channelTLSConfig(time.Now())
 	if err != nil {
 		return err
 	}
+	// The HTTP server does no TLS of its own: its listener hands it connections
+	// that already passed both layers (channel.go), each carrying the device
+	// key it proved. HTTP/2 cannot happen - the only TLS here offers
+	// http/1.1, and nothing serves h2 in the clear.
+	//
+	// ONE port for every path (045): tor runs as a separate service and
+	// forwards the onion service here, so a connection through Tor arrives
+	// like one from the next room and is held to the same rules - and to the
+	// same slow-path timeouts.
 	httpServer := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: readHeaderTimeout,
-		TLSConfig:         tlsConfig,
-		// A non-nil empty map means "I am managing the protocols myself", which
-		// is how HTTP/2 is kept off. ServeTLS otherwise appends h2 to NextProtos
-		// regardless of what was set there, and the WebSocket upgrade this whole
-		// server is built around does not exist over h2.
-		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+		Handler: srv.Handler(),
+		// net/http's own complaints - a handler's panic value above all - go
+		// through the same handler as every other line, scrubbed, instead of
+		// straight to stderr.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+	srv.configureMain(httpServer)
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
-	// The onion side (039): a loopback entry of its own with the same
-	// certificate, and the supervisor that runs tor. With or without Tor the
-	// first address snapshot is taken here, before any listener opens, so the
+	// The first address snapshot is taken before any listener opens, so the
 	// very first greeting already carries a list (contract §3: `direct` is
 	// always there).
-	var onionServer *http.Server
-	var onionListener net.Listener
-	var supervisor *tor.Supervisor
-	if cfg.Tor {
-		supervisor, onionServer, onionListener = srv.setupOnion(ctx, tlsConfig, logger)
-	}
-	srv.refreshAddresses()
+	srv.refreshAddresses(ctx)
 
-	// The service page gets its OWN listener, on loopback, and the main one
-	// never serves it. That is the whole protection: a check on RemoteAddr
-	// inside a handler is a check somebody eventually routes around with a
-	// header, and the main server is ordinarily bound to every interface -
-	// otherwise no phone could reach it. An empty address removes the listener
-	// rather than the handler, so the port is not even held.
-	//
-	// It stays PLAIN HTTP while the main listener is TLS, and that is a
-	// decision rather than an oversight: the socket carries no network traffic
-	// by construction, so there is nothing in transit to protect, and a
-	// certificate there would only teach an operator's browser to expect a
-	// warning - on the one page whose whole job is to hand out the right to
-	// own this machine.
-	var statusServer *http.Server
-	var statusListener net.Listener
-	if cfg.StatusAddr != "" {
-		// Its OWN error variable. Assigning to the function's would leave it
-		// non-nil on the "logged it and carried on" path, and the next `if err
-		// != nil` anybody adds below would turn a busy port back into a server
-		// that refuses to start.
-		listener, listenErr := net.Listen("tcp", cfg.StatusAddr)
-		statusListener = listener
-		if listenErr != nil {
-			logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", listenErr)
-		} else if err := assertLoopback(statusListener); err != nil {
-			// The config check catches the mistake when it is made; this is the
-			// guarantee. A name can resolve to loopback at parse time and
-			// somewhere else at bind time, and the difference between those two
-			// moments is a claim link on a network.
-			_ = statusListener.Close()
-			statusListener = nil
-			if onionListener != nil {
-				_ = onionListener.Close()
-			}
-			return err
-		}
-		if statusListener != nil {
-			statusServer = &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
-		}
+	// The main port opens only now (047): until the data is open there is
+	// nothing a device could be served, and a port that answers nothing would
+	// still say a server is there. Bound here rather than in its goroutine, so
+	// a port somebody else holds is said to the person who just unlocked.
+	raw, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("the main port %s cannot be opened: %w", cfg.Addr, err)
 	}
+	// The machine's PUBLIC key, which is what an operator compares with the
+	// one in a link; the private half and every token stay out of this line.
+	logger.Info("listening", "addr", cfg.Addr, "tls", "1.3",
+		"server_key", base64.StdEncoding.EncodeToString(machine.PublicKey))
+	g.opened(srv)
+	opener.answer("", "")
+	answered = true
+	logger.Info("server unlocked", "took_ms", time.Since(opened).Milliseconds())
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
-	// The watcher and the supervisor get contexts of their OWN, like the hub:
-	// on the errgroup's they would stop the moment shutdown begins - tor
-	// included - while onion clients are still being told goodbye through it
-	// (invariant 9).
+	// The watcher gets a context of its OWN, like the hub: it sends to the
+	// connections that are still being told goodbye, and it reads the
+	// database, so it stops after the drain and before the database closes
+	// (invariant 9) rather than the moment shutdown begins. The request sweeper
+	// (046) does both as well, and stops beside it - and so does the gate's
+	// keeper (047), which may be writing a backup out of the database.
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	defer stopWatch()
-	torCtx, stopTor := context.WithCancel(context.Background())
-	defer stopTor()
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	defer stopSweep()
+	keepCtx, stopKeeper := context.WithCancel(context.Background())
+	defer stopKeeper()
 
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
+	eg, gctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
 		h.Run(hubCtx)
 		return nil
 	})
-	g.Go(func() error {
+	eg.Go(func() error {
 		return srv.runDispatcher(gctx)
 	})
-	g.Go(func() error {
+	eg.Go(func() error {
 		srv.runAddressWatcher(watchCtx)
 		return nil
 	})
-	if supervisor != nil {
-		g.Go(func() error {
-			supervisor.Run(torCtx)
-			return nil
-		})
-		g.Go(func() error {
-			// No address in this line: the onion address never reaches a log.
-			logger.Info("onion entry listening on loopback for tor", "tls", "1.3")
-			if err := onionServer.ServeTLS(onionListener, "", ""); !errors.Is(err, http.ErrServerClosed) {
-				// Logged, not returned: the direct path is the product, and
-				// losing the onion entry must not take it down (FR-007).
-				logger.Error("onion entry stopped, serving the direct path only", "err", err)
-			}
-			return nil
-		})
-	}
-	g.Go(func() error {
-		logger.Info("listening", "addr", cfg.Addr, "tls", "1.3", "fingerprint", machine.Fingerprint)
-		// Empty file names: the certificate and key are already in TLSConfig,
-		// and there are no files for them to be read from by design.
-		if err := httpServer.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
+	eg.Go(func() error {
+		srv.runRequestSweeper(sweepCtx)
+		return nil
+	})
+	eg.Go(func() error {
+		g.serveOpen(keepCtx)
+		return nil
+	})
+	eg.Go(func() error {
+		channel := srv.newChannelListener(raw, tlsConfig, serverKey, srv.channelTimeout)
+		if err := httpServer.Serve(channel); !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 		}
 		return nil
 	})
-	if statusServer != nil {
-		g.Go(func() error {
-			// Printed, or nobody learns it exists. Next to the claim link,
-			// because the two are read at the same moment.
-			// The scheme is stated on purpose: the main listener is https now,
-			// and an operator who assumes the page followed it gets a browser
-			// error instead of a claim link.
-			logger.Info("service page for this machine only, plain HTTP by design",
-				"url", "http://"+statusListener.Addr().String(), "tls", false)
-			if err := statusServer.Serve(statusListener); !errors.Is(err, http.ErrServerClosed) {
-				// Logged, NOT returned. Returning it cancels the group and
-				// takes the whole messenger down: a port somebody else already
-				// holds - 8081 is not rare, and a second noxd with its own -db
-				// would collide by default - would stop people talking to each
-				// other over a page nobody had opened yet.
-				logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", err)
-			}
-			return nil
-		})
-	}
-	g.Go(func() error {
+	eg.Go(func() error {
 		<-gctx.Done()
-		// The onion entry stops accepting FIRST: the main server's Shutdown
-		// closes its own listener and then closes every registered
-		// connection, and an onion connection accepted after that snapshot
-		// would never be told to go and would hold the drain to its deadline.
-		var err error
-		if onionServer != nil {
-			onionCtx, cancelOnion := context.WithTimeout(context.Background(), shutdownTimeout)
-			err = onionServer.Shutdown(onionCtx)
-			cancelOnion()
-		}
-		// The main server's deadline starts only now. A slow onion request -
-		// an upload over Tor - can hold the onion drain to its end, and a
-		// clock started before it would hand the main server an expired
-		// context: its listener would close with nothing drained, leaving
-		// requests it accepted meanwhile to race the database close.
 		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		mainErr := httpServer.Shutdown(shCtx)
+		err := httpServer.Shutdown(shCtx)
 		cancel()
-		if mainErr != nil && err == nil {
-			err = mainErr
-		}
-		if statusServer != nil {
-			// Down with the main one and BEFORE the database closes: a request
-			// arriving mid-shutdown would otherwise read a store being closed
-			// underneath it (invariant 9).
-			//
-			// Its OWN deadline, not the leftovers of the main one: sharing an
-			// expired context closes the listener and returns immediately,
-			// leaving a page request in flight to race the database close -
-			// the exact thing the ordering is for.
-			statusCtx, cancelStatus := context.WithTimeout(context.Background(), shutdownTimeout)
-			statusErr := statusServer.Shutdown(statusCtx)
-			cancelStatus()
-			if statusErr != nil && err == nil {
-				err = statusErr
-			}
+		// Down with the main one and BEFORE the database closes: a request
+		// arriving mid-shutdown would otherwise read a store being closed
+		// underneath it (invariant 9). The page ends every request's context
+		// first, so a backup being written stops rather than outliving the
+		// database; and it waits on its OWN deadline, not the leftovers of the
+		// main one - sharing an expired context closes the listener and
+		// returns immediately, leaving a page request in flight to race the
+		// database close, the exact thing the ordering is for.
+		if pageErr := page.stop(); pageErr != nil && err == nil {
+			err = pageErr
 		}
 		// Shutdown ignores hijacked connections; wait for their handlers so
 		// the going-away close frames flush and nothing touches the store
-		// after the database closes (invariant 9). Its own budget: an onion
-		// close handshake alone can take ten seconds.
+		// after the database closes (invariant 9). Its own budget: a close
+		// handshake through Tor alone can take ten seconds.
 		drainCtx, cancelDrain := context.WithTimeout(context.Background(), drainTimeout)
 		if waitErr := srv.WaitConnections(drainCtx); waitErr != nil {
 			logger.Warn("connections still draining at shutdown deadline", "err", waitErr)
 		}
 		cancelDrain()
-		// Then the watcher and tor: the supervisor hangs up its control
-		// connection, tor leaves (killed if it has not in ten seconds), and
-		// Run returns - the errgroup waits for it before the database closes.
+		// Then the keeper, the watcher, the request sweeper and the hub; serve
+		// returns - the errgroup waits for all of them before the database
+		// closes.
+		stopKeeper()
 		stopWatch()
-		stopTor()
+		stopSweep()
 		stopHub()
 		if err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
 		return nil
 	})
-	return g.Wait()
-}
-
-// setupOnion prepares the onion side: the loopback entry tor will forward to,
-// and the supervisor. Any failure here is logged and leaves the server on the
-// direct path alone - Tor is an addition to it, never a condition for it
-// (FR-007) - with a supervisor that says Tor is on and why it is not working,
-// rather than one that says it was turned off.
-func (s *Server) setupOnion(ctx context.Context, tlsConfig *tls.Config, logger *slog.Logger) (*tor.Supervisor, *http.Server, net.Listener) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		logger.Error("onion entry unavailable, serving the direct path only", "err", err)
-		s.tor = tor.Unavailable("the onion entry could not listen: " + err.Error())
-		return nil, nil, nil
-	}
-	seed, err := s.store.OnionSeed(ctx)
-	if err != nil {
-		_ = ln.Close()
-		logger.Error("onion key unavailable, serving the direct path only", "err", err)
-		s.tor = tor.Unavailable("the onion key could not be read")
-		return nil, nil, nil
-	}
-	sup, err := tor.New(tor.Config{
-		Bin:       s.cfg.TorBin,
-		DataDir:   s.cfg.TorDir,
-		Seed:      seed,
-		Target:    ln.Addr().String(),
-		Keys:      s.activeKeys,
-		OnOffered: s.pokeAddresses,
-		Logger:    logger.With("component", "tor"),
-	})
-	if err != nil {
-		_ = ln.Close()
-		logger.Error("tor supervisor unavailable, serving the direct path only", "err", err)
-		s.tor = tor.Unavailable("the onion key is not usable")
-		return nil, nil, nil
-	}
-	s.tor = sup
-	onionServer := &http.Server{
-		Handler: s.Handler(),
-		// The same certificate as the main entry: the pin is one fingerprint
-		// whichever way a device came (FR-013).
-		TLSConfig:         tlsConfig,
-		ReadHeaderTimeout: onionTimeout,
-		// As on the main server: a non-nil empty map keeps HTTP/2 off, and the
-		// WebSocket upgrade does not exist over h2.
-		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
-		ConnContext:  markOnionConn,
-		// Handshake noise from tor's side of the loopback says nothing a person
-		// can act on.
-		ErrorLog: log.New(io.Discard, "", 0),
-	}
-	return sup, onionServer, ln
+	return eg.Wait()
 }
 
 // assertIdentitySchema refuses to start on a database written before the
@@ -818,16 +1030,16 @@ func (s *Server) setupOnion(ctx context.Context, tlsConfig *tls.Config, logger *
 //
 // A zero stored fingerprint means a database from before this existed, which is
 // by definition older than the current schema.
-func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, dbPath string) error {
+func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, dbPath, filesPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
-			"('users', 'devices', 'journal', 'server_identity', 'pair_tokens')").Scan(&present)
+			"('users', 'devices', 'journal', 'server_identity', 'pair_tokens', 'pair_requests')").Scan(&present)
 	if err != nil {
 		return fmt.Errorf("inspect schema: %w", err)
 	}
-	if present != 5 {
-		return staleSchemaError(dbPath)
+	if present != 6 {
+		return staleSchemaError(dbPath, filesPath)
 	}
 	want, err := db.Fingerprint(migrations)
 	if err != nil {
@@ -838,74 +1050,44 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, d
 		return err
 	}
 	if stored != want {
-		return staleSchemaError(dbPath)
+		return staleSchemaError(dbPath, filesPath)
 	}
 	return nil
 }
 
-func staleSchemaError(dbPath string) error {
+// staleSchemaError names everything a fresh start needs gone: the database with
+// its -wal and -shm siblings, its key file (047: a key file with no database
+// stops the next start too) and the attachments. A backup of this server is of
+// the same schema, so starting over is what it means.
+func staleSchemaError(dbPath, filesPath string) error {
 	return fmt.Errorf(
 		"database schema predates this build: the pre-release rule edits 001_init.sql in place, "+
-			"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
-		dbPath, dbPath)
+			"so delete %s together with its -wal and -shm siblings, its key file %s.key and the %s directory, then start again "+
+			"(a backup of this server cannot be restored onto this build either: this starts the server over)",
+		dbPath, dbPath, filesPath)
 }
 
-// announceClaim mints the server's own key on first start and, while nobody
-// owns this server yet, prints the pairing link.
+// sayHowToPair tells the operator, when no device can reach this machine, where
+// a link for one is - and never the link itself (046, FR-005; 045, FR-022).
 //
-// The link goes to the log, and since 035 to the service page as well - which
-// is why that page binds to loopback and refuses to start anywhere else. What
-// the pre-035 rule guarded against (a page serving the QR to everyone on the
-// network while the transport is not TLS) is answered by the bind, checked on
-// the socket rather than on the address somebody typed. It is reprinted on
-// every start until somebody claims the server, because a terminal scrolls and
-// an unclaimed server has to stay claimable.
-//
-// This is a place a token is deliberately written to output. It is the claim
-// mechanism itself, and it is only visible to whoever can already read
-// the machine's logs - which is whoever could take the database anyway.
-func announceClaim(
-	ctx context.Context,
-	st *store.Store,
-	addr string,
-	ownership store.OwnershipState,
-	machine store.ServerIdentity,
-	logger *slog.Logger,
-) (string, error) {
-	// Silent while a device can still reach this server. Not "while an owner is
-	// recorded": a store that lost its ownership marker still has a person who
-	// can get in, and printing a claim link there offers their machine to
-	// whoever reads the log.
-	//
-	// The answer comes from the snapshot startup already took: re-deriving it
-	// here would evaluate the same rule twice against a store another
-	// connection could have changed in between.
-	if ownership.OwnerCanGetIn {
-		return "", nil
-	}
-	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
+// The log is the one place a pairing link must not go: it is kept, copied,
+// shipped to collectors and read by whoever reads logs, while the link is a way
+// in for ten minutes - from anywhere, since a device can pair through the onion
+// service, whose key the link carries packed. The service page and `noxd link`
+// hand it out on this machine instead, and both are named here. The page always
+// listens: since 047 a server cannot start without it, because its password is
+// entered there.
+func sayHowToPair(ctx context.Context, st *store.Store, cfg config.Config, logger *slog.Logger) error {
+	counts, err := st.CountEverything(ctx)
 	if err != nil {
-		return "", fmt.Errorf("issue claim token: %w", err)
+		return fmt.Errorf("count devices: %w", err)
 	}
-	link, err := BuildPairingLink(listenAddress(addr), machine.Fingerprint, token)
-	if err != nil {
-		return "", fmt.Errorf("build pairing link: %w", err)
+	if counts.Devices > 0 {
+		return nil
 	}
-	// Three situations, and saying the wrong one tells the operator the wrong
-	// story about what is about to happen. The machine may never have been
-	// claimed; its owner may have run out of devices; or the ownership marker
-	// may be missing from a store that still holds a person and their whole
-	// conversation - in which case presenting this link signs the device in AS
-	// that person rather than making it the owner of an empty machine.
-	switch {
-	case ownership.Owned:
-		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
-	case ownership.HasPerson:
-		logger.Info("this server holds a conversation but records no owner - present this link to sign in as the person it belongs to", "link", link)
-	default:
-		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
-	}
-	return token, nil
+	logger.Info("no device can reach this server yet - the service page shows a link to pair one, and `noxd link` prints it",
+		"page", "http://"+cfg.StatusAddr)
+	return nil
 }
 
 // assertLoopback refuses a service-page listener that ended up anywhere else.

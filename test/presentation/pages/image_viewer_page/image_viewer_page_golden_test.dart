@@ -7,13 +7,18 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/image_viewer_page/image_viewer_page.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/fonts.dart';
 import '../../../utils/golden.dart';
 import '../../../utils/pump_app.dart';
+import '../../../utils/sealed_files.dart';
 
 /// Paints a deterministic [w]×[h] four-quadrant image (teal / white / dark / grey) and
 /// encodes it to PNG. A real-size picture (vs a 1px sample) lets BoxFit.contain fill the
@@ -37,12 +42,20 @@ Future<Uint8List> _renderQuadPng(int w, int h) async {
 void main() {
   setUpAll(loadNoxFonts);
 
-  // A UNIQUE file per test: FileImage's cache key is the path, so a shared path would make
+  // Sealed, as every picture this device keeps since phase 048: the viewer
+  // opens it into memory on its way to the decoder, and draws as it did.
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+  tearDown(() async => getIt.reset());
+
+  // A UNIQUE file per test: the picture's cache key is the path, so a shared path would make
   // precacheImage serve one test's decode to the next (a landscape image rendered as the
   // earlier portrait one). Distinct paths keep each golden's picture independent.
   File pngFile(String name) => File('${Directory.systemTemp.path}/nox_viewer_$name.png');
 
-  // Bespoke harness (not the shared goldenTest): Image.file decodes on a real IO thread,
+  // Bespoke harness (not the shared goldenTest): the picture is read and decoded on real IO,
   // which only runs under tester.runAsync — pumpAndSettle alone would snapshot a blank frame.
   for (final entry in const <(ThemeMode, String)>[(ThemeMode.light, 'light'), (ThemeMode.dark, 'dark')]) {
     final mode = entry.$1;
@@ -59,9 +72,9 @@ void main() {
         tester.view.resetPhysicalSize();
       });
       await tester.runAsync(() async {
-        tmp.writeAsBytesSync(await _renderQuadPng(360, 600));
+        await writeSealed(tmp.path, await _renderQuadPng(360, 600));
         await pumpApp(tester, ImageViewerPage(localPath: tmp.path), themeMode: mode, settle: false);
-        await precacheImage(FileImage(tmp), tester.element(find.byType(MaterialApp)));
+        await precacheImage(LocalFileImage(tmp.path), tester.element(find.byType(MaterialApp)));
         await tester.pumpAndSettle();
       });
       await tester.pump();
@@ -79,7 +92,7 @@ void main() {
         tester.view.resetPhysicalSize();
       });
       await tester.runAsync(() async {
-        tmp.writeAsBytesSync(await _renderQuadPng(640, 480));
+        await writeSealed(tmp.path, await _renderQuadPng(640, 480));
         await pumpApp(
           tester,
           Dialog(
@@ -90,7 +103,7 @@ void main() {
           themeMode: mode,
           settle: false,
         );
-        await precacheImage(FileImage(tmp), tester.element(find.byType(MaterialApp)));
+        await precacheImage(LocalFileImage(tmp.path), tester.element(find.byType(MaterialApp)));
         await tester.pumpAndSettle();
       });
       await tester.pump();

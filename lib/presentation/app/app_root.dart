@@ -12,6 +12,7 @@ import 'package:nox_app/general/locale_controller.dart';
 import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
+import 'package:nox_app/presentation/widgets/settings/app_pair_request_dialog_widget.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
@@ -21,6 +22,10 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 /// via ScreenUtil with OS font-scale neutralized. Entry is the [SplashPage]; the
 /// app-state spine ([AppStateRepository] → [AppRootBloc]) drives top-level
 /// navigation by swapping the root route on each applied state change.
+///
+/// It also asks the one question that may come up over any screen (phase 046,
+/// FR-008): a new device presented an invite this device issued, and waits
+/// for `Allow` or `Deny` - [AppPairRequestDialogWidget], on both widths.
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
 
@@ -35,6 +40,11 @@ class _AppRootState extends State<AppRoot> {
   // Whether the first app-state transition has already replaced the Splash home route.
   // The first transition uses pushReplacement; every later one clears the whole stack.
   bool _splashReplaced = false;
+
+  /// The dialog asking about a request to join (phase 046) while one is up,
+  /// and the request it asks about.
+  DialogRoute<void>? _pairDialog;
+  String? _pairDialogFor;
 
   @override
   void initState() {
@@ -79,6 +89,67 @@ class _AppRootState extends State<AppRoot> {
     } else {
       navigator.pushAndRemoveUntil(route, (_) => false);
     }
+    // A question that waited for the app to reach a signed-in screen is asked
+    // now - after the swap, which would otherwise take the dialog with it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncPairDialog();
+    });
+  }
+
+  /// Puts up, takes down or swaps the dialog asking about a request to join,
+  /// so that it always asks about the request the bloc holds (phase 046).
+  ///
+  /// A route of its own on the root navigator, so it is a real dialog - a
+  /// barrier, focus kept inside, read out as one - over whatever screen is up.
+  /// Only on a signed-in screen: a request is only ever addressed to a paired
+  /// device, and before the first swap the top route is the launch screen,
+  /// which that swap REPLACES - it would replace the dialog instead.
+  void _syncPairDialog() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !_splashReplaced) return;
+    final signedIn = _bloc.state.appliedAppState.state == AppStateType.authorized;
+    final request = signedIn ? _bloc.state.pairRequest : null;
+    if (_pairDialog != null && _pairDialogFor == request?.requestId) return;
+    final open = _pairDialog;
+    if (open != null) {
+      _pairDialog = null;
+      _pairDialogFor = null;
+      // Already gone when a root swap took it a moment ago.
+      if (open.isActive) navigator.removeRoute(open);
+    }
+    if (request == null) return;
+    final route = DialogRoute<void>(
+      context: navigator.context,
+      barrierDismissible: false,
+      settings: const RouteSettings(name: '/pair-request'),
+      builder: (_) => BlocBuilder<AppRootBloc, AppRootState>(
+        bloc: _bloc,
+        builder: (context, state) {
+          // Built for ONE request. While it is taken down, the bloc may
+          // already hold the next one, or none: this dialog keeps its own
+          // question and stops taking answers.
+          final current = state.pairRequest?.requestId == request.requestId;
+          return AppPairRequestDialogWidget(
+            platform: request.platform,
+            answering: current ? state.pairAnswering : null,
+            failed: current && state.pairAnswerFailed,
+            onAnswer: current ? (allow) => _bloc.add(AppRootEvent.pairRequestAnswered(requestId: request.requestId, allow: allow)) : null,
+          );
+        },
+      ),
+    );
+    _pairDialog = route;
+    _pairDialogFor = request.requestId;
+    navigator.push(route).whenComplete(() {
+      if (!identical(_pairDialog, route)) return;
+      // Taken away by something else - a root swap, or a pop meant for the
+      // screen below. The question still stands, so it is asked again.
+      _pairDialog = null;
+      _pairDialogFor = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncPairDialog();
+      });
+    });
   }
 
   // One-shot session-expiry message, shown over the freshly-pushed Login. Runs in a
@@ -126,6 +197,10 @@ class _AppRootState extends State<AppRoot> {
           BlocListener<AppRootBloc, AppRootState>(
             listenWhen: (previous, current) => previous.settingsSaveErrorTick != current.settingsSaveErrorTick,
             listener: _onSettingsSaveError,
+          ),
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) => previous.pairRequest?.requestId != current.pairRequest?.requestId,
+            listener: (context, state) => _syncPairDialog(),
           ),
         ],
         child: BlocBuilder<AppRootBloc, AppRootState>(

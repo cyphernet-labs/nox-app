@@ -6,8 +6,18 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 /// projection of the session signals (no DAO). See `docs/app-state-flow-migration.md`.
 abstract class AppStateRepository {
   /// Replays the last resolved value to new subscribers, then forwards every
-  /// subsequent resolution. Lazily triggers the first [fetchAppState].
+  /// subsequent resolution. Lazily triggers the first [fetchAppState] - once
+  /// the start-up held by [holdUntil] is over.
   Stream<RepositoryResult<AppStateModel>> watchAppState();
+
+  /// Holds the first resolution [watchAppState] makes until [ready] is over,
+  /// however it ends (phase 048). The start-up opens the local data under its
+  /// key first - and keeps the splash up, reading the key again, while the
+  /// secure store does not answer - and only then may anything decide where
+  /// the app goes: the session read before that is not the one the start-up
+  /// leaves. [fetchAppState] itself never waits: the start-up's own logout
+  /// resolves through it.
+  void holdUntil(Future<void> ready);
 
   /// Resolves and emits the current app state (cache-only, no network). When
   /// [sessionExpired] is true, the emitted `unauthorized` model carries the

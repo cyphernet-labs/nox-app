@@ -1,203 +1,141 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 
+/// The contract's vectors (specs/044-secure-channel/contracts/link-vectors.json),
+/// shared with the Go server: a link the two sides agree on is the only kind
+/// worth testing.
+final Map<String, dynamic> _vectors =
+    jsonDecode(File('test/general/pairing/fixtures/link-vectors.json').readAsStringSync()) as Map<String, dynamic>;
+
+Uint8List _hex(String hex) => Uint8List.fromList([for (var i = 0; i < hex.length; i += 2) int.parse(hex.substring(i, i + 2), radix: 16)]);
+
+Matcher _refused(PairingLinkError error) => throwsA(predicate<PairingLinkException>((e) => e.error == error, 'refused as ${error.name}'));
+
+/// Checks [link] against a vector's addresses, in order.
+void _expectAddresses(PairingLink link, List<dynamic> expected) {
+  expect(link.addresses, hasLength(expected.length));
+  for (var i = 0; i < expected.length; i++) {
+    final want = expected[i] as Map<String, dynamic>;
+    final got = link.addresses[i];
+    switch (want['type']) {
+      case 'onion':
+        expect(got, isA<OnionLinkAddress>());
+        expect((got as OnionLinkAddress).servicePublicKey, _hex(want['public_key'] as String));
+        expect(got.port, want['port']);
+      case final String type:
+        expect(got, isA<DirectLinkAddress>());
+        final direct = got as DirectLinkAddress;
+        expect(direct.kind.name, type);
+        expect(direct.host, want['host']);
+        expect(direct.port, want['port']);
+    }
+  }
+}
+
 void main() {
-  // Produced by the Go server, not by this parser: a link the two sides agree
-  // on is the only kind worth testing. Captured from a live noxd bound to
-  // 127.0.0.1:8080 on a fresh database.
-  const fromServer = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+  group('the contract vectors', () {
+    test('full: the server key, the token and three addresses in order', () {
+      final vector = _vectors['full'] as Map<String, dynamic>;
+      final link = PairingLink.parse(vector['link'] as String);
+      expect(link.serverKey, _hex(vector['server_public_key'] as String));
+      expect(base64Url.decode(base64Url.normalize(link.token)), _hex(vector['token'] as String));
+      expect(link.token, isNot(contains('=')), reason: 'base64url without padding - the form pair sends');
+      _expectAddresses(link, vector['addresses'] as List<dynamic>);
+      expect(link.directAddresses, ['192.168.1.20:8443', 'nox.example.org:8443']);
+      expect(link.onionServiceKey, _hex('17cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce'));
+    });
 
-  test('reads a link the server actually produced', () {
-    final link = PairingLink.parse(fromServer);
-    expect(link.host, '127.0.0.1');
-    expect(link.port, 8080);
-    expect(link.serverFingerprint.length, 44, reason: '32 bytes in base64');
-    expect(link.token.length, 22, reason: '16 bytes in base64url without padding');
-    expect(link.authority, '127.0.0.1:8080');
+    test('minimal: one IPv4 address and no onion', () {
+      final vector = _vectors['minimal'] as Map<String, dynamic>;
+      final link = PairingLink.parse(vector['link'] as String);
+      _expectAddresses(link, vector['addresses'] as List<dynamic>);
+      expect(link.onionServiceKey, isNull);
+    });
+
+    test('an address of a type this build does not know is skipped by its length', () {
+      final vector = _vectors['unknown_type_skipped'] as Map<String, dynamic>;
+      _expectAddresses(PairingLink.parse(vector['link'] as String), vector['addresses'] as List<dynamic>);
+    });
+
+    test('every malformed vector is malformed - an old-format link among them', () {
+      final refusals = _vectors['refusals'] as Map<String, dynamic>;
+      for (final raw in (refusals['malformed'] as List<dynamic>).cast<String>()) {
+        expect(() => PairingLink.parse(raw), _refused(PairingLinkError.malformed), reason: raw);
+      }
+    });
+
+    test('a newer version asks for an update, not for a new link', () {
+      final refusals = _vectors['refusals'] as Map<String, dynamic>;
+      expect(() => PairingLink.parse(refusals['newer_version'] as String), _refused(PairingLinkError.newerVersion));
+    });
+
+    test('the demo link is a readable one', () {
+      expect(PairingLink.tryParse(PairingLink.demo), isNotNull);
+    });
   });
 
-  test('accepts the bare fragment, because a person may paste only that', () {
-    final whole = PairingLink.parse(fromServer);
-    final fragment = PairingLink.parse(fromServer.split('#').last);
-    expect(fragment.host, whole.host);
-    expect(fragment.token, whole.token);
-  });
-
-  test('round-trips through encode, so an invite can be shown again', () {
-    final link = PairingLink.parse(fromServer);
-    expect(PairingLink.parse(link.encode()).encode(), link.encode());
-  });
-
-  group('every address type survives a round trip', () {
-    const fingerprint = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+  group('the rules beyond the vectors', () {
+    final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
     const token = 'AAECAwQFBgcICQoLDA0ODw';
 
-    for (final host in ['192.168.1.7', '2001:db8:0:0:0:0:0:1', 'nox.example.org']) {
-      test(host, () {
-        final built = PairingLink(host: host, port: 443, serverFingerprint: fingerprint, token: token).encode();
-        final parsed = PairingLink.parse(built);
-        expect(parsed.host, host);
-        expect(parsed.port, 443);
-        expect(parsed.serverFingerprint, fingerprint);
-        expect(parsed.token, token);
-      });
-    }
-  });
+    PairingLink link(List<LinkAddress> addresses) => PairingLink(serverKey: key, token: token, addresses: addresses);
 
-  group('refusals are distinguishable, because the person acts differently', () {
-    test('a truncated link is malformed', () {
-      expect(
-        () => PairingLink.parse(fromServer.substring(0, fromServer.length - 20)),
-        throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.malformed)),
-      );
+    /// The link's bytes with [tail] in place of the addresses.
+    String raw(List<int> tail, {int version = 3}) =>
+        PairingLink.prefix +
+        base64Url.encode([version, ...key, ...base64Url.decode(base64Url.normalize(token)), ...tail]).replaceAll('=', '');
+
+    test('every address kind survives a round trip, in order', () {
+      final built = link([
+        const DirectLinkAddress(kind: DirectAddressKind.ipv4, host: '10.0.0.5', port: 9000),
+        const DirectLinkAddress(kind: DirectAddressKind.ipv6, host: '2001:db8::1', port: 443),
+        const DirectLinkAddress(kind: DirectAddressKind.name, host: 'nox.example.org', port: 8443),
+        OnionLinkAddress(Uint8List(32)..[0] = 7),
+      ]);
+      final parsed = PairingLink.parse(built.encode());
+      expect(parsed.addresses, built.addresses);
+      expect(parsed.directAddresses, ['10.0.0.5:9000', '[2001:db8::1]:443', 'nox.example.org:8443']);
+      expect(parsed.serverKeyBase64, base64.encode(key));
+      expect(parsed.token, token);
     });
 
-    test('something that is not a link at all is malformed', () {
-      expect(
-        () => PairingLink.parse('just some text'),
-        throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.malformed)),
-      );
+    test('surrounding whitespace is forgiven, a different scheme is not', () {
+      final text = link([const DirectLinkAddress(kind: DirectAddressKind.ipv4, host: '10.0.0.5', port: 9000)]).encode();
+      expect(PairingLink.tryParse('  $text\n'), isNotNull);
+      expect(() => PairingLink.parse(text.replaceFirst('nox://pair/', 'nox://id/')), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse('$text='), _refused(PairingLinkError.malformed), reason: 'base64url without padding');
     });
 
-    test('an empty string is malformed', () {
-      expect(() => PairingLink.parse('   '), throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.malformed)));
+    test('a link with no address it can use is malformed', () {
+      expect(() => PairingLink.parse(raw([])), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse(raw([9, 1, 0])), _refused(PairingLinkError.malformed), reason: 'only an unknown type');
     });
 
-    test('a future version is refused rather than guessed at', () {
-      // Reading a newer layout under a known version would produce a
-      // plausible-looking address pointing anywhere at all. Version 3 is the
-      // first one this build does not know, so it is the one that has to fail.
-      for (final version in [3, 99]) {
-        final bytes = List<int>.from(_decode(fromServer));
-        bytes[0] = version;
-        expect(
-          () => PairingLink.parse(_encode(bytes)),
-          throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.unsupportedVersion)),
-          reason: 'version $version',
-        );
-      }
+    test('a known type with the wrong length, port 0 or an empty name is malformed', () {
+      expect(() => PairingLink.parse(raw([1, 5, 10, 0, 0, 5, 1])), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse(raw([1, 6, 10, 0, 0, 5, 0, 0])), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse(raw([3, 2, 0x01, 0xBB])), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse(raw([3, 3, 0xFF, 0x01, 0xBB])), _refused(PairingLinkError.malformed), reason: 'not UTF-8');
+      expect(() => PairingLink.parse(raw([4, 31, ...List<int>.filled(31, 1)])), _refused(PairingLinkError.malformed));
     });
 
-    test('an unknown address type is a newer shape, not a broken link', () {
-      final bytes = List<int>.from(_decode(fromServer));
-      bytes[1] = 9;
-      expect(
-        () => PairingLink.parse(_encode(bytes)),
-        throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.unsupportedVersion)),
-      );
-    });
-  });
-
-  group('version 2, the onion invite (contract §8A, server phase 039)', () {
-    // Built by the Go server's BuildPairingLinkV2 and pinned there too
-    // (TestTheOnionLinkVectorsTheAppPins), so a change on either side breaks
-    // both. Every field is a different run of bytes: lengths alone would not
-    // notice two fields swapped.
-    const ipv4 =
-        'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
-    const ipv6 =
-        'https://nox.app/p/#AgL9AAAAAAAAAAAAAAAAAAABH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
-    const dns =
-        'https://nox.app/p/#AgMMaG9tZS5leGFtcGxlH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
-
-    final fingerprint = base64.encode(_run(0x00, 32));
-    final token = base64Url.encode(_run(0xa0, 16)).replaceAll('=', '');
-
-    // host as the parser renders it, the link, and its exact length in bytes.
-    final vectors = <(String, String, int)>[
-      ('192.168.1.10', ipv4, 122),
-      ('fd00:0:0:0:0:0:0:1', ipv6, 134),
-      ('home.example', dns, 119 + 'home.example'.length),
-    ];
-
-    for (final (host, raw, length) in vectors) {
-      test('reads every field of a link the server built ($host)', () {
-        final link = PairingLink.parse(raw);
-        expect(link.host, host);
-        expect(link.port, 8080);
-        expect(link.serverFingerprint, fingerprint);
-        expect(link.token, token);
-        expect(link.onionPub, _run(0x20, 32));
-        expect(link.onionPort, 443);
-        expect(link.oneTimePriv, _run(0x40, 32));
-        expect(link.carriesOnion, isTrue);
-      });
-
-      test('is exactly $length bytes ($host)', () {
-        expect(_decode(raw).length, length);
-      });
-
-      test('encodes byte for byte what the server builds ($host)', () {
-        final built = PairingLink(
-          host: host,
-          port: 8080,
-          serverFingerprint: fingerprint,
-          token: token,
-          onionPub: _run(0x20, 32),
-          onionPort: 443,
-          oneTimePriv: _run(0x40, 32),
-        );
-        expect(built.encode(), raw);
-      });
-    }
-
-    test('the IPv4 link is the 163 characters the contract states', () {
-      expect(ipv4.split('#').last.length, 163);
+    test('an incomplete header or a length past the end is malformed', () {
+      expect(() => PairingLink.parse(raw([1, 6, 10, 0, 0, 5, 0x23, 0x28, 1])), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse(raw([1, 9, 10, 0, 0, 5, 0x23, 0x28])), _refused(PairingLinkError.malformed));
     });
 
-    test('a version-2 link cut short is malformed, not read as version 1', () {
-      // Without its onion tail the bytes are exactly a version-1 link with the
-      // wrong version byte - reading them as one would hand the person a link
-      // that silently stopped working away from home.
-      final bytes = _decode(ipv4);
-      for (final cut in [1, 34, 66]) {
-        expect(
-          () => PairingLink.parse(_encode(bytes.sublist(0, bytes.length - cut))),
-          throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.malformed)),
-          reason: '$cut bytes short',
-        );
-      }
+    test('a version below 3 is malformed, and one above it asks for an update', () {
+      final ipv4 = [1, 6, 10, 0, 0, 5, 0x23, 0x28];
+      expect(() => PairingLink.parse(raw(ipv4, version: 2)), _refused(PairingLinkError.malformed));
+      expect(() => PairingLink.parse(raw(ipv4, version: 4)), _refused(PairingLinkError.newerVersion));
+      expect(PairingLink.refusalOf(raw(ipv4, version: 4)), PairingLinkError.newerVersion);
+      expect(PairingLink.isPairingLink(raw(ipv4, version: 4)), isTrue, reason: 'still a link: the scanner hands it on');
+      expect(PairingLink.isPairingLink('https://nox.app/p/#AQF_AAAB'), isFalse);
+      expect(PairingLink.refusalOf(raw(ipv4)), isNull);
     });
-
-    test('a version-1 link with an onion tail glued on is malformed', () {
-      final bytes = List<int>.from(_decode(ipv4));
-      bytes[0] = PairingLink.version;
-      expect(
-        () => PairingLink.parse(_encode(bytes)),
-        throwsA(predicate<PairingLinkException>((e) => e.error == PairingLinkError.malformed)),
-      );
-    });
-
-    test('a version-1 link has no onion part, and still encodes as version 1', () {
-      final link = PairingLink.parse(fromServer);
-      expect(link.onionPub, isNull);
-      expect(link.onionPort, isNull);
-      expect(link.oneTimePriv, isNull);
-      expect(link.carriesOnion, isFalse);
-      expect(_decode(link.encode()).first, PairingLink.version);
-      expect(link.encode(), fromServer);
-    });
-  });
-
-  test('the token type is nowhere in the link', () {
-    // By construction: there is no field for it. A stolen link must not be
-    // able to announce whether it grants ownership.
-    final link = PairingLink.parse(fromServer);
-    expect(link.encode().length, PairingLink.parse(link.encode()).encode().length);
-    expect(_decode(fromServer).length, 56, reason: 'version + type + IPv4 + port + key + token, nothing else');
   });
 }
-
-List<int> _decode(String link) {
-  final fragment = link.split('#').last;
-  return base64Url.decode(base64Url.normalize(fragment));
-}
-
-String _encode(List<int> bytes) => 'https://nox.app/p/#${base64Url.encode(bytes).replaceAll('=', '')}';
-
-/// [length] bytes counting up from [from] - the shape of every field in the
-/// server's vectors.
-Uint8List _run(int from, int length) => Uint8List.fromList([for (var i = 0; i < length; i++) from + i]);

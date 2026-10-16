@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
 import 'package:web_socket_channel/io.dart';
 
 /// The narrow port the transport actually needs: frames in, frames out, close.
@@ -25,12 +26,16 @@ abstract class SocketChannelFactory {
 ///
 /// [IOWebSocketChannel] is used rather than `WebSocketChannel.connect` because
 /// only it exposes `pingInterval`, and because only it takes a client of ours -
-/// which is how the socket is checked against the server's fingerprint at all.
-/// NOX ships on five IO platforms (web is out of scope), so binding to the IO
-/// implementation costs nothing.
+/// which is how the socket runs over the verified channel of the native module
+/// at all (phase 044). NOX ships on five IO platforms (web is out of scope), so
+/// binding to the IO implementation costs nothing.
+///
+/// A channel that would not open reaches the frames stream as the stream's
+/// first and only event, its kind inside the WebSocket's envelope - the
+/// socket client reads it out with `channelFailureOf`.
 @LazySingleton(as: SocketChannelFactory, env: [Environment.dev])
 class WebSocketChannelFactory implements SocketChannelFactory {
-  WebSocketChannelFactory(this._pinned);
+  WebSocketChannelFactory(this._channels);
 
   /// Contract §9: ~25s, because cellular NATs drop an idle flow at ~30s. A
   /// missed pong surfaces as a socket close, which is the disconnect signal.
@@ -40,21 +45,20 @@ class WebSocketChannelFactory implements SocketChannelFactory {
   static const Duration directConnectTimeout = Duration(seconds: 10);
   static const Duration onionConnectTimeout = Duration(seconds: 45);
 
-  final PinnedHttpClient _pinned;
+  final ChannelHttpClient _channels;
 
   @override
   SocketConnection connect(Uri url) {
+    final timeout = isOnionUrl(url) ? onionConnectTimeout : directConnectTimeout;
     // The SHARED client, never a fresh one: `WebSocket.connect` does not close
     // a client passed to it, so one per connection would leak on every rung of
     // the reconnect ladder.
     //
-    // The refusal count is read BEFORE the attempt and compared after it
-    // fails. The certificate callback cannot throw anything anybody upstream
-    // would recognise - it returns a bool from inside the TLS stack, and what
-    // comes out is an ordinary handshake failure indistinguishable from a
-    // server that is simply down. Without this, a refused pin would climb the
-    // reconnect ladder for ever while the screen blamed the network.
-    final before = _pinned.refusals;
+    // Its connect timeout is set to the dial's own, for every dial: the
+    // channel's timeout alone only abandons the WAIT, and the open would run
+    // on in the module and finish into a connection nobody holds. The pool
+    // cancels its connect at that moment, and the cancel reaches the module.
+    final client = _channels.client..connectionTimeout = timeout;
     return _IoSocketConnection(
       IOWebSocketChannel.connect(
         url,
@@ -63,22 +67,21 @@ class WebSocketChannelFactory implements SocketChannelFactory {
         // ladder with it. Longer through Tor, where one keyed connection
         // fetches the onion service's descriptor anew and sometimes stalls
         // (phase 040, research decision 5).
-        connectTimeout: url.host.endsWith('.onion') ? onionConnectTimeout : directConnectTimeout,
-        customClient: _pinned.client,
+        connectTimeout: timeout,
+        customClient: client,
       ),
-      () => _pinned.refusals > before,
     );
   }
 }
 
 class _IoSocketConnection implements SocketConnection {
-  _IoSocketConnection(this._channel, this._wasRefused) {
+  _IoSocketConnection(this._channel) {
     // The app learns that a connection failed from the frames stream, which is
     // the one place that also carries frames. The error is handled here
     // because the channel completes `ready` with it as well, and an error on a
     // future with no listener is an unhandled zone error - raised on EVERY rung
-    // of the reconnect ladder while offline, and on every pin refusal. The
-    // failure itself is still reported below, once.
+    // of the reconnect ladder while offline, and on every refused server key.
+    // The failure itself is still reported on the frames stream, once.
     _channel.ready.then<void>((_) {
       if (_closed) return;
       _opened = true;
@@ -95,22 +98,15 @@ class _IoSocketConnection implements SocketConnection {
   /// the channel. The channel's own buffer is flushed once the upgrade
   /// completes even after a close, so a frame given to a dial the app had
   /// already abandoned - a pairing token above all - would still reach the
-  /// server, behind the app's back.
+  /// server, behind the app's back. And none is ever written before the
+  /// channel has verified the server's key: a connection that fails that check
+  /// never becomes ready, and its held frames are dropped.
   final List<String> _held = <String>[];
   bool _opened = false;
   bool _closed = false;
 
-  /// Whether the pin refused a certificate since this connection was started.
-  final bool Function() _wasRefused;
-
   @override
-  Stream<dynamic> get frames => _channel.stream.transform(
-    StreamTransformer<dynamic, dynamic>.fromHandlers(
-      handleError: (Object error, StackTrace stack, EventSink<dynamic> sink) {
-        sink.addError(_wasRefused() ? const ServerPinRefusedException() : error, stack);
-      },
-    ),
-  );
+  Stream<dynamic> get frames => _channel.stream;
 
   @override
   void add(String frame) {
@@ -136,21 +132,6 @@ class _IoSocketConnection implements SocketConnection {
     closing.ignore();
     return Future<void>.value();
   }
-}
-
-/// The machine at the paired address presented a key the pairing link did not
-/// name.
-///
-/// Its own type, not a message inside a general transport failure: the whole
-/// point is that it must be told apart from "the network is down". Retrying
-/// cannot help, and nothing here may take the path that ends in a forced
-/// logout - that path wipes the device, which would make presenting a
-/// certificate a way to erase somebody's messages.
-class ServerPinRefusedException implements Exception {
-  const ServerPinRefusedException();
-
-  @override
-  String toString() => 'ServerPinRefusedException: the server presented a key the pairing link did not name';
 }
 
 /// Thrown when the socket cannot carry a command: no connection, or no reply

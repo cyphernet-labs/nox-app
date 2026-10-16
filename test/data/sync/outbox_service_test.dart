@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
@@ -73,6 +75,9 @@ class _FakePhase implements SessionPhaseService {
 /// in the middle of one, and can be told to refuse. Nothing touches a disk or a
 /// server.
 class _FakeFiles implements FileRepository {
+  /// The names each upload declared.
+  final List<String?> declaredNames = <String?>[];
+
   int uploads = 0;
   RepositoryException? failure;
   Future<void> Function()? duringUpload;
@@ -93,12 +98,14 @@ class _FakeFiles implements FileRepository {
   Future<RepositoryResult<String>> upload({
     required String path,
     required String mime,
+    String? name,
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,
     TransferCancellation? cancellation,
   }) async {
     uploads++;
+    declaredNames.add(name);
     continuedFrom.add(from);
     lastCancellation = cancellation;
     final named = names;
@@ -564,6 +571,9 @@ void main() {
 
       expect(sentKeys, [entry.clientMessageId]);
       expect(await outbox.watchQueue().first, isEmpty);
+      // The copy is named for nothing; the name the person picked is declared.
+      expect(files.declaredNames, [entry.attachment!.name]);
+      expect(entry.attachment!.localPath!.endsWith('${Platform.pathSeparator}${OutboxCopies.copyName}'), isTrue);
     });
 
     test('a file the queue could not keep fails this message and lets the queue move on', () async {
@@ -588,7 +598,7 @@ void main() {
 
       final kept = sentLocalPaths.single!;
       expect(kept, await files.cachePathFor(fileId: sentAttachmentIds.single, suggestedName: 'shot.png'));
-      expect(File(kept).readAsBytesSync(), List<int>.filled(64, 7));
+      expect(await (await SealedReader.open(File(kept)))!.readAll(), List<int>.filled(64, 7), reason: 'sealed where it lies (phase 048)');
       expect(copy.existsSync(), isFalse);
       expect(copy.parent.existsSync(), isFalse);
     });

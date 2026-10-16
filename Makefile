@@ -16,7 +16,7 @@ build-linux-stage:
 	mise run build:linux:stage
 
 # --- dev helpers (US3 / blueprint 12) ---
-.PHONY: deps generate format analyze test golden-update golden-verify gate tor-test
+.PHONY: deps generate format analyze test golden-update golden-verify gate tor-test box-wasm box-verify
 
 deps:
 	fvm flutter pub get
@@ -47,5 +47,20 @@ gate: generate format analyze test
 # The embedded Tor client (phase 040): the crate's own tests, then the Dart
 # package's - the latter loads the library the hook builds for this host.
 tor-test:
+	cd packages/rust_secure_box && cargo test
+	$(MAKE) box-verify
 	cd packages/nox_tor/rust && cargo test
 	cd packages/nox_tor && fvm dart test
+
+# RustSecureBox (phase 050): the crate built as WebAssembly and translated into
+# the server's Go. box-wasm rewrites the committed copy; box-verify builds into
+# a temporary directory and fails when the committed copy is not what the crate
+# builds to.
+box-wasm:
+	packages/rust_secure_box/build-wasm.sh
+
+box-verify:
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		packages/rust_secure_box/build-wasm.sh "$$tmp" \
+		&& diff -r "$$tmp" client_backend/internal/securebox/boxwasm \
+		&& echo "box-verify: the server's copy of RustSecureBox is current"

@@ -7,7 +7,9 @@ part of 'chats_list_bloc.dart';
 /// arrive above it. Without it no page-level golden contains a chat row with a
 /// badge at all, and the desktop rendering of one would have no coverage
 /// (Constitution VI).
-enum ChatsListScenario { normal, empty, inlineError, fatal, offline, pinRefused, unread, torObsolete }
+/// `turnOnTor` stands in for a failed round with a known cause (phase 045):
+/// the strip says why instead of «No connection».
+enum ChatsListScenario { normal, empty, inlineError, fatal, offline, pinRefused, unread, torObsolete, turnOnTor }
 
 @freezed
 sealed class ChatsListState with _$ChatsListState {
@@ -40,6 +42,11 @@ sealed class ChatsListState with _$ChatsListState {
     /// but with nothing to try - a restart of the channel ends the same way
     /// (phase 042).
     @Default(false) bool isUnsupported,
+
+    /// Why there is no connection, when that is known (phase 045): the strip
+    /// says it in place of «No connection». Rides with [isOffline] and
+    /// [isServerMismatch]; null otherwise.
+    ConnectionProblem? problem,
 
     /// The Tor network has declared the client built into this version
     /// obsolete: the person is asked to update (phase 040, FR-026).

@@ -8,6 +8,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
@@ -19,14 +20,15 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:uuid/uuid.dart';
 
 /// A device that paired earlier starts again away from home (phase 040, US1,
-/// SC-001): no pairing, just the app's own start - the session it kept, its
-/// own key, and Tor. Run on a simulator or an emulator right after
-/// `tor_pairing_test.dart`, which leaves the session behind:
+/// SC-001): no pairing, just the app's own start - the session it kept, `Use
+/// Tor` as it was left on, and Tor; no access key (phase 045). Run on a
+/// simulator or an emulator right after `tor_pairing_test.dart`, which leaves
+/// the session behind:
 ///   fvm flutter test integration_test/tor_relaunch_test.dart -d DEVICE --dart-define=nox.forceTor=true
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('a paired device starts away from home and talks through Tor on its own key', (tester) async {
+  testWidgets('a paired device starts away from home and talks through Tor', (tester) async {
     await configureDependencies(Environment.dev);
     await getIt.allReady();
     await getIt<AppConfigRepository>().initialize(flavorType: AppFlavorType.stage);
@@ -49,6 +51,11 @@ void main() {
       name: 'Again from ${Platform.operatingSystem} ${DateTime.now().millisecondsSinceEpoch}',
     );
     expect(chat.hasData, isTrue);
+    // A chat is made on the device first (phase 041): the outbox takes it to
+    // the server, and only then can a message name it.
+    getIt<OutboxService>().start();
+    unawaited(getIt<OutboxService>().flush());
+    await _until('the chat on the server', const Duration(minutes: 2), () => getIt<ChatRepository>().isOnServer(chatId: chat.data!.id));
     final sent = await getIt<MessageRepository>().sendMessage(
       chatId: chat.data!.id,
       clientMessageId: const Uuid().v4(),

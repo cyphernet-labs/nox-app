@@ -5,8 +5,10 @@ import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart'
 
 /// Labeled single-line input with a built-in counter, helper / error text and an
 /// optional suffix availability spinner. The input-field family member used by
-/// Set username (2.3, maxLength 32) and Create chat (6.1, maxLength 64). Borders,
-/// counter and helper styling come from the themed `noxInputDecorationTheme`.
+/// Set username (2.3, maxLength 32), Create chat (6.1, maxLength 64) and the
+/// address fields of the connection screen and Settings > Connection (phase
+/// 045: no counter, a URL keyboard, no autocorrection). Borders, counter and
+/// helper styling come from the themed `noxInputDecorationTheme`.
 class AppLabeledFieldWidget extends StatelessWidget {
   const AppLabeledFieldWidget({
     super.key,
@@ -22,12 +24,23 @@ class AppLabeledFieldWidget extends StatelessWidget {
     this.autofocus = false,
     this.onChanged,
     this.onSubmitted,
+    this.keyboardType,
+    this.autocorrect = true,
   });
 
   final TextEditingController controller;
   final FocusNode? focusNode;
   final String label;
-  final int maxLength;
+
+  /// Null: no limit and no counter.
+  final int? maxLength;
+
+  /// The keyboard to offer; the platform's text keyboard when null.
+  final TextInputType? keyboardType;
+
+  /// False for addresses: autocorrection and suggestions turn a host name
+  /// into a word.
+  final bool autocorrect;
   final String? helperText;
   final String? placeholder;
   final String? errorText;
@@ -47,6 +60,9 @@ class AppLabeledFieldWidget extends StatelessWidget {
       enabled: enabled,
       autofocus: autofocus,
       maxLength: maxLength,
+      keyboardType: keyboardType,
+      autocorrect: autocorrect,
+      enableSuggestions: autocorrect,
       textInputAction: TextInputAction.done,
       onChanged: onChanged,
       onSubmitted: onSubmitted == null ? null : (_) => onSubmitted!(),

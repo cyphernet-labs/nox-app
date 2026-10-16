@@ -6,9 +6,11 @@ import 'package:nox_app/domain/service/file_picker_service.dart';
 /// five targets). `file_picker` was the plan's first choice but its `win32` pin
 /// conflicts with `package_info_plus`; `file_selector` resolves cleanly (feature 017).
 ///
-/// Metadata only: `openFile()` never reads file bytes, and `XFile.length()` stats the
-/// size without loading content — so large files never block the UI and nothing leaves
-/// the device (Constitution I). Returns null on cancel OR any plugin failure so the
+/// Metadata only on NOX's side: `XFile.length()` stats the size without loading
+/// content, so large files never block the UI and nothing leaves the device
+/// (Constitution I). The platform's picker may copy the file all the same - Android
+/// into the app's cache, iOS into its tmp inbox - and those plain copies are let go
+/// of once the queue sealed its own, or the draft is dropped (`PickerCopies`). Returns null on cancel OR any plugin failure so the
 /// caller leaves the composer unchanged and the attach action never crashes.
 @LazySingleton(as: FilePickerService, env: [Environment.dev, Environment.prod, Environment.test])
 class FilePickerServiceImpl implements FilePickerService {

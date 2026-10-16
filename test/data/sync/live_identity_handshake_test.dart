@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,32 +6,23 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_tor/channel.dart' show ChannelFailure;
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/data/service/tor/fake_tor_service.dart';
-import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
-import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
-import 'package:nox_app/domain/service/app_lifecycle_service.dart';
-import 'package:nox_app/domain/service/network_change_service.dart';
+import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../remote/socket/fake_socket.dart';
-import 'connection/fake_direct_prober.dart';
 import 'live_identity_handshake_test.mocks.dart';
 
-/// A real link the parser accepts: the pending path runs after parsing, and a
-/// placeholder would fail before reaching what these tests are about.
-const kTestLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
-
-/// A version-2 link (IPv4) from the vectors both sides pin: it lends an onion
-/// address on port 443 and a one-time key.
-const kTestLinkV2 =
-    'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+/// A real link the parser accepts (the contract's `minimal` vector): the
+/// pending path runs after parsing, and a placeholder would fail before
+/// reaching what these tests are about.
+const kTestLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
 @GenerateMocks([LiveSessionStarter])
 void main() {
@@ -97,8 +86,6 @@ void main() {
     late NoxSocketClient client;
     late MockLiveSessionStarter starter;
     late LiveIdentityHandshake handshake;
-    late FakeTorService tor;
-    late ConnectionPathSelector selector;
 
     final url = Uri.parse('ws://127.0.0.1:8080/ws');
 
@@ -119,17 +106,7 @@ void main() {
       factory = FakeSocketFactory();
       client = NoxSocketClient(factory, sync);
       starter = MockLiveSessionStarter();
-      tor = FakeTorService();
-      selector = ConnectionPathSelector.forTest(
-        FakeDirectProber(),
-        tor,
-        getIt<ServerAddressesRepository>(),
-        getIt<AccessKeyRepository>(),
-        getIt<NetworkChangeService>(),
-        getIt<AppLifecycleService>(),
-        client,
-      );
-      handshake = LiveIdentityHandshake(client, starter, getIt<AccessKeyRepository>(), tor, getIt<ServerAddressesRepository>(), selector);
+      handshake = LiveIdentityHandshake(client, starter);
     });
 
     tearDown(() async {
@@ -235,7 +212,7 @@ void main() {
 
       Object? failed;
       unawaited(
-        handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').catchError((Object e) {
+        handshake.pair(link: PairingLink.parse(kTestLink), platform: 'ios').catchError((Object e) {
           failed = e;
           return const IdentityHandshake(authorId: '', label: '', created: null);
         }),
@@ -258,7 +235,7 @@ void main() {
       });
 
       IdentityHandshake? settled;
-      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((v) => settled = v));
+      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), platform: 'ios').then((v) => settled = v));
 
       await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
       final socket = factory.latest;
@@ -274,100 +251,340 @@ void main() {
       expect(settled!.created, isTrue);
     });
 
-    test('pairing carries this device\'s onion access key (FR-015)', () async {
+    test('pairing carries the link token - no device key (phase 044) and no access key (phase 045)', () async {
       when(starter.restart()).thenAnswer((_) async {
         await client.stop();
         await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
         factory.latest.pushGreeting();
       });
 
-      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((_) {}, onError: (Object _) {}));
+      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), platform: 'ios').then((_) {}, onError: (Object _) {}));
       await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
 
       final sent = factory.latest.commandNamed('pair')!['data'] as Map<String, dynamic>;
-      final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
-      expect(sent['access_key'], own.publicBase64);
-      expect(sent['access_key'], isNot(contains(base64Encode(own.privateKey))), reason: 'only the public half travels');
+      expect(sent['token'], PairingLink.parse(kTestLink).token);
+      expect(sent.containsKey('access_key'), isFalse, reason: 'the onion address opens for no key');
+      expect(sent.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection');
+    });
+  });
+
+  /// An invite pairs only once the device that issued it answers (phase 046,
+  /// contract §8A): the wait, what can end it, and that nothing is paired
+  /// before it ends.
+  group('an invite that waits for approval (phase 046)', () {
+    late FakeSocketFactory factory;
+    late NoxSocketClient client;
+    late MockLiveSessionStarter starter;
+    late LiveIdentityHandshake handshake;
+
+    final url = Uri.parse('ws://127.0.0.1:8080/ws');
+    final link = PairingLink.parse(kTestLink);
+
+    Future<void> waitUntil(FutureOr<bool> Function() done, {String reason = ''}) async {
+      for (var i = 0; i < 400; i++) {
+        if (await done()) return;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      fail('condition never became true${reason.isEmpty ? '' : ': $reason'}');
+    }
+
+    int count(FakeSocket socket, String cmd) => socket.sent.where((f) => f['cmd'] == cmd).length;
+    int last(FakeSocket socket, String cmd) => socket.sent.lastIndexWhere((f) => f['cmd'] == cmd);
+
+    const pending = <String, dynamic>{'status': 'pending', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600};
+    const anna = <String, dynamic>{
+      'identity': {'id': 'u_anna', 'label': 'Anna', 'created': false},
+    };
+
+    setUp(() async {
+      FlutterSecureStorage.setMockInitialValues({});
+      SharedPreferences.setMockInitialValues({});
+      await configureDependencies(Environment.test);
+      await getIt<AppDatabase>().clearEntireDatabase();
+      factory = FakeSocketFactory();
+      // A short ladder, so a lost connection comes back within the test.
+      client = NoxSocketClient.forTest(factory, getIt<SyncRepository>(), minBackoff: const Duration(milliseconds: 10));
+      starter = MockLiveSessionStarter();
+      handshake = LiveIdentityHandshake(client, starter);
+      // The channel comes up unpaired, the way the starter brings it up for a
+      // pairing: held open, no greeting.
+      when(starter.restart()).thenAnswer((_) async {
+        await client.stop();
+        await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+        factory.latest.pushGreeting();
+      });
     });
 
-    group('a version-2 link (FR-020, FR-021)', () {
-      AccessKeyRepository keys() => getIt<AccessKeyRepository>();
-      final onion = '${'a' * 56}.onion:443';
-      ({String onion, Uint8List key})? lentDuringPairing;
+    tearDown(() async {
+      await client.stop();
+      await getIt.reset();
+    });
 
-      void serveTheChannel() {
-        when(starter.restart()).thenAnswer((_) async {
-          final lent = selector.lent;
-          // A copy: the selector wipes its own once the pairing is answered.
-          lentDuringPairing = lent == null ? null : (onion: lent.onion, key: Uint8List.fromList(lent.key));
-          await client.stop();
-          await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
-          factory.latest.pushGreeting();
-        });
-      }
+    /// Starts a pairing and answers its first presentation with "pending".
+    Future<({Future<IdentityHandshake> result, FakeSocket socket, List<PairingPending> reported})> waiting({DateTime? until}) async {
+      final reported = <PairingPending>[];
+      final result = handshake.pair(link: link, platform: 'ios', waitUntil: until, onPending: reported.add);
+      result.ignore();
+      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null);
+      final socket = factory.latest;
+      socket.reply(last(socket, 'pair'), data: pending);
+      await waitUntil(() => reported.isNotEmpty);
+      return (result: result, socket: socket, reported: reported);
+    }
 
-      Future<Object?> pairAndAnswer({required bool ok}) async {
-        Object? outcome;
-        unawaited(
-          handshake
-              .pair(link: PairingLink.parse(kTestLinkV2), deviceKey: 'k', platform: 'ios')
-              .then((v) => outcome = v, onError: (Object e) => outcome = e),
-        );
-        await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
-        final socket = factory.latest;
-        final index = socket.sent.indexWhere((f) => f['cmd'] == 'pair');
-        if (ok) {
-          socket.reply(
-            index,
-            data: {
-              'identity': {'id': 'u_me', 'label': 'Anna', 'created': false},
-            },
-          );
-        } else {
-          socket.reply(index, ok: false, code: 'invalid_token');
+    test('the request waits, and nothing is paired until the device that issued the invite answers', () async {
+      final wait = await waiting();
+      IdentityHandshake? settled;
+      unawaited(wait.result.then((v) => settled = v, onError: (Object _) {}));
+
+      expect(wait.reported.single.requestId, 'r_5b0c2e7a91d4f3a6');
+      expect(wait.reported.single.expiresAt, DateTime.fromMillisecondsSinceEpoch(1790000600 * 1000, isUtc: true));
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(settled, isNull, reason: 'pending is not paired (SC-002)');
+    });
+
+    test('a new wait gives itself the invite\'s ten minutes and a little more, by this device\'s clock', () async {
+      final before = DateTime.now();
+      final wait = await waiting();
+
+      final until = wait.reported.single.waitUntil;
+      expect(until.isAfter(before.add(const Duration(minutes: 10))), isTrue);
+      expect(until.isBefore(DateTime.now().add(LiveIdentityHandshake.approvalWindow)), isTrue);
+    });
+
+    test('a resumed wait keeps the deadline it was given (FR-011)', () async {
+      final until = DateTime.now().add(const Duration(minutes: 4));
+      final wait = await waiting(until: until);
+
+      expect(wait.reported.single.waitUntil, until);
+    });
+
+    test('Allow pairs: the outcome event is answered by presenting the token again', () async {
+      final wait = await waiting();
+
+      wait.socket.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'allowed', ...anna});
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'the token goes out again');
+      wait.socket.reply(last(wait.socket, 'pair'), data: anna);
+
+      final paired = await wait.result;
+      expect(paired.authorId, 'u_anna');
+      expect(paired.created, isFalse, reason: 'the person existed: no naming step');
+    });
+
+    test('Deny ends the wait as declined', () async {
+      final wait = await waiting();
+
+      wait.socket.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'denied'});
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'the token goes out again');
+      wait.socket.reply(
+        last(wait.socket, 'pair'),
+        data: const {'status': 'denied', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600},
+      );
+
+      await expectLater(wait.result, throwsA(isA<PairingRefused>().having((e) => e.reason, 'reason', PairRefusal.declined)));
+    });
+
+    test('the server running the time out ends the wait as an expired link', () async {
+      final wait = await waiting();
+
+      wait.socket.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'expired'});
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'the token goes out again');
+      wait.socket.reply(
+        last(wait.socket, 'pair'),
+        data: const {'status': 'expired', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600},
+      );
+
+      await expectLater(wait.result, throwsA(isA<PairingRefused>().having((e) => e.reason, 'reason', PairRefusal.expired)));
+    });
+
+    test('an outcome event the repeat does not bear out is not this request\'s, and the wait goes on', () async {
+      // The event names no request. One left over from an earlier request of
+      // this same device would otherwise end this one.
+      final wait = await waiting();
+      Object? ended;
+      unawaited(wait.result.then((v) => ended = v, onError: (Object e) => ended = e));
+
+      wait.socket.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'denied'});
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'the token goes out again');
+      wait.socket.reply(last(wait.socket, 'pair'), data: pending);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(ended, isNull, reason: 'still waiting');
+
+      wait.socket.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'allowed', ...anna});
+      await waitUntil(() => count(wait.socket, 'pair') == 3, reason: 'asked again');
+      wait.socket.reply(last(wait.socket, 'pair'), data: anna);
+      expect((await wait.result).authorId, 'u_anna');
+    });
+
+    test('an outcome that arrives on the heels of "pending" is not lost', () async {
+      // Listened for before the token went out: the issuing device can answer
+      // within a frame of the request opening.
+      final reported = <PairingPending>[];
+      final result = handshake.pair(link: link, platform: 'ios', onPending: reported.add);
+      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
+      final socket = factory.latest;
+      socket.reply(last(socket, 'pair'), data: pending);
+      socket.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'allowed', ...anna});
+
+      await waitUntil(() => count(socket, 'pair') == 2, reason: 'the token goes out again');
+      socket.reply(last(socket, 'pair'), data: anna);
+      expect((await result).authorId, 'u_anna');
+    });
+
+    test('a lost connection does not lose the wait: the token is presented again on the next one', () async {
+      final wait = await waiting();
+
+      await wait.socket.drop();
+      await waitUntil(() => factory.created.length == 2, reason: 'the client reconnects');
+      final next = factory.latest;
+      next.pushGreeting();
+      await waitUntil(() => next.commandNamed('pair') != null, reason: 'presented on the new connection');
+      expect(
+        (next.commandNamed('pair')!['data'] as Map<String, dynamic>)['token'],
+        link.token,
+        reason: 'the same request, by the same token',
+      );
+      next.reply(last(next, 'pair'), data: anna);
+
+      expect((await wait.result).authorId, 'u_anna');
+    });
+
+    test('a server hiccup on a repeat is no answer, and the wait goes on', () async {
+      final wait = await waiting();
+      Object? ended;
+      unawaited(wait.result.then((v) => ended = v, onError: (Object e) => ended = e));
+
+      await client.reconnect();
+      final next = factory.latest;
+      next.pushGreeting();
+      await waitUntil(() => next.commandNamed('pair') != null, reason: 'presented on the new connection');
+      next.reply(last(next, 'pair'), ok: false, code: 'internal');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(ended, isNull, reason: 'the request is still there');
+    });
+
+    test('Cancel withdraws the request by its token, and the wait ends as cancelled', () async {
+      final wait = await waiting();
+
+      final cancelling = handshake.cancelPairing();
+      await waitUntil(() => wait.socket.commandNamed('pair.cancel') != null, reason: 'pair.cancel is sent');
+      expect(wait.socket.commandNamed('pair.cancel')!['data'], {'token': link.token});
+      wait.socket.reply(last(wait.socket, 'pair.cancel'), data: const {});
+      // What it ended as is read back, as for any other outcome.
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'the outcome is read');
+      wait.socket.reply(
+        last(wait.socket, 'pair'),
+        data: const {'status': 'cancelled', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600},
+      );
+      await cancelling;
+
+      await expectLater(wait.result, throwsA(isA<PairingCancelled>()));
+    });
+
+    test('Cancel after an Allow already landed pairs, rather than leaving a key paired nothing here knows', () async {
+      final wait = await waiting();
+
+      unawaited(handshake.cancelPairing());
+      await waitUntil(() => wait.socket.commandNamed('pair.cancel') != null, reason: 'pair.cancel is sent');
+      wait.socket.reply(last(wait.socket, 'pair.cancel'), data: const {});
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'the outcome is read');
+      wait.socket.reply(last(wait.socket, 'pair'), data: anna);
+
+      expect((await wait.result).authorId, 'u_anna');
+    });
+
+    test(
+      'Cancel with no channel waits for one: the request is withdrawn on the next connection, never left open',
+      () async {
+        final wait = await waiting();
+        Object? ended;
+        unawaited(wait.result.then((v) => ended = v, onError: (Object e) => ended = e));
+        factory.refuseEvery = ChannelFailure.network;
+        await wait.socket.drop();
+
+        // Five seconds with no channel to say it over.
+        await handshake.cancelPairing();
+        expect(ended, isNull, reason: 'not cancelled until the server has it');
+
+        factory.refuseEvery = null;
+        await client.reconnect();
+        final next = factory.latest;
+        next.pushGreeting();
+        await waitUntil(() => next.commandNamed('pair.cancel') != null, reason: 'the withdrawal goes out again');
+        for (final frame in next.sent.where((f) => f['cmd'] == 'pair.cancel')) {
+          next.reply(next.sent.indexOf(frame), data: const {});
         }
-        await waitUntil(() => outcome != null, reason: 'the pairing answered');
-        return outcome;
-      }
+        await waitUntil(() => next.commandNamed('pair') != null, reason: 'what it ended as is read');
+        next.reply(last(next, 'pair'), data: const {'status': 'cancelled', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600});
 
-      setUp(() {
-        lentDuringPairing = null;
-        tor.supported = true;
-        serveTheChannel();
-      });
+        await expectLater(wait.result, throwsA(isA<PairingCancelled>()));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
 
-      test('it lends its onion address and one-time key for the pairing, and no longer', () async {
-        await pairAndAnswer(ok: true);
+    test(
+      'the deadline passing while an offline Cancel is still out ends the wait as cancelled, not stuck',
+      () async {
+        final wait = await waiting(until: DateTime.now().add(const Duration(seconds: 2)));
+        factory.refuseEvery = ChannelFailure.network;
+        await wait.socket.drop();
 
-        expect(lentDuringPairing?.onion, onion, reason: 'there when the channel came up');
-        expect(lentDuringPairing?.key, PairingLink.parse(kTestLinkV2).oneTimePriv);
-        expect(selector.lent, isNull, reason: 'gone once the reply is in');
-      });
+        // The withdrawal takes its five seconds; the deadline comes in between.
+        await handshake.cancelPairing();
 
-      test('a paired device keeps the onion address, and its own key counts as registered', () async {
-        await pairAndAnswer(ok: true);
+        await expectLater(wait.result, throwsA(isA<PairingCancelled>()));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
 
-        expect((await getIt<ServerAddressesRepository>().read()).data?.onion, onion);
-        expect((await keys().isRegistered()).data, isTrue);
-      });
+    test('Cancel with nothing waiting does nothing', () async {
+      await handshake.cancelPairing();
+      expect(factory.created, isEmpty);
+    });
 
-      test('a refused pairing erases the lent key just the same', () async {
-        final outcome = await pairAndAnswer(ok: false);
+    test('at its own deadline the device asks once more, withdraws a request still open, and calls it expired', () async {
+      // A server whose clock runs behind still holds the request: withdrawn on
+      // the way out, so no Allow pressed later can pair this key.
+      final wait = await waiting(until: DateTime.now().add(const Duration(milliseconds: 150)));
 
-        expect(outcome, isA<PairingRefused>());
-        expect(selector.lent, isNull);
-        expect((await keys().isRegistered()).data, isFalse);
-        expect((await getIt<ServerAddressesRepository>().read()).data?.onion, isNull);
-      });
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'asked at the deadline');
+      wait.socket.reply(last(wait.socket, 'pair'), data: pending);
+      await waitUntil(() => wait.socket.commandNamed('pair.cancel') != null, reason: 'withdrawn');
+      wait.socket.reply(last(wait.socket, 'pair.cancel'), data: const {});
+      await waitUntil(() => count(wait.socket, 'pair') == 3, reason: 'the outcome is read');
+      wait.socket.reply(
+        last(wait.socket, 'pair'),
+        data: const {'status': 'cancelled', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600},
+      );
 
-      test('where Tor cannot run the lent fields are read and left unused', () async {
-        tor.supported = false;
+      await expectLater(wait.result, throwsA(isA<PairingRefused>().having((e) => e.reason, 'reason', PairRefusal.expired)));
+    });
 
-        await pairAndAnswer(ok: true);
+    test('at the deadline the server\'s own word wins', () async {
+      final wait = await waiting(until: DateTime.now().add(const Duration(milliseconds: 150)));
 
-        expect(lentDuringPairing, isNull);
-        expect((await getIt<ServerAddressesRepository>().read()).data?.onion, isNull);
-      });
+      await waitUntil(() => count(wait.socket, 'pair') == 2, reason: 'asked at the deadline');
+      wait.socket.reply(last(wait.socket, 'pair'), data: anna);
+
+      expect((await wait.result).authorId, 'u_anna');
+      expect(wait.socket.commandNamed('pair.cancel'), isNull, reason: 'nothing left to withdraw');
+    });
+
+    test('a link the server answers at once still pairs without any waiting', () async {
+      // The machine link (contract §8A): no approval, no wait.
+      final reported = <PairingPending>[];
+      final result = handshake.pair(link: link, platform: 'ios', onPending: reported.add);
+      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
+      factory.latest.reply(
+        last(factory.latest, 'pair'),
+        data: const {
+          'identity': {'id': 'u_me', 'label': 'User3140', 'created': true},
+        },
+      );
+
+      expect((await result).created, isTrue);
+      expect(reported, isEmpty);
     });
   });
 }

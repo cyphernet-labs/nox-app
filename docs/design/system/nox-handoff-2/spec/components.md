@@ -23,7 +23,7 @@ Most theming is already applied in `flutter/nox_theme.dart`; this doc is the per
 | Component | Flutter widget | Bindings |
 |---|---|---|
 | Text field | `TextField` (outlined) | shape `xs`, border `outline` → focus `primary` (2dp) → error `error`. Text `onSurface` `bodyLarge`. Helper/counter `onSurfaceVariant` `bodyMedium`. |
-| ID field (7.1) | `TextField` mono | family **mono**, `bodyLarge` metrics, value wraps `break-all`, color `onSurfaceVariant`. |
+| ID (7.1) | `Text` mono | family **mono**, `bodyLarge` metrics, value wraps `break-all`, color `onSurfaceVariant`. The 2.1 pairing-link `TextField` takes the same family, in `onSurface`. |
 | Availability check | `TextField` + suffix `CircularProgressIndicator` | suffix spinner `onSurfaceVariant`. |
 
 ## Search
@@ -96,7 +96,7 @@ Attach `IconButton` `onSurfaceVariant`; Send `IconButton` active `primary` / dis
 header: ringed initials avatar (`avatarLg` 56) over the name (`titleLarge`
 `onSurface`) over the full public ID (mono `onSurfaceVariant`), then two
 `FilledButton.tonal` actions - `Edit name` / `Copy ID` - in a `Wrap`. No mask and no
-reveal: the ID stopped being a secret in 032. Logout `ListTile` text+icon `error`.
+reveal: the ID is not a secret. Logout `ListTile` text+icon `error`.
 
 ## App bar
 
@@ -125,7 +125,7 @@ visible on both tabs (it is an action, not a tab).
 | Surface | Value |
 |---|---|
 | Splash bg | `brand/canvasDark` `#0C2424` (always dark) |
-| QR card (7.1) | `brand/qrSurface` `#FFFFFF` (always light, so it scans in dark) + modules `brand/qrInk` `#0C0C0C` |
+| QR card (7.8 device invite) | `brand/qrSurface` `#FFFFFF` (always light, so it scans in dark) + modules `brand/qrInk` `#0C0C0C` |
 | Camera overlay (2.2) | mask `#000000`@55%; reticle stroke `brand/white` 3dp, corners `m`; instruction text `#FAFAFA` `bodyLarge`. Permission-denied overlay = opaque `surface`. |
 
 ---

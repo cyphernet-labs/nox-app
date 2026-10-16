@@ -1,5 +1,13 @@
 # App-State Flow — Migration Guide
 
+> **Status in NOX: imported reference, not maintained.** This guide came from another project (Dart
+> package `mouse_flutter`) as the input for NOX feature 009 and is kept as it arrived. Every file it
+> names (`lib/…`, `ExistLiveApp*`, `promts/migration/*`) is that project's file, even where a path
+> matches one in NOX; `promts/migration/` does not exist in this repository. NOX's own implementation: `lib/domain/model/app/app_state_type.dart`
+> (`{init, unauthorized, registrationPending, authorized}`), `lib/data/repository/app/app_state_repository_impl.dart`,
+> `lib/presentation/app/app_root.dart` + `lib/presentation/app/bloc/app_root_bloc.dart`. Read as a
+> reference; never copy verbatim.
+
 > **Purpose.** This document is a complete, domain-neutral specification of **one
 > subsystem**: the *global app-state flow* built around `AppStateRepository`
 > (`lib/domain/repository/app/app_state_repository.dart`) and its consumers across

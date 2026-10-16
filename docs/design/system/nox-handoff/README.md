@@ -56,6 +56,12 @@ MaterialApp(
 
 The Dart and the JSON are generated from one source, so they never drift.
 
+**In this repository** the theme lives in `lib/design/theme/`: `nox_color_scheme.dart` and
+`nox_text_theme.dart` are byte-identical copies of `flutter/`, `nox_tokens.dart` carries the token
+values, and `nox_brand.dart` is the generated base plus the app's own `noxAccountInitials`.
+`flutter/nox_theme.dart` is a reference only: the app builds its `ThemeData` in `AppTheme`, with
+the component themes in `nox_component_themes.dart`.
+
 ## Token format notes (for codegen authors)
 
 - **Color** — hex string (`#RRGGBB`). → `Color(0xFF + RRGGBB)`.
@@ -83,5 +89,8 @@ For pixel-level reference of assembled screens, see the live builds in the proje
 
 ## Still to deliver (asset orders, per design-system.md §11)
 
-Final logo SVG (full-color on dark) · app launcher icon · 3 empty-state illustrations
-(chats / messages / files) · final `ColorScheme` tuning pass in Material Theme Builder.
+Final logo SVG (full-color on dark) · app launcher icon (a set built from the 200×200 raster logo
+ships in `nox-app-icons/`; the final one waits for the vector logo) · 3 empty-state illustrations
+(chats / messages / files; placeholders in `nox-assets/illustrations/`, which the app does not draw -
+see `NoxEmptyState` in `nox-handoff-2/spec/primitives.md`) · final `ColorScheme` tuning pass in
+Material Theme Builder.

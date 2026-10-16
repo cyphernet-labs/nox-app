@@ -8,6 +8,7 @@ import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/data/service/phase_connection_status_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -22,6 +23,9 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
@@ -29,6 +33,8 @@ import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
+
+import '../../../../utils/fixed_connection_status.dart';
 
 /// A fake picker: returns a fixed [PickedFile] (or null on "cancel"). Registered into
 /// the test DI so `attachmentPicked` runs without an OS dialog (feature 017).
@@ -823,6 +829,46 @@ void main() {
       });
     });
 
+    group('why there is no connection (phase 045)', () {
+      late FixedConnectionStatusService status;
+
+      Future<ChatThreadBloc> boot(ConnectionStatus initial) async {
+        status = FixedConnectionStatusService(initial);
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<ConnectionStatusService>(status);
+        // The container lives for the whole file here: put the real one back.
+        addTearDown(() => getIt.registerSingleton<ConnectionStatusService>(PhaseConnectionStatusService()));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        return bloc;
+      }
+
+      test('a failed round with a known cause carries it with the offline banner, and loses it on a greeting', () async {
+        final bloc = await boot(const ConnectionStatus(state: LinkState.offline, problem: ConnectionProblem.turnOnTor));
+        expect((bloc.state as Initialized).isOffline, isTrue);
+        expect((bloc.state as Initialized).problem, ConnectionProblem.turnOnTor);
+
+        status.emit(FixedConnectionStatusService.direct);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect((bloc.state as Initialized).isOffline, isFalse);
+        expect((bloc.state as Initialized).problem, isNull);
+      });
+
+      test('the debug stand-in plays offline with its cause, and holds sends as offline does', () async {
+        final bloc = await boot(FixedConnectionStatusService.direct);
+
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.turnOnTor));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        final state = bloc.state as Initialized;
+        expect(state.isOffline, isTrue);
+        expect(state.problem, ConnectionProblem.turnOnTor);
+        expect(state.isHeld, isTrue);
+      });
+    });
+
     group('the server that is not the one the link named (036)', () {
       late _FakePhase phase;
 
@@ -842,6 +888,7 @@ void main() {
         final state = bloc.state as Initialized;
         expect(state.isServerMismatch, isTrue);
         expect(state.isOffline, isFalse);
+        expect(state.problem, ConnectionProblem.otherServer, reason: 'behind the onion address it is another server (phase 045)');
       });
 
       test('the history stays on screen - nothing is wiped over a bad certificate', () async {

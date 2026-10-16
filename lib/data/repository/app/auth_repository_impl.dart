@@ -1,10 +1,17 @@
+import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:rxdart/rxdart.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
@@ -12,9 +19,14 @@ import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -26,7 +38,11 @@ import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
+import 'package:nox_tor/vault.dart';
+import 'package:sembast/sembast.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
 /// only forced logout passes `sessionExpired`. Sign-in is a stub (backend TBD).
@@ -50,34 +66,84 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final OutboxRepository _outboxRepository;
   final FileRepository _fileRepository;
 
+  /// Whether a sign-in waits for approval on another device (phase 046).
+  final BehaviorSubject<bool> _awaitingApproval = BehaviorSubject<bool>.seeded(false);
+
+  @override
+  Stream<bool> watchAwaitingApproval() => _awaitingApproval.stream;
+
+  @override
+  Future<void> cancelPairing() async => liveIdentityHandshake?.cancelPairing();
+
+  @override
+  Future<RepositoryResult<PendingPairing?>> pendingPairing() {
+    return execute<PendingPairing?>(() async {
+      final stored = await _sessionRepository.readPendingPairing();
+      // A keychain that cannot be read right now resumes nothing - and undoes
+      // nothing either.
+      if (!stored.hasData) return RepositoryResult<PendingPairing?>.error(exception: stored.exception!);
+      final pending = stored.data;
+      if (pending == null) return const RepositoryResult<PendingPairing?>.success(data: null);
+      if (!DateTime.now().isBefore(pending.waitUntil)) {
+        // Its time ran out while the app was closed. Undone like any sign-in
+        // that did not land: the channel it brought up at launch towards the
+        // server it named stops, and the server's key and addresses go.
+        logRepository.debug(target: this, message: 'sign-in: the wait for approval ran out while the app was closed');
+        await _rollBackSignIn();
+        return const RepositoryResult<PendingPairing?>.success(data: null);
+      }
+      return RepositoryResult<PendingPairing?>.success(data: pending);
+    });
+  }
+
   /// Signs in by presenting a pairing link, and lets the SERVER decide whether
   /// onboarding is due.
   ///
   /// The order is the whole point. Parse the link, remember which server it
-  /// names, mint this device's key, pair, take the outcome from the answer, and
-  /// only then move the navigation. Remembering the server FIRST is what makes
-  /// the connection go to the machine the person actually presented — a
-  /// compile-time address would pair with one server and send messages to
-  /// another.
+  /// names - its key and its addresses - mint this device's key, pair, take
+  /// the outcome from the answer, and only then move the navigation.
+  /// Remembering the server FIRST is what makes the connection go to the
+  /// machine the person actually presented, and what every connection's
+  /// check is made against: the channel opens only once the machine answering
+  /// has proved the link's key, and only then does the token go out.
   ///
   /// The refusals stay apart because the person's next action differs: a link
-  /// that will not parse means "scan it again", an expired token means "issue a
-  /// new invite", a rejected one means "this is not usable". A failed
-  /// attempt rolls the session back, because a stored identity with no settled
-  /// outcome would strand the next launch in onboarding.
+  /// that will not parse means "scan it again", a link from a newer server
+  /// means "update the app", an expired token means "issue a new invite", a
+  /// rejected one means "this is not usable". A failed attempt rolls the
+  /// session back, because a stored identity with no settled outcome would
+  /// strand the next launch in onboarding.
   @override
-  Future<RepositoryResult<bool>> signIn({required String identifier}) {
+  Future<RepositoryResult<bool>> signIn({required String identifier, ConnectionSettings? connection}) {
     return execute<bool>(() async {
       final PairingLink link;
       try {
         link = PairingLink.parse(identifier);
-      } on PairingLinkException {
-        // A link that will not parse: the person scans or pastes it again.
-        return const RepositoryResult<bool>.error(exception: RepositoryException.invalidRequest);
+      } on PairingLinkException catch (e) {
+        return RepositoryResult<bool>.error(
+          exception: switch (e.error) {
+            // A link that will not parse: the person scans or pastes it again.
+            PairingLinkError.malformed => RepositoryException.invalidRequest,
+            // A link from a server newer than this build: the person updates
+            // the app. The same answer a server gives a client too old for it.
+            PairingLinkError.newerVersion => RepositoryException.unsupportedSchema,
+          },
+        );
       }
-
-      final saved = await _sessionRepository.saveServer(address: link.authority, serverFingerprint: link.serverFingerprint);
+      // The connection starts at the link's first direct address - the one
+      // the connection screen showed - or, for a link with none, at the
+      // address the person typed there. Every address the link carries is
+      // stored with the server's, and what the person changed on the
+      // connection screen with them, so the path selector can try them all:
+      // directly first, and through Tor when the person allowed it (phase
+      // 045) - the pairing itself included.
+      final direct = link.directAddresses;
+      final typed = connection?.serverAddress.trim();
+      final start = direct.isNotEmpty ? direct.first : typed;
+      if (start == null || start.isEmpty) return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
+      final saved = await _sessionRepository.saveServer(address: start, serverKey: link.serverKeyBase64);
       if (!saved.hasData) return saved;
+      await _storeLinkAddresses(link, direct, connection);
 
       final handshake = liveIdentityHandshake;
       if (handshake == null) {
@@ -88,23 +154,19 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return _finishSignIn(onboardingComplete: false);
       }
 
-      final seed = await _sessionRepository.deviceSecret();
-      if (!seed.hasData) {
+      final deviceKey = await _sessionRepository.deviceKey();
+      if (!deviceKey.hasData) {
         // Rolled back like every other exit in this method. saveServer has
         // already run, so returning without it leaves the address and the
-        // pinned fingerprint of a machine this install has no session with - the next
-        // launch dials it, greets as unpaired for ever, and the world epoch is
-        // keyed on it.
+        // key of a machine this install has no session with - the next launch
+        // dials it, greets as unpaired for ever, and the world epoch is keyed
+        // on it.
         await _rollBackSignIn();
-        return RepositoryResult<bool>.error(exception: seed.exception!);
+        return RepositoryResult<bool>.error(exception: deviceKey.exception!);
       }
 
       try {
-        final greeting = await handshake.pair(
-          link: link,
-          deviceKey: await DeviceKeys.publicKey(seed.data!),
-          platform: PlatformUtils.family,
-        );
+        final greeting = await _pair(handshake, link: link, identifier: identifier, connection: connection);
         if (!greeting.outcomeStated) {
           await _rollBackSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
@@ -122,7 +184,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           return stored;
         }
         // The identity comes from the pair reply, not from the fact that THIS
-        // device presented a claim link: the server is the only one who knows,
+        // device presented a machine link: the server is the only one who knows,
         // and a device that inferred it would be right until the day it was
         // not. Stored now so the name is on screen without waiting for the
         // greeting that follows.
@@ -135,18 +197,16 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         } else {
           final adopted = await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label);
           if (!adopted.hasData) {
-            // NOT fatal, and deliberately not a rollback: the claim token is
+            // NOT fatal, and deliberately not a rollback: the pairing token is
             // already spent, so discarding here would leave the device unable
             // to pair again - the brick this path was rewritten to avoid.
             logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
           }
         }
-        if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
-        // Re-greet, SIGNED. The connection `pair` ran on was greeted before
-        // this device existed to the server, so it still speaks as whoever
-        // greeted then; a message sent on it would carry that identity and come
-        // back looking like a stranger's on the sender's own screen. Storing
-        // the session first is what makes this greeting state a person.
+        // Re-greet. The connection `pair` ran on was never greeted - its key
+        // was nobody's when it opened - so it carries no session; the restart
+        // greets on a fresh one as the person just paired. Storing the session
+        // first is what makes this greeting state a person.
         try {
           await handshake.greet(within: _greetingAfterPairing);
         } on Object {
@@ -159,21 +219,27 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // sent looking for an invite they already have.
         await _rollBackSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
+      } on PairingCancelled {
+        // The person withdrew the request (phase 046). Rolled back like any
+        // attempt that did not land; the screen has nothing to explain.
+        await _rollBackSignIn();
+        return const RepositoryResult<bool>.error(exception: PairingException.cancelled);
       } on PairingRefused catch (e) {
         await _rollBackSignIn();
-        // Two refusals, two answers. Both are about the LINK, because a link
-        // is all there is to refuse now: nobody waits on a human being for
-        // permission to pair a device with their own machine.
-        return RepositoryResult<bool>.error(
-          exception: switch (e.reason) {
-            PairRefusal.expired => RepositoryException.notFound,
-            PairRefusal.notUsable => RepositoryException.authentication,
-          },
-        );
+        // Three refusals, three answers. Each ends in "ask for a new link",
+        // and each says why: the link - or the request an invite opened,
+        // which lives exactly as long - expired; the link is spent; or the
+        // device that issued the invite said no (phase 046).
+        final BaseRepositoryException exception = switch (e.reason) {
+          PairRefusal.expired => RepositoryException.notFound,
+          PairRefusal.notUsable => RepositoryException.authentication,
+          PairRefusal.declined => PairingException.declined,
+        };
+        return RepositoryResult<bool>.error(exception: exception);
       } on Object catch (e, st) {
         // The TYPE only. A FormatException from a base64 decode carries the
-        // offending source in its message, which here would be the link or the
-        // key seed - and a token in a log is still a usable pairing credential
+        // offending source in its message, which here would be the link or a
+        // key - and a token in a log is still a usable pairing credential
         // (Principle I, FR-035).
         logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
         await _rollBackSignIn();
@@ -182,35 +248,114 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     });
   }
 
+  /// Presents the link, and waits with it when it is an invite whose request
+  /// waits for approval (phase 046).
+  ///
+  /// The wait is remembered while it lasts - the link, what was set on the
+  /// connection screen and this device's deadline - so a restart within its
+  /// time goes on waiting for the same request (FR-011); the same link
+  /// remembered from before keeps its first deadline. Forgotten when the wait
+  /// ends, whichever way: a link left in storage is a credential nobody needs.
+  Future<IdentityHandshake> _pair(
+    LiveIdentityHandshake handshake, {
+    required PairingLink link,
+    required String identifier,
+    ConnectionSettings? connection,
+  }) async {
+    final remembered = (await _sessionRepository.readPendingPairing()).data;
+    final resumeUntil = remembered != null && PairingLink.tryParse(remembered.link)?.token == link.token ? remembered.waitUntil : null;
+    Future<void>? remembering;
+    try {
+      return await handshake.pair(
+        link: link,
+        platform: PlatformUtils.family,
+        waitUntil: resumeUntil,
+        onPending: (pending) {
+          _awaitingApproval.add(true);
+          remembering = _sessionRepository.savePendingPairing(
+            PendingPairing(link: identifier, waitUntil: pending.waitUntil, connection: connection),
+          );
+        },
+      );
+    } finally {
+      _awaitingApproval.add(false);
+      // After the write that remembered it, or the record would outlive this.
+      await remembering;
+      await _sessionRepository.clearPendingPairing();
+    }
+  }
+
   /// Undoes a sign-in that did not land: the channel it brought up towards the
-  /// server it named stops first - the socket and, behind it, any Tor client a
-  /// version-2 link started (phase 040) - so nothing in flight writes back
-  /// what [SessionRepository.discardSignIn] then removes.
+  /// server it named stops first, so nothing in flight writes back what
+  /// [SessionRepository.discardSignIn] then removes - the server's key, its
+  /// address and the addresses the link carried among it.
   Future<void> _rollBackSignIn() async {
     if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
     await _sessionRepository.discardSignIn();
   }
 
   /// How long sign-in waits for the greeting that follows a pairing. At home
-  /// it comes in milliseconds. Through Tor right after a pairing it can take
-  /// a minute - the server has to publish this device's new key before the
-  /// onion service lets it in - and nothing waits on it: the restart has
-  /// already happened, and the greeting arrives on its own. The default wait
-  /// spent up to 20 s of that on the sign-in spinner (phase 040, T053).
+  /// it comes in milliseconds, and nothing waits on it past this: the restart
+  /// has already happened, and the greeting arrives on its own (phase 040,
+  /// T053).
   static const Duration _greetingAfterPairing = Duration(seconds: 2);
+
+  /// Stores every address the link carries - the direct ones in its order,
+  /// and the onion address its service key derives - with what the person
+  /// set on the connection screen (phase 045): a field changed from the
+  /// link's value is a hand edit, a cleared onion field means no onion
+  /// address, and `Use Tor` as ticked. The greetings that follow replace the
+  /// link's addresses with what the server says about itself. Best effort:
+  /// without them the session still starts at the link's first address.
+  Future<void> _storeLinkAddresses(PairingLink link, List<String> direct, ConnectionSettings? connection) async {
+    if (!getIt.isRegistered<ServerAddressesRepository>()) return;
+    final serviceKey = link.onionServiceKey;
+    final host = serviceKey == null || !getIt.isRegistered<TorService>() ? null : getIt<TorService>().onionFromPublicKey(serviceKey);
+    final linkOnion = host == null ? null : '$host:443';
+    String? manualAddress;
+    String? manualOnion;
+    if (connection != null) {
+      final typed = connection.serverAddress.trim();
+      // Only an edit of the link's own address: a link without one started
+      // the session at what was typed, which is no edit of anything.
+      if (direct.isNotEmpty && typed.isNotEmpty && typed != direct.first) manualAddress = typed;
+      final typedOnion = connection.onionAddress ?? '';
+      if (typedOnion != (linkOnion ?? '')) manualOnion = typedOnion;
+    }
+    final stored = await getIt<ServerAddressesRepository>().saveFromLink(
+      direct: direct,
+      onion: linkOnion,
+      manualAddress: manualAddress,
+      manualOnion: manualOnion,
+      useTor: connection?.useTor ?? false,
+    );
+    if (!stored.hasData) logRepository.debug(target: this, message: 'sign-in: the link addresses were not stored, starting at its first');
+  }
 
   /// Revokes this device's own key before the local wipe, when there is a
   /// channel to say it on. Never blocks the logout: a person who chose to sign
   /// out must sign out.
+  ///
+  /// "A channel" is a greeted one, now (contract §8A: with a live connection
+  /// the revoke goes out before the wipe; without one the wipe is
+  /// unconditional). A command sent without one would wait for a connection
+  /// that may be minutes away through Tor - the person staring at the logout
+  /// for the bound below to buy nothing, since the orphaned key is revoked
+  /// from another device either way.
   Future<void> _revokeOwnKey() async {
     final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
     if (devices == null) return;
+    final phase = getIt.isRegistered<SessionPhaseService>() ? getIt<SessionPhaseService>().phase : null;
+    if (phase != SessionPhase.live && phase != SessionPhase.catchingUp) {
+      logRepository.debug(target: this, message: 'logout: not connected, the key is revoked from another device');
+      return;
+    }
     try {
-      final seed = await _sessionRepository.deviceSecret();
-      if (!seed.hasData) return;
-      await devices.revoke(deviceKey: await DeviceKeys.publicKey(seed.data!));
+      final pair = await _sessionRepository.deviceKey();
+      if (!pair.hasData) return;
+      await devices.revoke(deviceKey: pair.data!.publicKey);
     } on Object catch (e, st) {
-      // The type only: a decode failure would otherwise put the seed in the log.
+      // The type only: an error's text must never carry a key into the log.
       logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
     }
   }
@@ -262,8 +407,32 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: landed ? label : null));
   }
 
+  /// The logout under way, if one is.
+  Future<RepositoryResult<bool>>? _loggingOut;
+
+  /// One logout at a time, and a second one joins the first.
+  ///
+  /// The case this exists for is a voluntary logout's own echo. It revokes
+  /// this device's key first, and the server answers that by telling every
+  /// connection of the key - this one included - `device.revoked`, which is
+  /// the forced logout's trigger. The guard against acting on it reads the
+  /// session, and the wipe that empties it is a few storage calls behind the
+  /// revoke's reply: the event can win that race, and a second, forced wipe
+  /// then tells the person their session expired when they signed out.
+  /// Joined, the forced one IS the voluntary one - same wipe, same outcome,
+  /// no expiry notice.
   @override
   Future<RepositoryResult<bool>> logout({bool forced = false}) {
+    final running = _loggingOut;
+    if (running != null) return running;
+    final run = _logout(forced: forced);
+    _loggingOut = run;
+    return run.whenComplete(() {
+      if (identical(_loggingOut, run)) _loggingOut = null;
+    });
+  }
+
+  Future<RepositoryResult<bool>> _logout({required bool forced}) {
     // Gate the re-derive on a successful wipe: a failed clear() (e.g. a secure-storage
     // PlatformException) must NOT report success while the identifier survives —
     // otherwise the user silently stays authorized (Constitution I: logout fully wipes).
@@ -297,14 +466,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // clearing, leaving a logged-out device holding someone's messages.
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
         // Swept once more with the channel down. A greeting that landed
-        // between the wipe and the stop could have registered a freshly minted
-        // access key or stored the server's addresses again (FR-018). The
-        // addresses through their own queue, so a write already under way
-        // lands first and is wiped, rather than landing after.
+        // between the wipe and the stop could have stored the server's
+        // addresses again (FR-018). Through their own queue, so a write
+        // already under way lands first and is wiped, rather than landing
+        // after.
         if (getIt.isRegistered<ServerAddressesRepository>()) await getIt<ServerAddressesRepository>().clear();
         if (getIt.isRegistered<FlutterSecureStorage>()) {
           try {
-            await ConnectionStorage.delete(getIt<FlutterSecureStorage>(), includeDeviceAccessKey: true);
+            await ConnectionStorage.delete(getIt<FlutterSecureStorage>());
           } catch (error, stackTrace) {
             logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
           }
@@ -382,8 +551,190 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
           rethrow;
         }
+        // Then the database itself, and the key that sealed it (phase 048,
+        // FR-012): an empty store is still a file of this identity's, and the
+        // key is the last thing that could open anything of it.
+        await _wipeLocalData();
       },
     );
+  }
+
+  /// The database closes under its key, the key goes, then the files - every
+  /// database the key sealed, the other environment's too, this one's last
+  /// (`AppDatabase.clearEntireDatabase`). In this order a crash leaves either
+  /// a database whose key is gone, which the next start retires
+  /// ([openLocalData]), or nothing; and the stores were emptied before, so
+  /// nobody's messages outlive the logout either way. A read that reaches for
+  /// the database meanwhile finds no key and opens nothing. Best effort, like
+  /// the file cache: loud in the log, never a reason to leave the person
+  /// signed in.
+  Future<void> _wipeLocalData() async {
+    final database = getIt<AppDatabase>();
+    try {
+      await database.close();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    await getIt<DeviceVault>().forget();
+    try {
+      await database.clearEntireDatabase();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    // And the plain copies a player or another app had (FR-007, FR-012), and
+    // those the platform's picker left of the files the person attached.
+    await getIt<LocalFilesService>().clearCopies();
+    await getIt<LocalFilesService>().clearPicked();
+  }
+
+  /// How long a start-up waits before it asks the secure store for the key
+  /// again, after the [attempt]-th time it did not answer: short at first - a
+  /// keystore coming up is a matter of moments - and never more than half a
+  /// minute.
+  @visibleForTesting
+  Duration Function(int attempt) unreadablePause = _defaultUnreadablePause;
+
+  static Duration _defaultUnreadablePause(int attempt) => Duration(seconds: min(30, 2 << min(attempt - 1, 4)));
+
+  /// How many times in a row a start-up may find the secure store not
+  /// answering before it gives the local data up as lost, or null for never.
+  ///
+  /// Only Android has a limit. There the store reports a Keystore that
+  /// cannot decrypt its key (`SecureStoreOptions.android` keeps the plugin
+  /// from deleting the store over it), which a retry outlasts within moments
+  /// or never - a lock screen removed, a Keystore reset - and waiting forever
+  /// would leave the person on the splash with no way back but clearing the
+  /// app's data. Five attempts are half a minute. On Apple platforms the
+  /// error is a keychain locked until the first unlock after a restart, which
+  /// only waits for the person; on Linux, a keyring not unlocked yet.
+  @visibleForTesting
+  int? unreadableLimit = Platform.isAndroid ? 5 : null;
+
+  @override
+  Future<RepositoryResult<bool>> openLocalData() async {
+    final vault = getIt<DeviceVault>();
+    for (var attempt = 1; ; attempt++) {
+      switch (await vault.open()) {
+        case LocalDataOpening.open:
+          if (await _databaseOpens()) return const RepositoryResult<bool>.success(data: false);
+          return _retireLocalData();
+        case LocalDataOpening.created:
+          // A new key, so whatever is still in the data folder no key opens:
+          // files of a key a logout did not live to delete, or what a build
+          // before this phase kept unsealed. Nothing has written since.
+          await _discardFiles();
+          return const RepositoryResult<bool>.success(data: false);
+        case LocalDataOpening.lost:
+          return _retireLocalData();
+        case LocalDataOpening.unreadable:
+          // A wait, never a wipe (FR-011): the splash stays, and the store is
+          // asked again - up to a limit only where an error that lasts is a
+          // key gone for good (unreadableLimit).
+          final limit = unreadableLimit;
+          if (limit != null && attempt >= limit) {
+            logRepository.debug(target: this, message: 'bootstrap: the secure store kept failing to give the local-data key');
+            // The store fails every call, deletes included, until the plugin
+            // rebuilds it: rebuilt first, or the retire below could empty
+            // nothing and no pairing could store a server again.
+            final reset = await _sessionRepository.resetSecureStore();
+            if (!reset.hasData) logRepository.debug(target: this, message: 'bootstrap: the secure store would not be rebuilt');
+            return _retireLocalData();
+          }
+          logRepository.debug(target: this, message: 'bootstrap: the secure store did not give the local-data key, asking again');
+          await Future<void>.delayed(unreadablePause(attempt));
+      }
+    }
+  }
+
+  /// Whether the database opens under the key the module holds. One sealed
+  /// under another key, or one that will not read at all, is as lost as one
+  /// whose key is gone. A disk that will not give the file up says nothing
+  /// about the key, and wipes nothing.
+  Future<bool> _databaseOpens() async {
+    try {
+      await getIt<AppDatabase>().db;
+      return true;
+    } on DatabaseException catch (error) {
+      return error.code != DatabaseException.errInvalidCodec;
+    } on FormatException {
+      return false;
+    } on VaultException {
+      return false;
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+      return true;
+    }
+  }
+
+  /// The local data can never be read again: it goes - file by file, since
+  /// none of it opens, every database the data folder holds among them
+  /// (the other environment's too: once the key goes, nothing it sealed
+  /// opens, and one left here would keep the logout below from opening the
+  /// queue it empties) - and with it the session, through the one forced
+  /// logout, to the pairing screen. The conversation comes back from the
+  /// server after the pairing.
+  Future<RepositoryResult<bool>> _retireLocalData() async {
+    logRepository.debug(target: this, message: 'bootstrap: the local data does not open with a key of this device, pairing again');
+    // A key that opens nothing is no key: the logout below starts the new one.
+    await getIt<DeviceVault>().forget();
+    try {
+      await getIt<AppDatabase>().clearEntireDatabase();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    await _discardFiles();
+    final out = await logout(forced: true);
+    return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
+  }
+
+  /// The attachments and the queue's copies, deleted without opening them.
+  Future<void> _discardFiles() async {
+    try {
+      await _fileRepository.clean();
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+    }
+    await getIt<OutboxCopies>().clear();
+  }
+
+  @override
+  Future<RepositoryResult<bool>> retireLegacySession() async {
+    // Two kinds of session no connection can carry any more: one paired before
+    // the secure channel (044), with no server key to check against, and one
+    // whose device key another implementation of the check made (050) - the
+    // Eidolon check's, or the stub's once the real RustSecureBox came. An
+    // error from either question is a keychain that cannot be read right now
+    // - a valid session as likely as an old one - and never a reason to wipe.
+    // A build with no live channel (the mock flavors) never makes a device
+    // key, so the second question is only asked where a session carries one:
+    // there, no key at all would retire every session at every launch.
+    await _dropUnlandedSignIn();
+    final predates = await _sessionRepository.predatesServerKey();
+    final otherBox = predates.data == true || liveIdentityHandshake == null ? predates : await _sessionRepository.predatesSecureBox();
+    final reinstalled = predates.data == true || otherBox.data == true ? predates : await _sessionRepository.outlivedItsInstall();
+    if (predates.data != true && otherBox.data != true && reinstalled.data != true) {
+      return const RepositoryResult<bool>.success(data: false);
+    }
+    logRepository.debug(target: this, message: 'bootstrap: a session the check of this build cannot carry, pairing again');
+    final out = await logout(forced: true);
+    return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
+  }
+
+  /// A sign-in the process did not survive - killed after the server was
+  /// stored and before the identifier was, with no wait for approval on
+  /// record - is rolled back here, before the channel starts: left alone,
+  /// every launch would dial that machine as a stranger, through Tor too when
+  /// the person had ticked it, for an attempt nobody is making any more. A
+  /// storage read error decides nothing.
+  Future<void> _dropUnlandedSignIn() async {
+    final session = await _sessionRepository.readSession();
+    if (!session.hasData || session.data != null) return;
+    final server = await _sessionRepository.serverAddress();
+    if (!server.hasData || server.data == null) return;
+    final waiting = await _sessionRepository.readPendingPairing();
+    if (!waiting.hasData || waiting.data != null) return;
+    logRepository.debug(target: this, message: 'bootstrap: a sign-in that never landed, rolled back');
+    await _sessionRepository.discardSignIn();
   }
 
   /// The single home of the "mutate the source of truth → re-derive app state"

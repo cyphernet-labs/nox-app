@@ -12,23 +12,28 @@ import (
 // name, a title, a message body or a key. The queries below touch no such
 // column - that is stronger than a page that merely declines to print them.
 type Counts struct {
+	// People is 0 or 1 - the machine holds one person at most. The page does
+	// not show it; it picks the words for a machine nobody can reach: a fresh
+	// one, or one whose person signed out of their last device.
+	People   int64
 	Devices  int64
 	Chats    int64
 	Messages int64
 }
 
-// CountEverything reads all three in one go.
+// CountEverything reads them all in one go.
 //
-// One statement rather than three calls, because they are shown together:
+// One statement rather than several calls, because they are shown together:
 // separate reads could be interleaved with a write and produce a picture that
 // never existed - a message in a chat that is not counted yet.
 func (s *Store) CountEverything(ctx context.Context) (Counts, error) {
 	var c Counts
 	err := s.read.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(1) FROM devices),
+		SELECT (SELECT COUNT(1) FROM users),
+		       (SELECT COUNT(1) FROM devices),
 		       (SELECT COUNT(1) FROM chats),
 		       (SELECT COUNT(1) FROM messages)`).
-		Scan(&c.Devices, &c.Chats, &c.Messages)
+		Scan(&c.People, &c.Devices, &c.Chats, &c.Messages)
 	if err != nil {
 		return Counts{}, fmt.Errorf("count store contents: %w", err)
 	}

@@ -26,9 +26,10 @@ enum SessionPhase {
   /// hammering a server that will never accept this build.
   unsupported,
 
-  /// Something answered at the paired address, but it is not this person's
-  /// server: the key behind its certificate is not the one the pairing link
-  /// named.
+  /// Something answered at the paired ONION address, but it is not this
+  /// person's server: the key it proved in the channel's check is not the one
+  /// the pairing link named (phase 044). At a direct address the same answer
+  /// means "not home" and is never shown.
   ///
   /// Its own value, and NOT a sixth use of an existing one. Two things follow
   /// from that, and both are the point:
@@ -39,9 +40,9 @@ enum SessionPhase {
   ///   blamed the network;
   /// * it is not the refusal that ends in a forced logout. That path wipes
   ///   every local message and puts the device back on the pairing screen —
-  ///   so routing a bad certificate through it would hand anyone able to stand
-  ///   in the middle a way to erase every device this person owns, by doing
-  ///   nothing more than presenting one.
+  ///   so routing another server's key through it would hand anyone able to
+  ///   answer at the address a way to erase every device this person owns, by
+  ///   doing nothing more than answering.
   ///
   /// Terminal, and deliberately not persisted: a fresh process tries again,
   /// because the cause may have been a captive portal or somebody's proxy.

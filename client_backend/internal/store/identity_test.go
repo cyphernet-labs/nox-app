@@ -12,30 +12,11 @@ import (
 // into being: people are created by pairing, and a connection whose key nobody
 // knows is not a new person but an unauthorised one. These cover that boundary.
 
-// claimPerson pairs one device by claiming the server, the way the first
-// device of a fresh install does.
-func claimPerson(t *testing.T, s *Store, deviceKey string) Identity {
-	t.Helper()
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	id, err := pairID(ctx, s, token, deviceKey, "test", 100)
-	if err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	return id
-}
-
 func TestGreetingFromAPairedDeviceFindsThePerson(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	paired := claimPerson(t, s, "dev-phone")
+	paired := pairFirst(t, s, "dev-phone")
 
 	got, err := s.ResolveIdentity(ctx, "dev-phone", "", 200)
 	if err != nil {
@@ -55,7 +36,7 @@ func TestGreetingFromAPairedDeviceFindsThePerson(t *testing.T) {
 func TestGreetingFromAnUnknownDeviceIsRefusedRatherThanEnrolled(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
 
 	_, err := s.ResolveIdentity(ctx, "dev-stranger", "", 200)
 	if !errors.Is(err, ErrDeviceUnknown) {
@@ -77,9 +58,9 @@ func TestGreetingFromAnUnknownDeviceIsRefusedRatherThanEnrolled(t *testing.T) {
 func TestARevokedDeviceLooksExactlyLikeAnUnknownOne(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
 
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+	if _, err := s.RevokeDevice(ctx, "dev-phone", 200); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 
@@ -92,7 +73,7 @@ func TestARevokedDeviceLooksExactlyLikeAnUnknownOne(t *testing.T) {
 func TestGreetingWithNoKeyIsRefused(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
 
 	// There is no anonymous identity any more. Serving one was justified by
 	// "the contract forbids refusing a greeting", which is a rule about the
@@ -117,7 +98,7 @@ func TestGreetingWithNoKeyIsRefused(t *testing.T) {
 func TestGreetingWithoutALabelDoesNotRename(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
 
 	named, err := s.ResolveIdentity(ctx, "dev-phone", "Anna", 200)
 	if err != nil {
@@ -139,29 +120,29 @@ func TestGreetingWithoutALabelDoesNotRename(t *testing.T) {
 func TestGreetingNeverRebindsADeviceToAnotherPerson(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
+	person := pairFirst(t, s, "dev-phone")
 
-	// A second device of the SAME person, via an invite.
-	token, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	second, err := pairID(ctx, s, token, "dev-desktop", "test", 200)
+	// A second device of the SAME person, through the machine link.
+	second, err := pairID(ctx, s, issueLink(t, s, 200), "dev-desktop", "test", 200)
 	if err != nil {
 		t.Fatalf("Pair second device: %v", err)
 	}
-	if second.UserID != owner.UserID {
-		t.Fatalf("second device belongs to %q, want %q", second.UserID, owner.UserID)
+	if second.UserID != person.UserID {
+		t.Fatalf("second device belongs to %q, want %q", second.UserID, person.UserID)
 	}
 	if second.Created {
 		t.Fatal("adding a device must not report having created a person")
+	}
+	got, err := s.ResolveIdentity(ctx, "dev-desktop", "", 300)
+	if err != nil || got.UserID != person.UserID {
+		t.Fatalf("the second device greets as %+v (%v), want %q", got, err, person.UserID)
 	}
 }
 
 func TestResolveIdentityEmitsNoEvent(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
 
 	if _, err := s.ResolveIdentity(ctx, "dev-phone", "Anna", 200); err != nil {
 		t.Fatalf("ResolveIdentity: %v", err)
@@ -180,7 +161,7 @@ func TestConcurrentGreetingsOfOneDeviceStaySerialised(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
-		claimPerson(t, s, "dev-phone")
+		pairFirst(t, s, "dev-phone")
 
 		ids := make(chan string, 2)
 		for range 2 {
@@ -205,7 +186,7 @@ func TestAssignedLabelHasTheShapeTheDesignSpecAsks(t *testing.T) {
 	seen := map[string]bool{}
 	for i := range 10 {
 		s := newStore(t)
-		id := claimPerson(t, s, "dev-"+string(rune('a'+i)))
+		id := pairFirst(t, s, "dev-"+string(rune('a'+i)))
 		if !shape.MatchString(id.Label) {
 			t.Fatalf("assigned label %q does not match User<4 digits>", id.Label)
 		}

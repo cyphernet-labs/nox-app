@@ -3,15 +3,11 @@ enum TorState { stopped, bootstrapping, ready, dormant, failed, obsolete }
 
 /// The last thing that went wrong, as a kind. Never text: a message from Tor
 /// can name the onion service, and that must not reach a log or a screen.
+///
+/// No access-key kinds since phase 045: the client holds no onion access keys,
+/// and the module no longer reports a refusal of one.
 enum TorError {
   none,
-
-  /// No key for the onion service was given.
-  missingClientAuth,
-
-  /// The service does not list this key: not registered yet, or the device
-  /// was revoked.
-  wrongClientAuth,
   timeout,
   network,
   internal,
@@ -21,7 +17,7 @@ enum TorError {
 }
 
 class TorStatus {
-  const TorStatus({required this.state, this.bootstrapPercent = 0, this.error = TorError.none, this.port});
+  const TorStatus({required this.state, this.bootstrapPercent = 0, this.error = TorError.none});
 
   static const TorStatus stopped = TorStatus(state: TorState.stopped);
 
@@ -29,23 +25,16 @@ class TorStatus {
   final int bootstrapPercent;
   final TorError error;
 
-  /// The loopback port of the bridge, while a target is set.
-  final int? port;
-
   bool get isReady => state == TorState.ready || state == TorState.dormant;
   bool get isObsolete => state == TorState.obsolete;
 
   @override
   bool operator ==(Object other) =>
-      other is TorStatus &&
-      other.state == state &&
-      other.bootstrapPercent == bootstrapPercent &&
-      other.error == error &&
-      other.port == port;
+      other is TorStatus && other.state == state && other.bootstrapPercent == bootstrapPercent && other.error == error;
 
   @override
-  int get hashCode => Object.hash(state, bootstrapPercent, error, port);
+  int get hashCode => Object.hash(state, bootstrapPercent, error);
 
   @override
-  String toString() => 'TorStatus(${state.name}, $bootstrapPercent%, ${error.name}, port: $port)';
+  String toString() => 'TorStatus(${state.name}, $bootstrapPercent%, ${error.name})';
 }

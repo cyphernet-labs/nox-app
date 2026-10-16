@@ -21,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/protocol"
 )
 
@@ -307,6 +308,36 @@ func (s *Store) OrphanFiles(ctx context.Context, cutoff int64) ([]string, error)
 		return nil, fmt.Errorf("iterate orphans: %w", err)
 	}
 	return ids, nil
+}
+
+// FileIDs lists every file the store has a row for - what a backup carries the
+// bytes of (047). A file whose row is not in the snapshot is not carried: its
+// bytes would lie in the restored directory with nothing that ever names them.
+func (s *Store) FileIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.read.QueryContext(ctx, "SELECT file_id FROM files ORDER BY file_id")
+	if err != nil {
+		return nil, fmt.Errorf("query files: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan file: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate files: %w", err)
+	}
+	return ids, nil
+}
+
+// Snapshot writes a consistent, encrypted copy of the whole database into a
+// new file at path (047): the database part of a backup, made while the
+// server runs. It reads - one read transaction - and writes nothing here.
+func (s *Store) Snapshot(ctx context.Context, path string, key []byte) error {
+	return db.Snapshot(ctx, s.read, path, key)
 }
 
 // DeleteFiles removes files rows by id (bytes are already gone).

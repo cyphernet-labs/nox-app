@@ -27,9 +27,14 @@ abstract class FileRepository {
   /// continued. A change of path under the transfer is not a failure: the rest
   /// goes at once by the new one, within the same call. [cancellation] ends the
   /// transfer as a broken connection would - its message was thrown away.
+  ///
+  /// [name] is the name the server is told; the last part of [path] when
+  /// omitted. The queue sends from a copy named for nothing (048 review), so it
+  /// passes the name the person picked.
   Future<RepositoryResult<String>> upload({
     required String path,
     required String mime,
+    String? name,
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,

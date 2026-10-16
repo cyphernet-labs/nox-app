@@ -28,8 +28,8 @@ void main() {
   late MockNoxSocketClient socket;
   late DeviceRepositoryImpl repository;
 
-  // The public half of the seed FakeSessionRepository hands out.
-  const ownKey = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+  // The public half of the pair FakeSessionRepository hands out.
+  const ownKey = 'cHVibGljLWtleS1vZi10aGlzLWRldmljZS0zMmJ5dGU=';
 
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -107,23 +107,47 @@ void main() {
     expect((await repository.inviteDevice()).hasData, isFalse);
   });
 
-  group('onion invites (040, FR-019)', () {
-    // A version-2 link as the Go server builds it, and a version-1 one.
+  group('invites from outside the home network (040, 045)', () {
+    // Version-3 links (the contract's vectors): one carrying the onion address
+    // as well as a direct one, and one with a direct address only.
     const onionLink =
-        'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
-    const homeLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+        'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
+    const homeLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
-    test('every invite asks for onion, whatever the server turns out to be', () async {
-      // Only the server knows whether it can offer onion right now, and one
-      // older than 039 skips a field it does not know - so asking costs nothing.
+    test('a server that says false is believed, whatever the link carries', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': onionLink, 'onion': false}));
+
+      final invite = (await repository.inviteDevice()).data!;
+
+      expect(invite.link, onionLink);
+      expect(invite.onion, isFalse);
+    });
+
+    test('an invite asks for nothing: the link names every address the machine has (contract §8A)', () async {
       when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink}));
 
       await repository.inviteDevice();
 
-      verify(socket.send('device.invite', {'onion': true})).called(1);
+      verify(socket.send('device.invite', const <String, dynamic>{})).called(1);
     });
 
-    test('an onion invite says it works from anywhere', () async {
+    test('a link carrying the public address works away from home, and the card does not say home only (T017)', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': false, 'public': true}));
+
+      final invite = (await repository.inviteDevice()).data!;
+
+      expect(invite.public, isTrue);
+      expect(invite.onion, isFalse);
+      expect(invite.homeOnly, isFalse);
+    });
+
+    test('neither address in the link: home only', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': false, 'public': false}));
+
+      expect((await repository.inviteDevice()).data!.homeOnly, isTrue);
+    });
+
+    test('the card reads the reply: an onion invite the server vouches for says it works from anywhere', () async {
       when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': onionLink, 'onion': true}));
 
       final invite = (await repository.inviteDevice()).data!;
@@ -155,7 +179,7 @@ void main() {
 
     test('a flag the link does not back is not believed', () async {
       // The link is what the other device will hold. Promising "works from
-      // anywhere" over a version-1 link sends somebody to the office with a
+      // anywhere" over a link with no onion address sends somebody to the office with a
       // link that works only at home.
       when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': true}));
 

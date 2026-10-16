@@ -10,17 +10,16 @@ import 'package:logger/logger.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/app_database.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/domain/model/connection/tor_status.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -28,20 +27,25 @@ import 'package:nox_app/domain/service/app_lifecycle_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../remote/channel/fake_channel.dart';
 import '../../remote/socket/fake_socket.dart';
 import '../live_identity_handshake_test.mocks.dart';
 import 'fake_direct_prober.dart';
 
-/// Nothing that names the server's onion service or opens it reaches a log
-/// line (phase 040, FR-013, SC-008, Constitution I): not from the path
-/// selector, not from a pairing by a version-2 link, not from a failing
-/// bridge - and not from an exception somebody else wrote.
+/// Nothing that names the server's onion service, opens it, or pairs with the
+/// server reaches a log line (phase 040, FR-013, SC-008; phase 044, FR-022;
+/// Constitution I): not from the path selector, not from a pairing, not from
+/// a channel that would not open - and not from an exception somebody else
+/// wrote.
 final String _onionHost = '${'a' * 56}.onion';
 
-const String _v2 =
-    'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+/// The contract's `full` vector: a direct address, a name and an onion
+/// service.
+const String _link =
+    'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
 
 class _Capture extends LogOutput {
   final List<String> lines = <String>[];
@@ -73,8 +77,11 @@ void main() {
   late NoxSocketClient socket;
   late FakeTorService tor;
   late ConnectionPathSelector selector;
+  final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
+  final devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
-  /// Every key the run handles, as the wire and the store spell them.
+  /// Every secret the run handles, as the wire, the store and the link spell
+  /// them.
   late List<String> secrets;
 
   setUp(() async {
@@ -93,21 +100,12 @@ void main() {
       FakeDirectProber(home: <String>{}),
       tor,
       getIt<ServerAddressesRepository>(),
-      getIt<AccessKeyRepository>(),
       _Network(),
       _Lifecycle(),
       socket,
     );
-    final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
-    final link = PairingLink.parse(_v2);
-    secrets = [
-      own.publicBase64,
-      base64Encode(own.privateKey),
-      base64Encode(link.oneTimePriv!),
-      base64Url.encode(link.oneTimePriv!).replaceAll('=', ''),
-      // The fake bridge's secret, as FakeTorService hands it out.
-      base64Encode(List<int>.filled(32, 7)),
-    ];
+    final link = PairingLink.parse(_link);
+    secrets = [base64Encode(devicePrivateKey), base64Encode(serverKey), link.token, _link.substring(PairingLink.prefix.length)];
   });
 
   tearDown(() async {
@@ -119,6 +117,7 @@ void main() {
   void expectNothingLeaked() {
     final all = capture.lines.join('\n');
     expect(all, isNot(contains('.onion')), reason: 'an onion address reached the log');
+    expect(all, isNot(contains('nox://pair/A')), reason: 'a pairing link reached the log');
     for (final secret in secrets) {
       expect(all, isNot(contains(secret)), reason: 'key material reached the log');
     }
@@ -126,9 +125,8 @@ void main() {
 
   test('a run through Tor names no onion address', () async {
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
-    await getIt<AccessKeyRepository>().deviceKey();
-    await getIt<AccessKeyRepository>().markRegistered(true);
-    selector.begin(linkAddress: '10.0.0.5:9000', fingerprint: 'pin');
+    await getIt<ServerAddressesRepository>().setUseTor(true);
+    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
     // The path is chosen after start() returns.
@@ -144,37 +142,49 @@ void main() {
     for (var i = 0; i < 200 && socket.currentPhase != SessionPhase.live; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
-    // The service turns the key away, and the selector says so.
-    tor.emit(const TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth, port: 9150));
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    // The person turns Tor off, and the selector says so.
+    await getIt<ServerAddressesRepository>().setUseTor(false);
+    for (var i = 0; i < 200 && tor.status.isReady; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
 
-    expect(factory.urls.single.host, _onionHost, reason: 'the run did go through Tor');
+    expect(factory.urls.first.host, _onionHost, reason: 'the run did go through Tor');
     expect(capture.lines, isNotEmpty);
     expectNothingLeaked();
   });
 
-  test('a pairing by a version-2 link names neither the address nor the lent key', () async {
+  test('an onion address typed by hand, refused at the dial, is named nowhere either (phase 045)', () async {
+    final typed = '${'b' * 56}.onion';
+    final addresses = getIt<ServerAddressesRepository>();
+    await addresses.saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
+    await addresses.saveManual(manualAddress: null, manualOnion: '$typed:443');
+    await addresses.setUseTor(true);
+    factory.refuseEvery = ChannelFailure.torOnionNotFound;
+    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, devicePrivateKey: devicePrivateKey);
+
+    await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+    // The second round is what turns the refused dial into a cause.
+    for (var i = 0; i < 600 && selector.selection.problem == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(factory.urls.first.host, typed, reason: 'the typed address was the one dialled');
+    expect(selector.selection.problem, ConnectionProblem.onionNotFound);
+    expect(capture.lines.join('\n'), contains('torOnionNotFound'), reason: 'the kind is logged, the address is not');
+    expectNothingLeaked();
+  });
+
+  test('a pairing names neither the link, its token nor an address', () async {
     final starter = MockLiveSessionStarter();
     when(starter.restart()).thenAnswer((_) async {
       await socket.stop();
-      await socket.start(url: Uri.parse('wss://$_onionHost/ws'), credentialsProvider: () async => const GreetingCredentials.unpaired());
+      await socket.start(url: Uri.parse('wss://10.0.0.5:9000/ws'), credentialsProvider: () async => const GreetingCredentials.unpaired());
       factory.latest.pushGreeting();
     });
-    final handshake = LiveIdentityHandshake(
-      socket,
-      starter,
-      getIt<AccessKeyRepository>(),
-      tor,
-      getIt<ServerAddressesRepository>(),
-      selector,
-    );
+    final handshake = LiveIdentityHandshake(socket, starter);
 
     Object? outcome;
-    unawaited(
-      handshake
-          .pair(link: PairingLink.parse(_v2), deviceKey: 'k', platform: 'ios')
-          .then((v) => outcome = v, onError: (Object e) => outcome = e),
-    );
+    unawaited(handshake.pair(link: PairingLink.parse(_link), platform: 'ios').then((v) => outcome = v, onError: (Object e) => outcome = e));
     for (var i = 0; i < 200 && (factory.created.isEmpty || factory.latest.commandNamed('pair') == null); i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
@@ -187,26 +197,24 @@ void main() {
     expectNothingLeaked();
   });
 
-  test('a bridge that is not there fails without naming where it was going', () async {
+  test('a channel that would not open through Tor fails without naming where it was going, or with what', () async {
     // The real HttpClient, not the test binding's stand-in that answers 400.
     final saved = HttpOverrides.current;
     HttpOverrides.global = null;
     addTearDown(() => HttpOverrides.global = saved);
-    final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final port = dead.port;
-    await dead.close();
-    final pinned = PinnedHttpClient()
-      ..pinTo('pin')
-      ..onionBridge = () => TorBridgeEndpoint(port: port, secret: Uint8List(32));
+    final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.torOnionNotFound);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
+    addTearDown(channels.unbind);
     final repository = _Repository();
 
     final result = await repository.run(() async {
-      final request = await pinned.client.getUrl(Uri.parse('https://$_onionHost/files/abc'));
+      final request = await channels.client.getUrl(Uri.parse('https://$_onionHost/files/abc'));
       await request.close();
       return const RepositoryResult<bool>.success(data: true);
     });
 
     expect(result.hasData, isFalse);
+    expect(capture.lines.join('\n'), contains('channel: onion failed (torOnionNotFound)'));
     expectNothingLeaked();
   });
 
@@ -220,6 +228,17 @@ void main() {
     );
 
     expect(capture.lines.join('\n'), contains('[onion]'));
+    expectNothingLeaked();
+  });
+
+  test('an exception that quotes a pairing link is scrubbed on the way out', () async {
+    // A FormatException quotes its source, and the source of a sign-in is the
+    // link - a token that pairs a device with this person's server.
+    final repository = _Repository();
+
+    await repository.run(() async => throw FormatException('unreadable', _link));
+
+    expect(capture.lines.join('\n'), contains('[link]'));
     expectNothingLeaked();
   });
 }

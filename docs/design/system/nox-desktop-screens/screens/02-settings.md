@@ -1,6 +1,6 @@
 # 02 · Settings
 
-> ⚠️ **Feature 032:** `Your ID` shows the PUBLIC author id with no Show/Hide — it stopped being a secret. **The `Show QR` action is gone outright:** it once handed over a bearer secret, then became a shortcut into **7.8 Devices**, which the `Devices` row already is. Adding a device is that screen's own job, with a one-shot token. Logout is irreversible now (the device revokes its own key), and its copy says so.
+> **One person, a public ID.** `Your ID` is the PUBLIC author id, shown whole with no Show/Hide and no QR: adding a device is the Devices pane's own job (09), with a one-shot token. Logout cannot be undone - the device revokes its own key - and its copy says so.
 
 > **02 · Settings** · desktop (Windows / Linux / macOS) · Material 3 · window 1440×900
 
@@ -9,11 +9,13 @@
 **Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths
 
 ## Anatomy
-NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a bare leading glyph, transparent until selected; the selected one fills `secondaryContainer`, recolours its glyph `onSecondaryContainer` and swaps it to the FILLED variant (the corpus's 40dp tinted circle around the glyph is dropped by owner decision - it competed with the pill drawn around it); `Log out` pinned to the foot in `error`) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. Three groups - Account+Devices · Notifications+Appearance+Language · Terms+About - separated by a line UNDER each group, below its padding, so nothing crosses a pill. No card around the destinations: the pane is the container, and a card gave the selection pill a rounded corner to break out through.
+NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a bare leading glyph, transparent until selected; the selected one fills `secondaryContainer`, recolours its glyph `onSecondaryContainer` and swaps it to the FILLED variant (the live design in `_src/` draws a 40dp tinted circle around the glyph; the app does not, by owner decision - it competes with the pill drawn around it); `Log out` pinned to the foot in `error`) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. Three groups - Account+Devices+Connection · Notifications+Appearance+Language · Terms+About - separated by a line UNDER each group, below its padding, so nothing crosses a pill. No card around the destinations: the pane is the container, and a card would give the selection pill a rounded corner to break out through.
 
 ## States
 - `account` — Account
 - `account-editing` — Account · editing
+- `devices` — Devices (pane 09; behaviour spec only, no chip in `index.html`)
+- `connection` — Connection (pane 12; behaviour spec only, no chip in `index.html`)
 - `notifications` — Notifications
 - `notifications-denied` — Notif · denied
 - `appearance` — Appearance
@@ -21,24 +23,24 @@ NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium desti
 - `terms` — Terms
 - `about` — About
 - `logout` — Logout dialog
-- ~~`account-member`~~ — dropped by phase 037 along with the badge: there is only one Account state now
 
 ## Behavior
 - Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.
 - Account: identity card as an account header — ringed initials avatar, name, the full public ID in mono, and the two tonal actions `Edit name` / `Copy ID`. Editing → inline name field in place of the name, `Edit name` withdrawn while it is open; no availability spinner, because names are not unique and, on a one-person server, there is nobody to collide with.
-- ⚠️ **Phase 037 (2026-09-10) removed the `Server owner` badge** (added by 033) and there is no `People` menu item. The machine holds one person, so a mark that separated the owner from an invited member separates nothing. Same rule as the narrow width — one builder feeds both, so the two cannot drift apart.
-- ⚠️ Phase 032 removed both the mask and the inline account QR: the ID is public now, and a QR of it added nobody. The QR action itself is gone too — the `Devices` menu item is the way to the pane that mints an invite.
+- No role badge and no `People` menu item: the machine holds one person, so such a mark would separate nothing. Same rule as the narrow width — one builder feeds both, so the two cannot drift apart.
+- No mask and no account QR: the ID is public, and a QR of it would add nobody. The `Devices` menu item is the way to the pane that mints an invite.
+- Connection (feature 045): the third item of the first group, glyph `lan` (filled when selected). Its pane is **12 · Connection** — the server address, the onion address and Use Tor — the same body as the phone's 7.10.
 - Notifications: enable switch with a bare leading glyph (22, `onSurfaceVariant`) - no 40dp tinted circle; OS-denied → an inset InfoBanner card above it, in the same geometry as the settings cards, with `Open settings` at its trailing edge, switch off.
 - Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
-- Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.
+- Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error. Confirming does what it does on mobile 7.1: the device revokes its own key over a live connection, then the session and all local data are wiped.
 
 ## Navigation
-- Menu item → swaps detail pane.
+- Menu item → swaps detail pane (Devices → 09 · Devices, Connection → 12 · Connection).
 - Log out (confirmed) → Login (03).
 
 ## Copy (EN)
 - Pane title: Settings
-- Logout: Log out? / Your ID and local data will be removed from this device.
+- Logout: Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back. · Cancel · Log out
 
 ## Design-system components
 - NavRail

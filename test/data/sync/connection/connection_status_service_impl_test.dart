@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/service/phase_connection_status_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/connection_status_service_impl.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -53,5 +55,31 @@ void main() {
     final status = fold(SessionPhase.live, direct, obsolete);
     expect(status.torObsolete, isTrue);
     expect(status.state, LinkState.online);
+  });
+
+  group('why there is no connection (phase 045)', () {
+    test('the failed round\'s problem rides with offline', () {
+      const failed = PathSelection(active: true, roundFailed: true, problem: ConnectionProblem.turnOnTor);
+      final status = fold(SessionPhase.disconnected, failed, TorStatus.stopped);
+      expect(status.state, LinkState.offline);
+      expect(status.problem, ConnectionProblem.turnOnTor);
+      expect(status.showsNoConnection, isTrue);
+    });
+
+    test('another server behind the onion address is its own problem', () {
+      expect(fold(SessionPhase.serverMismatch, active, TorStatus.stopped).problem, ConnectionProblem.otherServer);
+    });
+
+    test('no problem while connected, coming up, or refused for good', () {
+      const stale = PathSelection(active: true, problem: ConnectionProblem.torNetwork);
+      expect(fold(SessionPhase.live, stale, TorStatus.stopped).problem, isNull);
+      expect(fold(SessionPhase.connecting, stale, TorStatus.stopped).problem, isNull, reason: 'not a failed round');
+      expect(fold(SessionPhase.unsupported, stale, TorStatus.stopped).problem, isNull);
+    });
+
+    test('where there is no path selector, the phase names only another server', () {
+      expect(PhaseConnectionStatusService.fromPhase(SessionPhase.serverMismatch).problem, ConnectionProblem.otherServer);
+      expect(PhaseConnectionStatusService.fromPhase(SessionPhase.disconnected).problem, isNull);
+    });
   });
 }

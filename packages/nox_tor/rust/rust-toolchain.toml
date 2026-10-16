@@ -1,6 +1,6 @@
 [toolchain]
 # arti-client 0.47 needs Rust 1.92 or newer. Pinned like Flutter is through FVM,
-# so every machine and CI job builds the same Tor client.
+# so every machine and CI job builds the same channel and Tor client.
 channel = "1.93.1"
 targets = [
   "aarch64-apple-darwin",
@@ -13,4 +13,6 @@ targets = [
   "x86_64-linux-android",
   "x86_64-pc-windows-msvc",
   "aarch64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
 ]

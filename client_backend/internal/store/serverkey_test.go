@@ -3,19 +3,13 @@ package store
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
-	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
 
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/securebox"
 )
 
 // openStoreAt opens a store over a named file so a test can close it and open
@@ -23,7 +17,7 @@ import (
 // "survived a restart", which is the property that actually matters here.
 func openStoreAt(t *testing.T, path string) *Store {
 	t.Helper()
-	d, err := db.Open(path)
+	d, err := db.Open(path, testKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -34,182 +28,157 @@ func openStoreAt(t *testing.T, path string) *Store {
 	return New(d.Read, d.Write)
 }
 
-// The stored halves have to be readable by the standard parsers and have to
-// belong to each other. A key stored in a shape only this file understands is
-// a key nobody else can build a certificate from.
-func TestTheServerKeyIsStoredInShapesTheStandardParsersRead(t *testing.T) {
+// The machine's key comes from RustSecureBox (050): a 32-byte private key and
+// the 32-byte public key the library gives for it - what the pairing link
+// carries whole. Stored in any other shape, the link and the answer to
+// POST /auth would be built from different things.
+func TestTheServerKeyIsRustSecureBoxsPairAsItWasMade(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	id, err := s.EnsureServerIdentity(ctx)
+	id, err := s.EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-
-	spki, err := base64.StdEncoding.DecodeString(id.PublicKey)
-	if err != nil {
-		t.Fatalf("public half is not base64: %v", err)
+	if len(id.PublicKey) != securebox.PublicKeySize {
+		t.Fatalf("public key is %d bytes, want %d", len(id.PublicKey), securebox.PublicKeySize)
 	}
-	pub, err := x509.ParsePKIXPublicKey(spki)
-	if err != nil {
-		t.Fatalf("public half is not a SubjectPublicKeyInfo: %v", err)
+	var privB64 string
+	if err := s.read.QueryRowContext(ctx, "SELECT private_key FROM server_identity WHERE id = 1").Scan(&privB64); err != nil {
+		t.Fatalf("read the row: %v", err)
 	}
-	ec, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		t.Fatalf("public half is %T, want *ecdsa.PublicKey", pub)
-	}
-	// P-256 by name, not by "whatever was generated": the client digs the SPKI
-	// out of the certificate by a fixed header for THIS curve, so another curve
-	// would be another wire format.
-	if ec.Curve != elliptic.P256() {
-		t.Fatalf("curve = %v, want P-256", ec.Curve)
+	if raw, err := base64.StdEncoding.DecodeString(privB64); err != nil || len(raw) != securebox.PrivateKeySize {
+		t.Fatalf("private_key is not a base64 %d-byte key: %d bytes, err %v", securebox.PrivateKeySize, len(raw), err)
 	}
 
-	signer, err := s.ServerSigner(ctx)
-	if err != nil {
-		t.Fatalf("ServerSigner: %v", err)
+	priv, rekeyed, err := s.ServerKey(ctx, testBox)
+	if err != nil || rekeyed {
+		t.Fatalf("ServerKey: rekeyed=%v err=%v", rekeyed, err)
 	}
-	priv, ok := signer.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Fatalf("private half is %T, want *ecdsa.PrivateKey", signer)
-	}
-	// The two halves must be one pair. They are written by separate marshallers
-	// into separate columns, and this is the only place that is checked at all.
-	if !priv.PublicKey.Equal(ec) {
-		t.Fatal("the stored halves are not the same key pair")
+	// The two halves must be one pair: the link is built from one, the answer
+	// to /auth is signed with the other.
+	public, err := testBox.PublicKey(priv)
+	if err != nil || !bytes.Equal(public[:], id.PublicKey) {
+		t.Fatal("ServerKey is not the private half of the identity's public key")
 	}
 }
 
-// The fingerprint is what the pairing link carries, so a restart that changed
-// it would refuse every paired device. It is derived, never stored, and this
-// is what holds the derivation still.
-func TestTheFingerprintIsTheHashOfThePublicHalfAndSurvivesARestart(t *testing.T) {
+// The key is what the pairing link carries, so a restart that changed it
+// would lock out every paired device.
+func TestTheServerKeySurvivesARestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "identity.db")
 
-	minted, err := openStoreAt(t, path).EnsureServerIdentity(ctx)
+	minted, err := openStoreAt(t, path).EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	spki, err := base64.StdEncoding.DecodeString(minted.PublicKey)
-	if err != nil {
-		t.Fatalf("decode public half: %v", err)
-	}
-	sum := sha256.Sum256(spki)
-	if want := base64.StdEncoding.EncodeToString(sum[:]); minted.Fingerprint != want {
-		t.Fatalf("fingerprint = %q, want sha256 of the SPKI (%q)", minted.Fingerprint, want)
-	}
-
 	// A whole second process's worth of reading: new pools, new Store, same file.
-	again, err := openStoreAt(t, path).ServerIdentity(ctx)
+	again := openStoreAt(t, path)
+	read, err := again.ServerIdentity(ctx)
 	if err != nil {
 		t.Fatalf("ServerIdentity after restart: %v", err)
 	}
-	if again.Fingerprint != minted.Fingerprint {
-		t.Fatalf("fingerprint changed across a restart: %q then %q", minted.Fingerprint, again.Fingerprint)
+	if !bytes.Equal(read.PublicKey, minted.PublicKey) {
+		t.Fatalf("the key changed across a restart: %x then %x", minted.PublicKey, read.PublicKey)
 	}
-	if again.PublicKey != minted.PublicKey {
-		t.Fatal("the public half changed across a restart")
+	priv, rekeyed, err := again.ServerKey(ctx, testBox)
+	if err != nil || rekeyed {
+		t.Fatalf("ServerKey after restart: rekeyed=%v err=%v", rekeyed, err)
+	}
+	if public, _ := testBox.PublicKey(priv); !bytes.Equal(public[:], minted.PublicKey) {
+		t.Fatal("after a restart the private half proves another key")
 	}
 }
 
-// A database from before feature 036 holds a raw Ed25519 key. There is no
-// migration by decision, so the only acceptable behaviour is to say what to do
-// - from the place that knows, rather than as a parse failure three layers up.
-func TestAPre036KeyIsRefusedWithAnAnswerRatherThanAParseFailure(t *testing.T) {
+// A row that is not a key at all - half a restore, a hand edit - is refused at
+// startup, where it can be fixed.
+func TestAServerKeyOfTheWrongShapeIsRefused(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, column, value string
+	}{
+		{"a private key of the wrong size", "private_key", base64.StdEncoding.EncodeToString(make([]byte, 31))},
+		{"a public key of the wrong size", "public_key", base64.StdEncoding.EncodeToString(make([]byte, 33))},
+		{"a private key that is not base64", "private_key", "not base64!"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
+				t.Fatalf("EnsureServerIdentity: %v", err)
+			}
+			// The column name is one of two literals above, never input.
+			if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET "+tc.column+" = ? WHERE id = 1", tc.value); err != nil {
+				t.Fatalf("break the row: %v", err)
+			}
+			if _, _, err := s.ServerKey(ctx, testBox); err == nil {
+				t.Fatal("ServerKey handed out a key the row does not hold together")
+			}
+		})
+	}
+}
+
+// FR-021: a public key the current RustSecureBox does not give for the stored
+// private key means the key was made by another implementation - Eidolon
+// before 050, the stub before the real library. Every device's key came from
+// it too. The server keeps its private key, takes the public key the library
+// gives, and lets every device go in one transaction; everything the person
+// wrote stays.
+func TestAKeyOfAnotherImplementationIsRekeyedAndEveryDeviceLetGo(t *testing.T) {
+	ctx := context.Background()
 	s := newStore(t)
-	ctx := context.Background()
-
-	// Thirty-two raw bytes in both columns: exactly what the old code wrote.
-	legacy := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO server_identity (id, public_key, private_key, onion_seed, claimed_at) VALUES (1, ?, ?, ?, NULL)",
-		legacy, legacy, legacy); err != nil {
-		t.Fatalf("seed a legacy row: %v", err)
+	person := pairFirst(t, s, "device-key-of-the-old-check")
+	if _, err := s.IssueMachineLink(ctx, 200); err != nil {
+		t.Fatalf("IssueMachineLink: %v", err)
 	}
-
-	if _, err := s.ServerIdentity(ctx); !errors.Is(err, ErrLegacyServerKey) {
-		t.Fatalf("reading a legacy identity gave %v, want ErrLegacyServerKey", err)
-	}
-	if _, err := s.ServerSigner(ctx); !errors.Is(err, ErrLegacyServerKey) {
-		t.Fatalf("reading a legacy private half gave %v, want ErrLegacyServerKey", err)
-	}
-	// The message has to name the cure, because there is no migration to run.
-	if !strings.Contains(ErrLegacyServerKey.Error(), "delete the development database") {
-		t.Fatalf("the refusal does not say what to do: %q", ErrLegacyServerKey)
-	}
-}
-
-// The onion key is minted with the machine and never changes: a backup is one
-// file, and the address it restores has to be the one every device already
-// knows (039, FR-008).
-func TestTheOnionSeedIsMintedOnceAndSurvivesAReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "onion.db")
-	ctx := context.Background()
-
-	first := openStoreAt(t, path)
-	if _, err := first.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	seed, err := first.OnionSeed(ctx)
+	chat, _, _, err := s.CreateChat(ctx, "", "Notes", "Anna", 300)
 	if err != nil {
-		t.Fatalf("OnionSeed: %v", err)
+		t.Fatalf("CreateChat: %v", err)
 	}
-	if len(seed) != 32 || bytes.Equal(seed, make([]byte, 32)) {
-		t.Fatalf("seed = %x, want 32 random bytes", seed)
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "m1", person, textBody("kept"), "", 301); err != nil {
+		t.Fatalf("SendMessage: %v", err)
 	}
-	again, err := first.OnionSeed(ctx)
-	if err != nil || !bytes.Equal(again, seed) {
-		t.Fatalf("a second read gave %x (err %v), want the same seed", again, err)
+	// The public key the old implementation gave for the same private key.
+	oldPublic := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x5a}, securebox.PublicKeySize))
+	if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET public_key = ? WHERE id = 1", oldPublic); err != nil {
+		t.Fatalf("make the key an old one: %v", err)
 	}
 
-	second := openStoreAt(t, path)
-	if _, err := second.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity after reopen: %v", err)
+	priv, rekeyed, err := s.ServerKey(ctx, testBox)
+	if err != nil || !rekeyed {
+		t.Fatalf("ServerKey: rekeyed=%v err=%v", rekeyed, err)
 	}
-	reopened, err := second.OnionSeed(ctx)
-	if err != nil || !bytes.Equal(reopened, seed) {
-		t.Fatalf("after reopen the seed is %x (err %v), want %x", reopened, err, seed)
+	id, err := s.ServerIdentity(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// The identity handed to the status page and device.invite must not be able to
-// carry the onion key: a private key one field away from a page is how it ends
-// up on one.
-func TestTheServerIdentityHasNoOnionField(t *testing.T) {
-	for i := range reflect.TypeFor[ServerIdentity]().NumField() {
-		name := reflect.TypeFor[ServerIdentity]().Field(i).Name
-		if strings.Contains(strings.ToLower(name), "onion") {
-			t.Fatalf("ServerIdentity has field %s; the onion key must stay behind OnionSeed", name)
+	if public, _ := testBox.PublicKey(priv); !bytes.Equal(public[:], id.PublicKey) {
+		t.Fatal("the stored public key is not the library's for the private key")
+	}
+	for table, want := range map[string]int{"devices": 0, "pair_tokens": 0, "pair_requests": 0, "users": 1, "chats": 1, "messages": 1} {
+		var n int
+		// The table name is one of the literals above, never input.
+		if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM "+table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != want {
+			t.Errorf("%s: %d rows, want %d", table, n, want)
 		}
 	}
-}
-
-// A backup is the database file and nothing else, so restoring it - anywhere -
-// brings back the same onion address (SC-003). VACUUM INTO is how this project
-// takes a backup of a live database.
-func TestABackupRestoresTheSameOnionKey(t *testing.T) {
-	dir := t.TempDir()
-	ctx := context.Background()
-	live := openStoreAt(t, filepath.Join(dir, "live.db"))
-	if _, err := live.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
+	// Once rekeyed, the next start finds the pair whole.
+	if _, rekeyed, err := s.ServerKey(ctx, testBox); err != nil || rekeyed {
+		t.Fatalf("the second start: rekeyed=%v err=%v", rekeyed, err)
 	}
-	want, err := live.OnionSeed(ctx)
+	// And the page leads with a link again: nobody can reach the machine.
+	link, err := s.IssueMachineLink(ctx, 400)
 	if err != nil {
-		t.Fatalf("OnionSeed: %v", err)
+		t.Fatalf("IssueMachineLink after the rekey: %v", err)
 	}
-	backup := filepath.Join(dir, "backup.db")
-	if _, err := live.write.ExecContext(ctx, "VACUUM INTO ?", backup); err != nil {
-		t.Fatalf("VACUUM INTO: %v", err)
+	again, err := pairID(ctx, s, link.Token, "device-key-of-the-new-check", "test", 401)
+	if err != nil {
+		t.Fatalf("pair after the rekey: %v", err)
 	}
-
-	restored := openStoreAt(t, backup)
-	if _, err := restored.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity on the restored copy: %v", err)
-	}
-	got, err := restored.OnionSeed(ctx)
-	if err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("restored seed = %x (err %v), want %x", got, err, want)
+	if again.UserID != person.UserID {
+		t.Fatal("the device paired after the rekey is not the same person")
 	}
 }
