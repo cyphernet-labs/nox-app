@@ -882,6 +882,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   how often (050), so strangers' lines at Info would push out an operator's.
   Refusals at the check follow the same rule: a first request that is no step
   of it is Debug, one after a good `/auth` is Info (`connauth.ErrAfterAuth`).
+  Inside a WebSocket the same holds per connection (`client.lineLevel`): a
+  key nobody paired gets Debug for its frames, a frame that does not parse,
+  the end of its read and a session that ran out its time; a failed upgrade
+  is Debug unless the key is paired. An error a library quotes the peer in -
+  a header, a frame - is cut to 200 bytes (`clipped`). A machine link spent
+  is one Info line (`device paired by=machine link`, never on a repeat), the
+  only trace of the strongest credential the server issues.
 - The server's private key lives INSIDE the database file - RustSecureBox's
   32-byte private key in `server_identity` (050). The model's case 6 warns that
   a backup holding only the DB would leave the devices facing a stranger; one artifact makes that impossible,
