@@ -37,7 +37,7 @@ mockups = Material Symbols Rounded.
 | Sent | `check` | `onSurfaceVariant` |
 | Error | `error_outline` | `error` |
 
-## File-type chips (no content preview anywhere)
+## File-type chips (every file that is not drawn: a picture whose bytes are on the device is a thumbnail instead)
 | Type | Icon |
 |---|---|
 | Image | `image` |

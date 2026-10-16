@@ -32,8 +32,9 @@ Over any screen — 8.2 Pair request (the question a device asks when a new devi
 live design in `index.html`: their goldens in the app's test suite are what pins how they look.
 
 Each `.md` lists the screen's states, behavior, navigation, EN copy and the design-system components
-it uses. The same components are specced for Flutter in the handoff package (`nox-handoff/`):
-tokens → `nox-handoff/tokens`, widgets → `nox-handoff/flutter/widgets`, icons → `nox-assets/icons`.
+it uses. The same components are specced for Flutter in the two handoff packages:
+tokens → `nox-handoff/tokens`, widgets → `nox-handoff-2/flutter/widgets` (spec in
+`nox-handoff-2/spec/primitives.md`), icons → `nox-assets/icons`.
 
 ## Linked to the design system
 `_src/` is a **snapshot** of the live design-system components (`tokens`, `m3`, `chats-parts`,

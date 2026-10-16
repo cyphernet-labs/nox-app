@@ -12,15 +12,15 @@ App bar (back + Notifications). Grouped switch row “Enable notifications” wi
 - `denied` — OS-denied
 
 ## Behavior
-- Single switch with supporting text “Only for chats you’re in”.
-- If the OS permission is denied, an InfoBanner appears (“Notifications are blocked” + Open settings) and the switch reads off.
+- Single switch with supporting text “For new messages in your chats”.
+- If the OS permission is denied, an InfoBanner appears (“Notifications are blocked” + Open settings) and the switch reads off and is disabled.
 
 ## Navigation
 - Back → Settings (7.1).
 - Open settings → OS settings.
 
 ## Copy (EN)
-- Row: Enable notifications / Only for chats you’re in
+- Row: Enable notifications / For new messages in your chats
 - Denied: Notifications are blocked / Allow notifications in system settings to receive messages from your chats. / Open settings
 
 ## Design-system components

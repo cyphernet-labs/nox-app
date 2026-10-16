@@ -47,8 +47,9 @@ and Settings rather than separate screens — switch them with the chips.
 
 ## Linked to the design system
 `_src/` is a **snapshot** of the live design-system components so this archive renders standalone.
-The authoritative source is the project `src/`; the same widgets are specced for Flutter in
-`nox-handoff/` (tokens, `flutter/widgets`, the adaptation table in `spec/components.md`).
+The authoritative source is the project `src/`; the same widgets are specced for Flutter in the two
+handoff packages: tokens and the adaptation table in `nox-handoff/` (`tokens/`, `spec/components.md`),
+the widgets in `nox-handoff-2/flutter/widgets`.
 
 > Icons render as glyphs in a real browser; flat screenshots may show Material Symbols ligatures as
 > text — a capture artifact only.

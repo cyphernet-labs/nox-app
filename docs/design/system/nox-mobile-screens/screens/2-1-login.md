@@ -1,6 +1,6 @@
 # 2.1 · Login
 
-> ⚠️ **Feature 032, link format from 044, Connect from 045:** the field is the pairing link `nox://pair/…` (version 3: the server's key, a one-time token and the server's addresses), not an identifier — the device proves possession of a key that never leaves it. This screen only READS the link: a link that will not parse and a link from a newer app are refused here, and every readable link goes on to Connect (2.4), which pairs and says whatever the server or the path answered.
+> **The field is a pairing link** `nox://pair/…` (version 3: the server's key, a one-time token and the server's addresses). The device proves possession of its own key, which never leaves it, on every connection. This screen only READS the link: a link that will not parse and a link from a newer app are refused here, and every readable link goes on to Connect (2.4), which pairs and says whatever the server or the path answered.
 
 > **Onboarding** · mobile (iOS / Android) · Material 3
 

@@ -1,6 +1,6 @@
 # 2.2 Сканирование QR
 
-> ⚠️ **Сканер читает ссылку спаривания `nox://pair/…` версии 3**. Полезная нагрузка передаётся дальше **целиком**: из неё ничего не извлекается, потому что ключ сервера и его адреса нужны так же, как токен. Отказы разбора — те же, что у вставки в 2.1: «это не ссылка» и «ссылка новее приложения». Читаемая ссылка ведёт на экран подключения [2.4](connect.md) — тем же путём, что вставка. На Windows и Linux камеры нет — там тот же разбор работает поверх выбранной картинки (`Use a QR image` на 2.1); вставка текстом работает везде.
+> **Сканер читает ссылку спаривания `nox://pair/…` версии 3**. Полезная нагрузка передаётся дальше **целиком**: из неё ничего не извлекается, потому что ключ сервера и его адреса нужны так же, как токен. Отказы разбора — те же, что у вставки в 2.1: «это не ссылка» и «ссылка новее приложения». Читаемая ссылка ведёт на экран подключения [2.4](connect.md) — тем же путём, что вставка. На Windows и Linux камеры нет — там тот же разбор работает поверх выбранной картинки (`Use a QR image` на 2.1); вставка текстом работает везде.
 
 > Детальная спецификация экрана. Часть [карты экранов](../top-level-screens.md). Общие решения — в [overview.md](../overview.md). Все верхнеуровневые открытые вопросы по 2.2 закрыты 2026-05-29.
 
@@ -20,8 +20,8 @@
 
 Полноэкранный Scaffold. Сверху вниз:
 
-1. **AppBar (M3):** сплошной; цвет берётся из текущей темы через `ColorScheme` — тёмный в dark mode, светлый в light mode. Слева — back-стрелка. В actions — иконки фонарика (toggle) и переключения камеры (toggle front/back) **(только мобильная `_narrow`-ветка; в `_wide` этих действий нет)**.
-2. **Подложка:** live-видео с камеры заполняет область под AppBar до низа экрана.
+1. **AppBar (M3):** над камерой — **прозрачный**, без заливки и без брендовой линии; back-стрелка и действия — `brand/white`, чтобы читаться поверх видео. Над непрозрачной поверхностью (нет доступа к камере, камера недоступна) — сплошной `surface` по теме. Слева — back-стрелка. В actions — иконки фонарика (toggle) и переключения камеры (toggle front/back), только пока камера работает **(только мобильная `_narrow`-ветка; в `_wide` этих действий нет)**.
+2. **Подложка:** live-видео с камеры заполняет весь экран, и под AppBar тоже.
 3. **Overlay-инструкция:** в верхней зоне видео поверх — текст `Aim your camera at a QR code`.
 4. **Прицел:** квадратное окно-«прицел» в центре, остальная площадь затемнена (mask).
 5. **Низ:** secondary action `TextButton` `Enter manually` (возврат в 2.1 без submit).
@@ -33,7 +33,7 @@
 Экран выбирает ветку по `constraints.maxWidth >= Constants.railBreakpoint` (как все responsive-экраны NOX):
 
 - **`_narrow` (iOS / Android)** — полноэкранный feed; прозрачный AppBar (без surface-заливки и без splash-hairline) с back-стрелкой и actions `Flashlight` / `Switch camera`; прицел + затемняющая маска `#000` @ 55% (brand-fixed); нижняя `Enter manually`-pill поверх feed. Источник: `nox-mobile-screens/screens/2-2-qr-scan.md`. Действия `Flashlight`/`Switch camera` gracefully no-op на устройстве без вспышки/второй камеры.
-- **`_wide` (macOS — единственный десктопный таргет с камерой)** — оконный `TitleBar` (`NOX · Scan QR`) + центрированный viewfinder 300×300 с brand-белыми углами на обычном `surface`-фоне (без полноэкранной маски), заголовок `Scan a QR code`, helper `Point your webcam at a code, or enter the ID manually.` с `Enter manually`-`TextButton`. Действий `Flashlight` / `Switch camera` НЕТ. Источник: `nox-desktop-screens/screens/06-qr.md`.
+- **`_wide` (macOS — единственный десктопный таргет с камерой)** — оконный `TitleBar` (`NOX — Scan QR`) + центрированный viewfinder 300×300 с brand-белыми углами на обычном `surface`-фоне (без полноэкранной маски), заголовок `Scan a QR code`, helper `Point your webcam at a code, or enter the ID manually.` с `Enter manually`-`TextButton`. Действий `Flashlight` / `Switch camera` НЕТ. Источник: `nox-desktop-screens/screens/06-qr.md`.
 - **Windows / Linux** — камеры нет: кнопка `Scan QR` на 2.1 скрыта, 2.2 недостижим (единый capability-флаг `QrScannerCapability`, FR-016/017 фичи 010); вместо неё на 2.1 — `Use a QR image`.
 
 ## Состояния
@@ -44,7 +44,7 @@
 | Permission-denied | Доступ к камере отклонён. **Непрозрачный surface-экран** (НЕ поверх камеры; живого превью нет): глиф `no_photography`, заголовок `Camera access needed`, пояснение и кнопка `Open settings`. На мобильном (`_narrow`) — по центру `surface`-фона; на macOS (`_wide`) — внутри `OnboardCard`. При возврате приложения на передний план (`resumed`) статус доступа пере-проверяется: если выдан — авто-переход в Scanning, иначе остаётся denied. |
 | Scanning | Камера активна, прицел отображается. Кастомного UI-feedback'а нет — поведение библиотеки сканера остаётся как есть. |
 | Inline-error | QR распознан, но содержимое — не ссылка спаривания. **Snackbar внизу** с сообщением; сканирование продолжается. |
-| Fatal | Камера недоступна на уровне устройства (нет камеры — напр. iOS-симулятор, `MobileScannerErrorCode.unsupported`). *(Уточнено фичей 010 по фидбэку владельца:)* вместо dead-end-перехода в 3.1 показывается **in-screen surface** `Camera unavailable` + `Enter manually` (recoverable, та же opaque-surface форма, что и Permission-denied; ожидаемое условие логируется на debug, не error). |
+| Camera-unavailable | Камера недоступна на уровне устройства (нет камеры — напр. iOS-симулятор, `MobileScannerErrorCode.unsupported`). Показывается **на самом экране**, а не переходом в 3.1 (уточнено фичей 010 по фидбэку владельца): глиф `no_photography`, `Camera unavailable` и `Enter manually` — та же непрозрачная форма, что у Permission-denied; ожидаемое условие логируется на debug, не error. |
 
 Отдельного «Detected» состояния с кастомным feedback'ом нет: после успешного распознавания сразу запускается closing-flow к 2.1, а оттуда — к 2.4.
 
@@ -66,7 +66,7 @@
 ## Material-компоненты
 
 - `Scaffold`.
-- `AppBar` (M3) — сплошной, цвет `ColorScheme.surface`; адаптируется под тему. `IconButton` actions для фонарика и переключения камеры; back-стрелка по умолчанию.
+- `AppBar` (M3) — прозрачный над камерой (back и действия `brand/white`), сплошной `ColorScheme.surface` над непрозрачной поверхностью. `IconButton` actions для фонарика и переключения камеры; back-стрелка по умолчанию.
 - Сторонний пакет для сканирования (например `mobile_scanner`) — в Material нет встроенного компонента; конкретный выбор — решение технического этапа.
 - `TextButton` — `Enter manually`.
 - `SnackBar` (M3) — inline-error.
@@ -101,8 +101,8 @@
 | Q1 / Q7 | Поведение после распознавания | Single-shot; авто-закрытие 2.2; ссылка → поле 2.1; программное чтение → [2.4](connect.md). Отдельного confirm-шага на 2.2 **нет**: адреса из ссылки человек видит и правит на 2.4. |
 | Q2 | Кнопка вспышки | Toggle-иконка в AppBar |
 | Q3 | Переключение камеры | Toggle-иконка в AppBar (front ↔ back) |
-| Q4 | Permission denied | Непрозрачный surface-экран (НЕ поверх камеры) с глифом `no_photography` + `Open settings`; `_narrow` — по центру surface, `_wide` — в `OnboardCard`. Авто-resume по `resumed`. *(Уточнено фичей 010: ранее формулировалось как blocking-overlay; реализованная форма — opaque surface.)* |
+| Q4 | Permission denied | Непрозрачный surface-экран (НЕ поверх камеры) с глифом `no_photography` + `Open settings`; `_narrow` — по центру surface, `_wide` — в `OnboardCard`. Авто-resume по `resumed` (уточнено фичей 010). |
 | Q5 | Inline-error UX | Snackbar внизу (M3); сканирование продолжается |
 | Q6 | Звук / вибрация | Тихо |
 | Q8 | UI-feedback в Detected | Стандартное поведение библиотеки сканера; кастомного нет |
-| Q9 | AppBar поверх видео | Сплошной; цвет адаптируется под тему через M3 `ColorScheme` |
+| Q9 | AppBar поверх видео | Прозрачный, back и действия `brand/white` (мобильный корпус `nox-mobile-screens/screens/2-2-qr-scan.md`, фича 010); над непрозрачной поверхностью — сплошной `surface` по теме |

@@ -10,24 +10,24 @@
 
 ## Контекст и переходы
 
-- **Откуда:** 5.2 Лента чата — тап на имя чата в AppBar.
+- **Откуда:** 5.2 Лента чата — тап на имя чата в AppBar; на широкой ширине — тап на имя или info-действие в шапке ленты.
 - **Куда:**
   - Back / back-стрелка → возврат в 5.2.
   - **5.3 Просмотр файла** — тап на файл в списке вложений.
-  - **3.1 Универсальный экран ошибки** — fatal-сценарии.
 
 ## Лейаут
 
 Material Scaffold; адаптируется под тему. Сверху вниз:
 
-1. **AppBar (M3):** back-стрелка слева; **title — имя чата**.
-2. **Body:** прокручиваемая column:
-   - **Header:** аватар + имя чата (крупно) + действие `Rename chat`.
-   - **People section** (см. ниже): заголовок `People`, одна строка — сам человек, — под ней **выключенная** кнопка `Invite a person` с подписью `Available in a future version`.
+1. **AppBar (M3):** back-стрелка слева; **title — имя чата** (обновляется вживую при переименовании).
+2. **Body:** одна прокручиваемая область:
+   - **Header:** аватар с кольцом 56 + имя чата (`Headline Small`, до двух строк) + действие `Rename chat` (глиф `edit`).
+   - **Плашка связи** (только когда связи нет или за onion-адресом другой сервер) — под Header'ом, над People.
+   - **People section** (см. ниже): заголовок `People`, одна строка — сам человек, — под ней **выключенная** кнопка `Invite a person` с подписью `Available in a future version`; под секцией — hairline.
    - **Files section:**
-     - заголовок `Files` + переключатель **List / Grid** (`SegmentedButton`);
-     - **List:** `ListTile`-ы; каждая ячейка — иконка типа (по маппингу из [overview.md / Файлы](../overview.md#файлы-иконки-типов-без-превью)) + имя файла + размер;
-     - **Grid:** ~3 колонки, квадратные тайлы, gap `space/2`; в каждом — та же иконка типа + имя (truncate) + размер. Превью содержимого нет (согласовано с 5.3);
+     - заголовок `Files` + переключатель **List / Grid** (`SegmentedButton`, пилюля; только когда файлы есть);
+     - **List:** `ListTile`-ы; каждая ячейка — глиф типа в тонированном квадрате (по маппингу из [overview.md / Файлы](../overview.md#файлы-иконки-типов-и-превью)) + имя файла + размер + шеврон справа;
+     - **Grid:** 3 колонки (на широкой ширине — 2), почти квадратные тайлы `surfaceContainerHigh` со скруглением 12, gap `space/2`; в каждом — тот же глиф + имя (truncate) + размер. Превью содержимого нет ни у одного типа, картинки тоже показываются глифом;
      - либо empty state (глиф `folder_open` + текст), если вложений нет.
 
 ## Секция `People` (фаза 037)
@@ -57,12 +57,12 @@ Material Scaffold; адаптируется под тему. Сверху вни
 
 | Состояние | Описание |
 |---|---|
-| Initial-loading | Список файлов грузится. Centered `CircularProgressIndicator`. |
+| Initial-loading | Список файлов грузится. Под Header'ом — centered `CircularProgressIndicator`; секция People появляется вместе с загруженными данными. Файлы, которые уже есть на устройстве, показываются сразу, а новейшее окно сервера догружается в фоне. |
 | Loaded | Header + People section + Files section отображаются. |
 | Empty (files) | Файлов нет. **Empty state** (глиф `folder_open`) + текст в области Files section. Header и People section при этом остаются видны. |
-| Offline / Inline-error | Не удалось загрузить — `MaterialBanner` сверху (persistent, см. [overview.md / Уровни ошибок](../overview.md#уровни-ошибок-и-обратной-связи)). Нет связи — плашка, как в ленте: текст причины, если она известна ([overview / Причины неудачи](../overview.md#причины-неудачи)), иначе `No connection`, глиф `wifi_off`. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
-| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This onion address belongs to a different server.` с глифом ошибки и действием `Try again`, там же, где и остальные — над Header'ом. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Файлы остаются перечисленными под плашкой. |
-| Fatal | Передача в 3.1 (embedded). |
+| Offline | Нет связи — плашка под Header'ом, как в ленте: текст причины, если она известна ([overview / Причины неудачи](../overview.md#причины-неудачи)), иначе `No connection`, глиф `wifi_off`. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This onion address belongs to a different server.` с глифом ошибки и действием `Try again`, там же, где и `Offline`, — под Header'ом. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Файлы остаются перечисленными под плашкой. |
+| Load-error | Карточка не загрузилась вовсе — под Header'ом глиф ошибки, `Something went wrong` и `Try again` (повтор загрузки). В 3.1 экран не уходит. |
 
 ## Взаимодействия
 
@@ -77,12 +77,12 @@ Material Scaffold; адаптируется под тему. Сверху вни
 
 - `Scaffold`.
 - `AppBar` (M3) с back-стрелкой и title = chat name; адаптируется под тему.
-- `SingleChildScrollView` + `Column` (или `CustomScrollView` со sliver-ами).
-- `SegmentedButton` (M3, single-select) — переключение List ↔ Grid.
-- `ListView.builder` (List) и `GridView.builder` (Grid) — Files section; ячейка с иконкой типа (общий маппинг), именем и размером.
+- `CustomScrollView` со sliver-ами — одна прокрутка на всё тело (шапка панели на широкой ширине остаётся вне прокрутки).
+- `SegmentedButton` (M3, single-select, пилюля) — переключение List ↔ Grid.
+- Список и сетка (sliver-варианты `ListView` / `GridView`) — Files section; ячейка с глифом типа (общий маппинг), именем и размером.
 - `CircularProgressIndicator` — Initial-loading.
-- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). ⚠️ **Нарисованных иллюстраций нет**: раньше здесь жили три самодельных SVG из `nox-assets/illustrations`, они читались на 132 как дефект отрисовки, и дизайн их никогда не просил. Файлы остались в бандле, на них никто не ссылается.
-- `MaterialBanner` (M3) — persistent inline-error / offline.
+- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). **Нарисованных иллюстраций нет** (см. [design-system §10](../design-system.md)).
+- `MaterialBanner` (M3) — offline / другой сервер.
 
 ## Микрокопирайт
 
@@ -99,7 +99,8 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Files view toggle: Grid | `Grid` |
 | Files empty title | `No files yet` |
 | Files empty message | `Files sent in this chat will appear here.` |
-| Inline-error (network) | `Could not load chat info. Check your connection and try again.` |
+| Load-error | `Something went wrong` · `Try again` |
+| Panel title (широкая) | `Details` |
 | Offline banner (причина неизвестна) | `No connection` |
 | Offline banner (причина известна) | текст причины, как в ленте 5.2 |
 | Offline action | `Try again` |
@@ -121,12 +122,12 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Q9 | Stats / метаданные | Не показываем (creator/date — только inline-событием в 5.2) |
 | — | Секция `People` (фаза 037) | Представление, а не ростер: одна строка — сам человек, читается из резолвера личности; новой сущности и хранения не заводится |
 | — | Кнопка приглашения (фаза 037) | `Invite a person` **всегда disabled**, под ней подпись `Available in a future version`; нажатие не даёт ничего. Обе ширины |
-| — | Текст плашки «нет связи» (фаза 045) | Причина неудачи, когда она известна, вместо `No connection`; `Try again` остаётся. Обе ширины — на десктопе плашка стоит наверху side-sheet'а |
+| — | Текст плашки «нет связи» (фаза 045) | Причина неудачи, когда она известна, вместо `No connection`; `Try again` остаётся. Обе ширины — на десктопе плашка стоит в side-sheet'е под Header'ом |
 
-## Десктоп-раскладка (этап M4, сверено с корпусом)
+## Десктоп-раскладка
 
-> Добавлено при реализации M4. Сведено с `nox-desktop-screens/screens/09-drawer.md`.
+> Сведена с `nox-desktop-screens/screens/09-drawer.md`.
 
-- Десктоп (`>= 840dp`): карточка — **правый side-sheet 380** (`showRightSideSheet` / `AppSideSheetWidget`) со scrim поверх ленты; открывается из info-действия ThreadHeader (5.2 desktop). Заголовок `Details` + close, аватар + имя, секция `People` (строка человека + выключенная кнопка с подписью), секция Files (List / Grid, Grid — **2 колонки**). Тап по файлу → 5.3 (lightbox).
+- Десктоп (`>= 840dp`): карточка — **правый side-sheet 380** (`showRightSideSheet` / `AppSideSheetWidget`) со scrim поверх ленты, elevation 3 и hairline `outlineVariant` по левому краю; открывается из ThreadHeader (5.2 desktop). Шапка панели `Details` (`Title Large`) + close с hairline под ней — вне прокрутки; затем аватар + имя, hairline, плашка связи (если есть), секция `People` (строка человека + выключенная кнопка с подписью), секция Files (List / Grid, Grid — **2 колонки**). Тап по файлу → 5.3 (lightbox).
 - Мобайл — fullscreen push (AppBar back + имя), тот же порядок секций, Grid — **3 колонки**.
 - Форма (правый drawer, не detail-pane swap) — owner-санкция (Clarifications M4; закрывает roadmap Q6).

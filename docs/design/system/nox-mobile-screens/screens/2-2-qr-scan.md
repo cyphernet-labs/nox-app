@@ -1,6 +1,6 @@
 # 2.2 · QR scan
 
-> ⚠️ **Feature 032, link format from 044, Connect from 045:** the scanner reads a pairing link `nox://pair/…` (version 3), not `nox://id/`, and passes the WHOLE payload on — the server's key and addresses are needed as much as the token. A code with no pairing link in it is refused here; a link from a newer app goes on to 2.1, which says to update the app. A scanned link takes the same path as a pasted one: 2.1 reads it and opens Connect (2.4). Windows and Linux have no camera: the same parser runs over a picked image there, and pasting text works everywhere.
+> **The scanner reads a pairing link** `nox://pair/…` (version 3) and passes the WHOLE payload on — the server's key and addresses are needed as much as the token. A code with no pairing link in it is refused here; a link from a newer app goes on to 2.1, which says to update the app. A scanned link takes the same path as a pasted one: 2.1 reads it and opens Connect (2.4). Windows and Linux have no camera: the same parser runs over a picked image there, and pasting text works everywhere.
 
 > **Onboarding** · mobile (iOS / Android) · Material 3
 
