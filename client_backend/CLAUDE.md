@@ -867,9 +867,15 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   (contract §2.1), however long the goodbye takes, and the goodbye itself is
   cut after `revokedFlush` (5 s) - a peer that stops reading would otherwise
   hold it for `writeTimeout` a queued frame and keep issuing commands, other
-  devices' revocation among them. `device.revoke` also goes through
-  `store.RevokeDeviceAs`, which refuses a caller whose own row is gone inside
-  the same transaction, like `IssueDeviceInvite` and `DecidePairRequest`.
+  devices' revocation among them. The cut cancels the context and closes the
+  channel connection under TLS (`client.transport`), never the library's
+  CloseNow first: that one only waits on a close handshake already under way.
+  The goodbye is queued off the revoking goroutine, and another device is
+  dropped BEFORE the revoker's OK (a self-revoke is answered first: the
+  device's logout waits for that OK, then its echo). `device.revoke` goes
+  through `store.RevokeDeviceAs`, which refuses a caller whose own row is gone
+  inside the same transaction, like `IssueDeviceInvite` and
+  `DecidePairRequest`.
 - **A stranger's request is a Debug line.** `logRequests` writes Info only for
   a request whose connection proved a paired key (`limitStrangers` notes it on
   the request): anyone can mint a key and pass the check, and nothing bounds
