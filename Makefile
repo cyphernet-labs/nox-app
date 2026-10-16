@@ -60,6 +60,7 @@ box-wasm:
 	packages/rust_secure_box/build-wasm.sh
 
 box-verify:
-	@tmp=$$(mktemp -d) && packages/rust_secure_box/build-wasm.sh "$$tmp" \
-		&& diff -r "$$tmp" client_backend/internal/securebox/boxwasm && rm -rf "$$tmp" \
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		packages/rust_secure_box/build-wasm.sh "$$tmp" \
+		&& diff -r "$$tmp" client_backend/internal/securebox/boxwasm \
 		&& echo "box-verify: the server's copy of RustSecureBox is current"

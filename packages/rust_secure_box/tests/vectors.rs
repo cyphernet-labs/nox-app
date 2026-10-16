@@ -1,12 +1,15 @@
-//! The stub's shared vectors: the answers that are not random - a public key
-//! for a private key, a signature for a key and a challenge, a verdict - which
-//! the server's WebAssembly copy must give byte for byte too
-//! (`client_backend/internal/securebox`). They belong to the STUB: a real
-//! RustSecureBox brings vectors of its own in the same format.
+//! The shared vectors: the answers that are not random - a public key for a
+//! private key, a signature for a key and a challenge, a verdict - which the
+//! server's WebAssembly copy (`client_backend/internal/securebox`) and the
+//! app's module must give byte for byte too. They belong to the implementation
+//! the file names in `"implementation"`: the stub's are `stub-v1`, and a real
+//! RustSecureBox writes its own in the same format.
 //!
-//! `cargo test --test vectors -- --ignored write_vectors` writes them; every
-//! other run checks the crate against them, and that the two copies - the
-//! specification's and this crate's - are the same file.
+//! `RSB_IMPLEMENTATION=<name> cargo test --test vectors -- --ignored write_vectors`
+//! writes all three copies - the specification's, this crate's and the
+//! server's - under that name (without the variable, under the name the crate's
+//! copy already has); every other run checks the crate against them, and that
+//! the three copies are the same file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,6 +19,7 @@ use serde_json::Value;
 
 const SPEC_COPY: &str = "../../specs/050-rust-secure-box/contracts/rsb-vectors.json";
 const CRATE_COPY: &str = "tests/data/rsb-vectors.json";
+const SERVER_COPY: &str = "../../client_backend/internal/securebox/testdata/rsb-vectors.json";
 
 fn path(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -67,10 +71,17 @@ fn public_key(private_key: &PrivateKey) -> [u8; 32] {
     get_challenge(private_key).unwrap().1
 }
 
-/// The vectors as this crate computes them, in the file's exact layout.
-fn render() -> String {
+/// The name of the implementation the crate's copy of the vectors belongs to.
+fn implementation() -> String {
+    let file: Value = serde_json::from_str(&fs::read_to_string(path(CRATE_COPY)).unwrap()).unwrap();
+    file["implementation"].as_str().unwrap().to_owned()
+}
+
+/// The vectors as this crate computes them, in the file's exact layout, under
+/// the name of `implementation`.
+fn render(implementation: &str) -> String {
     let keys = private_keys();
-    let mut out = String::from("{\n  \"implementation\": \"stub-v1\",\n");
+    let mut out = format!("{{\n  \"implementation\": \"{implementation}\",\n");
     out += &format!(
         "  \"probe\": {{\"private_key\": \"{}\", \"public_key\": \"{}\"}},\n",
         hex(&PROBE_PRIVATE_KEY),
@@ -121,30 +132,33 @@ fn render() -> String {
 }
 
 #[test]
-#[ignore = "writes the vectors; run on purpose when the stub changes"]
+#[ignore = "writes the vectors; run on purpose when the implementation changes"]
 fn write_vectors() {
-    let text = render();
-    fs::write(path(SPEC_COPY), &text).unwrap();
-    fs::write(path(CRATE_COPY), &text).unwrap();
+    let name = std::env::var("RSB_IMPLEMENTATION").unwrap_or_else(|_| implementation());
+    assert!(!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.'), "{name:?}");
+    let text = render(&name);
+    for copy in [SPEC_COPY, CRATE_COPY, SERVER_COPY] {
+        fs::write(path(copy), &text).unwrap();
+    }
 }
 
 #[test]
-fn both_copies_are_the_same_file() {
-    let spec = fs::read_to_string(path(SPEC_COPY)).unwrap();
+fn the_three_copies_are_the_same_file() {
     let ours = fs::read_to_string(path(CRATE_COPY)).unwrap();
-    assert_eq!(spec, ours);
+    for copy in [SPEC_COPY, SERVER_COPY] {
+        assert_eq!(fs::read_to_string(path(copy)).unwrap(), ours, "{copy}: regenerate with write_vectors");
+    }
 }
 
 #[test]
 fn the_crate_gives_the_vectors() {
     let file = fs::read_to_string(path(CRATE_COPY)).unwrap();
-    assert_eq!(file, render(), "the stub changed: regenerate the vectors on purpose");
+    assert_eq!(file, render(&implementation()), "the implementation changed: regenerate the vectors on purpose");
 }
 
 #[test]
 fn every_vector_holds_when_read_back() {
     let file: Value = serde_json::from_str(&fs::read_to_string(path(CRATE_COPY)).unwrap()).unwrap();
-    assert_eq!(file["implementation"], "stub-v1");
     for row in file["keys"].as_array().unwrap().iter().chain([&file["probe"]]) {
         let sk = unhex::<32>(row["private_key"].as_str().unwrap());
         assert_eq!(public_key(&sk), unhex::<32>(row["public_key"].as_str().unwrap()));

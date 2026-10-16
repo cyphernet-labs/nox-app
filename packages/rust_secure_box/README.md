@@ -30,16 +30,27 @@
 
 ## Как заменить заглушку
 
-1. Положить реализацию на место `src/stub.rs`: четыре функции с теми же сигнатурами. `src/lib.rs`, `src/random.rs` и `src/wasm.rs` остаются как есть. Можно переписать и их, если C ABI WebAssembly (`rsb_io`, `rsb_*`) и импорт `env.rsb_random` не меняются.
-2. Записать свои векторы в формате `tests/data/rsb-vectors.json`, с `"implementation"` своей реализации. Векторы заглушки уходят вместе с ней.
-3. Пересобрать копию сервера: `make box-wasm` из корня репозитория. Нужен тулчейн из `rust-toolchain.toml` с целью `wasm32-unknown-unknown` и Go.
-4. Проверить:
-   - `cargo test --test interface` — свойства, которые держит любая реализация;
-   - `make box-verify` — копия сервера соответствует крейту;
-   - `cd client_backend && go test -race ./internal/securebox ./internal/connauth ./internal/server`;
-   - `make tor-test`.
+1. **Реализация.** Положить её на место `src/stub.rs`: четыре функции с теми же сигнатурами. `src/lib.rs`, `src/random.rs` и `src/wasm.rs` остаются как есть. Их можно переписать, если C ABI WebAssembly (`rsb_io`, `rsb_*`) и импорт `env.rsb_random` не меняются.
+   - Случайные байты брать только через `crate::random::fill`.
+   - Библиотеку Ed25519 подключать без функций по умолчанию (`default-features = false`): без `rand`, `getrandom` и `OsRng`. Иначе у WebAssembly появятся лишние импорты (например, `__wbindgen_*` от `getrandom` с `wasm_js`), и сервер не соберётся.
+2. **Файлы зависимостей.** Один раз выполнить `cargo test` в `packages/rust_secure_box`, потом в `packages/nox_tor/rust`: так новые зависимости попадут в оба `Cargo.lock`. Оба файла коммитятся вместе с реализацией, потому что копия сервера собирается с `--locked`.
+3. **Векторы.** Выполнить `RSB_IMPLEMENTATION=<имя> cargo test --test vectors -- --ignored write_vectors`. Имя любое, кроме `stub-v1`, например `ed25519-v1`. Команда пишет все три копии векторов:
+   - `tests/data/rsb-vectors.json`;
+   - `specs/050-rust-secure-box/contracts/rsb-vectors.json`;
+   - `client_backend/internal/securebox/testdata/rsb-vectors.json`.
 
-Код приложения и сервера вокруг RustSecureBox при замене не меняется.
+   Тесты в Rust, Go и Dart берут векторы и имя реализации из этих копий. Проверки, которые касаются только заглушки, по имени видят, что заглушки больше нет.
+4. **Копия сервера.** Выполнить `make box-wasm` из корня репозитория. Нужны тулчейн из `rust-toolchain.toml` с целью `wasm32-unknown-unknown` и Go. Скрипт сам задаёт флаги сборки, поэтому копия получается одинаковой на любой машине.
+5. **Проверка:**
+   - `cargo test` в крейте — свойства любой реализации и векторы;
+   - `make box-verify` — копия сервера соответствует крейту;
+   - `cd client_backend && go build ./... && go test -race ./...`. `go vet` проверяет сгенерированный код тоже. Если он ругается только на `boxwasm` (например, на недостижимый код), запустите `go vet $(go list ./... | grep -v /boxwasm)`;
+   - `make tor-test`;
+   - `make gate`.
+
+Меняются только крейт, его векторы, два `Cargo.lock` и копия на сервере (`client_backend/internal/securebox/boxwasm`). Остальной код приложения и сервера, включая тесты, остаётся прежним.
+
+`stubProbePublicKey` в `client_backend/internal/securebox/securebox.go` не менять никогда. Это ответ заглушки на пробный ключ, а у настоящей реализации ответ другой, и тесты это проверяют. Подогнанная под новые векторы константа объявит настоящую библиотеку заглушкой.
 
 ## Пробный ключ
 

@@ -1,6 +1,6 @@
 //! What ANY RustSecureBox must do - the stub now, the real one later. Nothing
 //! here knows how a key or a signature is made; the shared vectors
-//! (`vectors.rs`) are the stub's own and go with it.
+//! (`vectors.rs`) belong to whichever implementation they name.
 
 use std::collections::HashSet;
 use std::thread;

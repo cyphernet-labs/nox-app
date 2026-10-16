@@ -64,7 +64,8 @@ type KeyPair struct {
 // stubProbePublicKey is the stub's public key for the probe key - 32 bytes of
 // 0x01, not all zero, since Ed25519 libraries refuse an all-zero seed - and
 // what tells the stub apart (FR-022). It is the "probe" of the stub's shared
-// vectors (testdata/rsb-vectors.json), which the tests hold it to.
+// vectors, and it never changes, the stub gone or not: a real RustSecureBox's
+// vectors must give another probe, and the tests hold both to it.
 const (
 	probeByte          = 0x01
 	stubProbePublicKey = "92254a2a0d909e16f153fa8996ee70415de255968b918cf4aec36a2136da9e84"
@@ -174,9 +175,17 @@ func (in *instance) get(slot uint32, out []byte) {
 	copy(out, in.mem()[in.io+slot:])
 }
 
-// wipe clears what a call left in the buffer: private keys among it.
+// stackSize is the library's stack: the -zstack-size build-wasm.sh links it
+// with. rustc links WebAssembly stack first, so the stack is the first
+// stackSize bytes of the memory.
+const stackSize = 64 << 10
+
+// wipe clears what a call left behind: the exchange buffer, and the stack,
+// where the library kept its copies of the keys - private ones among them.
 func (in *instance) wipe() {
-	clear(in.mem()[in.io : in.io+ioUsed])
+	mem := in.mem()
+	clear(mem[in.io : in.io+ioUsed])
+	clear(mem[:stackSize])
 }
 
 // codeError is the error for a negative return of the C ABI.

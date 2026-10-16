@@ -1,6 +1,7 @@
 package securebox
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -77,9 +78,6 @@ func TestTheCopyIsTheSpecificationsFile(t *testing.T) {
 
 func TestTheWebAssemblyCopyGivesTheVectors(t *testing.T) {
 	v := loadVectors(t)
-	if v.Implementation != "stub-v1" {
-		t.Fatalf("implementation %q", v.Implementation)
-	}
 	box := New()
 	for _, k := range append(v.Keys, v.Probe) {
 		got, err := box.PublicKey(key32(t, k.PrivateKey))
@@ -110,21 +108,28 @@ func TestTheWebAssemblyCopyGivesTheVectors(t *testing.T) {
 	}
 }
 
-func TestTheProbeConstantIsTheVectors(t *testing.T) {
+// stubImplementation is the name the stub's vectors carry.
+const stubImplementation = "stub-v1"
+
+// The stub's answer for the probe is a constant that never moves: the stub's
+// vectors hold it to it, and anything else's must differ from it - a real
+// RustSecureBox whose vectors made the constant follow them would be
+// announced as the stub forever.
+func TestTheProbeConstantIsTheStubs(t *testing.T) {
 	v := loadVectors(t)
-	if v.Probe.PublicKey != stubProbePublicKey {
-		t.Fatal("stubProbePublicKey is not the vectors' probe")
-	}
 	for i := 0; i < len(v.Probe.PrivateKey); i += 2 {
 		if v.Probe.PrivateKey[i:i+2] != "01" {
 			t.Fatal("the probe key is not 32 bytes of 0x01")
 		}
 	}
+	if (v.Probe.PublicKey == stubProbePublicKey) != (v.Implementation == stubImplementation) {
+		t.Fatalf("the vectors of %q give the probe %s; the stub's is %s", v.Implementation, v.Probe.PublicKey, stubProbePublicKey)
+	}
 }
 
-func TestTheStubIsRecognised(t *testing.T) {
-	if !New().IsStub() {
-		t.Fatal("the stub was not recognised")
+func TestTheStubIsRecognisedAndNothingElseIs(t *testing.T) {
+	if got, want := New().IsStub(), loadVectors(t).Implementation == stubImplementation; got != want {
+		t.Fatalf("IsStub() = %v for the implementation of the vectors", got)
 	}
 }
 
@@ -258,13 +263,22 @@ func TestATrapIsErrBoxAndTheBoxGoesOn(t *testing.T) {
 
 func TestACallLeavesNoKeyInTheModule(t *testing.T) {
 	box := New()
-	pair, _ := box.GenerateKeys()
+	pair, err := box.GenerateKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One instance for every call, so the one looked at is the one that
+	// signed: a pool may hand out a fresh one (it does under -race).
+	in := box.pool.Get().(*instance)
+	box.pool = sync.Pool{New: func() any { return in }}
 	if _, err := box.SignChallenge(pair.PrivateKey, Challenge{7}); err != nil {
 		t.Fatal(err)
 	}
-	in := box.pool.Get().(*instance)
-	defer box.pool.Put(in)
-	for _, b := range in.mem()[in.io : in.io+ioUsed] {
+	mem := in.mem()
+	if bytes.Contains(mem, pair.PrivateKey[:]) {
+		t.Fatal("the private key is still in the module's memory")
+	}
+	for _, b := range mem[in.io : in.io+ioUsed] {
 		if b != 0 {
 			t.Fatal("the exchange buffer kept bytes of a call")
 		}
