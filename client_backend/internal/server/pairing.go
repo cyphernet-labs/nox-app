@@ -118,6 +118,12 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// a stranger's is held to - before the reply, so its deadline cannot land
 	// between the two.
 	c.srv.settleUnpaired(c)
+	// A machine link spent is the strongest credential the server issues: an
+	// Info line says so once - never a repeat - with no key and no token. An
+	// invite's pairing says so through its request.
+	if res.Joined {
+		c.logger.Info("device paired", "by", "machine link", "created", res.Identity.Created)
+	}
 
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client

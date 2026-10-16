@@ -341,7 +341,9 @@ func (s *Server) outOfTime(c *client, gen uint64) {
 	}
 	s.mu.Unlock()
 	if due {
-		c.logger.Info("unpaired connection closed: it did not pair in time")
+		// Debug, like every other line of a key nobody paired: the cap keeps
+		// these to 32 every two minutes, but a stranger can keep it there.
+		c.logger.Debug("unpaired connection closed: it did not pair in time")
 		c.close(websocket.StatusPolicyViolation, "not paired in time")
 	}
 }

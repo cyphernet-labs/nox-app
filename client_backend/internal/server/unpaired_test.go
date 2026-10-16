@@ -735,3 +735,64 @@ func TestAStrangersFramesAreDebugLinesAndADevicesCommandsInfoOnes(t *testing.T) 
 		return strings.Contains(buf.String(), `level=INFO msg="command handled" conn=`) && strings.Contains(buf.String(), "cmd=device.list")
 	})
 }
+
+// What a key nobody paired can make the server write is short and quiet: a
+// failed WebSocket upgrade whose headers the library quotes, and a frame that
+// does not parse, are Debug lines cut to a few hundred bytes.
+func TestAStrangersBadUpgradeAndBadFrameAreShortDebugLines(t *testing.T) {
+	buf := &syncBuffer{}
+	ts, _, closeAll := openStack(t, filepath.Join(t.TempDir(), "bad.db"),
+		slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer closeAll()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Connection", strings.Repeat("\x80", 20000))
+	resp, err := channelOf(t, ts).clientAs(newDevice(t)).Do(req)
+	if err != nil {
+		t.Fatalf("GET /ws: %v", err)
+	}
+	_ = resp.Body.Close()
+	eventually(t, "the failed upgrade is logged", func() bool { return strings.Contains(buf.String(), "websocket accept failed") })
+
+	stranger := dialAs(t, ts, nil, newDevice(t))
+	stranger.expectGreeting()
+	stranger.send(`{"id":` + strings.Repeat("9", 5000) + `}`)
+	eventually(t, "the bad frame is logged", func() bool { return strings.Contains(buf.String(), "unparseable frame") })
+
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "websocket accept failed") || strings.Contains(line, "unparseable frame") {
+			if !strings.HasPrefix(line, "time=") || !strings.Contains(line, "level=DEBUG") {
+				t.Fatalf("a stranger's line is not Debug: %.200s", line)
+			}
+			if len(line) > 1000 {
+				t.Fatalf("a stranger's line is %d bytes long", len(line))
+			}
+		}
+	}
+}
+
+// A machine link spent says so in the log once, with no key and no token; a
+// repeat of the same pair - its answer lost on the way - says nothing more.
+func TestAPairingByMachineLinkIsOneInfoLine(t *testing.T) {
+	buf := &syncBuffer{}
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "link.db"), slog.New(slog.NewTextHandler(buf, nil)))
+	defer closeAll()
+	link := mustMachineLink(t, srv)
+	d := newDevice(t)
+
+	pairDeviceAs(t, ts, link, d)
+	pairDeviceAs(t, ts, link, d)
+
+	eventually(t, "the pairing is logged", func() bool {
+		return strings.Contains(buf.String(), `msg="device paired"`) && strings.Contains(buf.String(), `by="machine link"`)
+	})
+	if n := strings.Count(buf.String(), `msg="device paired"`); n != 1 {
+		t.Fatalf("%d lines for one pairing and its repeat", n)
+	}
+	if strings.Contains(buf.String(), d.pub) || strings.Contains(buf.String(), link) {
+		t.Fatal("a key or the link reached the log")
+	}
+}

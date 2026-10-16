@@ -269,6 +269,9 @@ type PairResult struct {
 	// Closed says THIS call closed it - it had run out before the sweep got to
 	// it - so both sides are to be told.
 	Closed bool
+	// Joined says THIS call paired the device by a machine link - not the
+	// repeat of an answer that was lost - so the server says so once.
+	Joined bool
 }
 
 // Pair presents a token for the device key the connection proved.
@@ -301,7 +304,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	var res PairResult
 	switch pt.kind {
 	case TokenMachine:
-		res.Identity, err = pairByMachineLink(ctx, tx, pt, deviceKey, platform, now)
+		res.Identity, res.Joined, err = pairByMachineLink(ctx, tx, pt, deviceKey, platform, now)
 		res.Paired = err == nil
 	case TokenInviteDevice:
 		res, err = requestByInvite(ctx, tx, pt, deviceKey, platform, now)
@@ -326,7 +329,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 // machine link is how a person who lost every device gets back in, and how one
 // who still has some adds a device without one in hand; whoever can issue it
 // already has the machine, and with it the database.
-func pairByMachineLink(ctx context.Context, tx *sql.Tx, pt pairToken, deviceKey, platform string, now int64) (Identity, error) {
+func pairByMachineLink(ctx context.Context, tx *sql.Tx, pt pairToken, deviceKey, platform string, now int64) (Identity, bool, error) {
 	// A token this very device already spent means its reply was lost, not that
 	// somebody is replaying one. `pair` commits and THEN replies, so a dropped
 	// connection in that window leaves the device paired and the client
@@ -335,31 +338,31 @@ func pairByMachineLink(ctx context.Context, tx *sql.Tx, pt pairToken, deviceKey,
 	// comes before the deadline, because the deadline was met by the spending.
 	same, found, err := pairedBy(ctx, tx, pt.token, deviceKey)
 	if err != nil {
-		return Identity{}, err
+		return Identity{}, false, err
 	}
 	if found {
-		return same, nil
+		return same, false, nil
 	}
 	if pt.used {
-		return Identity{}, ErrTokenInvalid
+		return Identity{}, false, ErrTokenInvalid
 	}
 	if pt.expiresAt <= now {
-		return Identity{}, ErrTokenExpired
+		return Identity{}, false, ErrTokenExpired
 	}
 	if err := spendToken(ctx, tx, pt.token, deviceKey, now); err != nil {
-		return Identity{}, err
+		return Identity{}, false, err
 	}
 	id, err := resolveSolePerson(ctx, tx, now)
 	if err != nil {
-		return Identity{}, err
+		return Identity{}, false, err
 	}
 	if err := bindDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
-		return Identity{}, err
+		return Identity{}, false, err
 	}
 	if err := recordOutcome(ctx, tx, pt.token, id); err != nil {
-		return Identity{}, err
+		return Identity{}, false, err
 	}
-	return id, nil
+	return id, true, nil
 }
 
 // spendToken marks a token used by deviceKey.

@@ -24,11 +24,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		// The library's message can quote Host, and a connection through the
-		// onion service carries the onion name there (FR-022). Nothing tells
-		// such a connection apart any more; the log's handler masks the name
-		// in every line (logscrub.go).
-		s.logger.Warn("websocket accept failed", "err", err)
+		// The library's message quotes the request's headers - Host among
+		// them, an onion name through the onion service (FR-022, masked by
+		// logscrub.go) - and a header may be up to a megabyte: cut short. A
+		// key nobody paired can make this at the handshake rate, so its line
+		// is Debug (as logRequests' is); a paired device's is a Warn.
+		level := slog.LevelDebug
+		if note, ok := r.Context().Value(requestNoteKey{}).(*requestNote); ok && note.paired {
+			level = slog.LevelWarn
+		}
+		s.logger.Log(r.Context(), level, "websocket accept failed", "err", clipped(err))
 		return
 	}
 	// Track the hijacked connection so shutdown can wait for it (invariant 9).
@@ -92,7 +97,13 @@ func (c *client) readLoop() {
 				c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "missing cmd"))
 				continue
 			}
-			c.logger.Warn("unparseable frame", "err", err)
+			// At the connection's level, a Warn only once it greeted, and cut
+			// short: the error can quote a frame of up to 128 KiB.
+			level := c.lineLevel()
+			if level == slog.LevelInfo {
+				level = slog.LevelWarn
+			}
+			c.logger.Log(c.ctx, level, "unparseable frame", "err", clipped(err))
 			c.close(websocket.StatusProtocolError, "unparseable frame")
 			return
 		}
@@ -160,6 +171,17 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "unknown command"))
 	}
 	c.logger.Log(c.ctx, c.lineLevel(), "command handled", "cmd", cmd.Cmd, "id", cmd.ID)
+}
+
+// clipped is an error's text cut to a length a log line can afford: a
+// library's message may quote what the peer sent, whole.
+func clipped(err error) string {
+	const most = 200
+	text := err.Error()
+	if len(text) <= most {
+		return text
+	}
+	return text[:most] + "..."
 }
 
 // lineLevel is how loud a line about this connection's traffic is: Info for a

@@ -195,7 +195,9 @@ func TestAnInviteAskedThroughTheOnionServiceCarriesADirectAddress(t *testing.T) 
 // onion name. The line says what happened and masks the name (FR-022).
 func TestARefusedUpgradeThroughTheOnionServiceKeepsTheAddressOutOfTheLog(t *testing.T) {
 	logs := &syncBuffer{}
-	ts, srv := newTestServerLogging(t, slog.New(slog.NewTextHandler(logs, nil)))
+	// Debug: a stranger's failed upgrade is a Debug line, and its text is
+	// what must not carry the address.
+	ts, srv := newTestServerLogging(t, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	_, err := dialThroughOnion(t, ts, srv, newDevice(t), func(o *websocket.DialOptions) {
 		o.HTTPHeader = http.Header{"Origin": {"http://evil.example"}}
 	})
