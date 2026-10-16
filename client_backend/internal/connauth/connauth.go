@@ -42,15 +42,16 @@ const (
 	AuthPath  = "/auth"
 	Auth2Path = "/auth2"
 
-	// maxBody bounds the body of either request. Theirs are 119 and 107
+	// maxBody bounds the body of either request. Theirs are 110 and 102
 	// bytes; anything near the bound is not a device.
 	maxBody = 1 << 10
 	// maxStage bounds everything the server reads before the check passes:
 	// both requests with their headers. A peer that has not proved a key gets
 	// no more of the server's memory than this.
 	maxStage = 16 << 10
-	// readBuffer is the bufio buffer requests are parsed from; a header line
-	// longer than it is refused.
+	// readBuffer is the bufio buffer requests are parsed from. It bounds
+	// nothing: a header line longer than it still parses, and what bounds a
+	// request, its header lines included, is maxStage alone.
 	readBuffer = 4 << 10
 )
 
@@ -162,7 +163,7 @@ func respond(conn net.Conn, box *securebox.Box, serverKey securebox.PrivateKey) 
 	if json.Unmarshal(body, &req2) != nil || !decode(req2.Signature, theirSignature[:]) {
 		return none, nil, refuse(conn, http.StatusBadRequest, ErrMalformed)
 	}
-	valid, err := box.CheckSignature(device, ours, theirSignature)
+	valid, err := checkSignature(box, device, ours, theirSignature)
 	if err != nil {
 		return none, nil, err
 	}
@@ -173,6 +174,18 @@ func respond(conn net.Conn, box *securebox.Box, serverKey securebox.PrivateKey) 
 		return none, nil, fmt.Errorf("connauth: send the answer to /auth2: %w", err)
 	}
 	return device, withRest(conn, br), nil
+}
+
+// checkSignature is box.CheckSignature with a public key the library refuses
+// read as what it is to the check: a key whose signature does not hold. The
+// key comes from the other side; only the box failing in any other way is an
+// error of this side.
+func checkSignature(box *securebox.Box, key securebox.PublicKey, challenge securebox.Challenge, signature securebox.Signature) (bool, error) {
+	valid, err := box.CheckSignature(key, challenge, signature)
+	if errors.Is(err, securebox.ErrInvalidArgument) {
+		return false, nil
+	}
+	return valid, err
 }
 
 // readStep reads the next request, which must be a POST to want with a body
@@ -308,7 +321,7 @@ func initiate(conn net.Conn, box *securebox.Box, deviceKey securebox.PrivateKey,
 		!decode(a.Signature, signature[:]) {
 		return nil, ErrMalformed
 	}
-	valid, err := box.CheckSignature(serverPublic, ours, signature)
+	valid, err := checkSignature(box, serverPublic, ours, signature)
 	if err != nil {
 		return nil, err
 	}

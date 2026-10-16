@@ -356,10 +356,19 @@ func TestTheStubIsAnnouncedInTheLogAndOnThePage(t *testing.T) {
 	cfg := testRunConfig(t)
 	logs, stop := runServer(t, cfg)
 	defer stop()
+	const line = "RustSecureBox is a stub: devices are not really verified"
+	if !testBox.IsStub() {
+		// The real library: the start - over once runServer is back - says
+		// nothing of a stub, anywhere.
+		if strings.Contains(logs.String(), line) || strings.Contains(getPage(t, cfg.StatusAddr), line) {
+			t.Fatal("the real RustSecureBox is announced as the stub")
+		}
+		return
+	}
 	eventually(t, "the log warns about the stub", func() bool {
-		return strings.Contains(logs.String(), "RustSecureBox is a stub: devices are not really verified")
+		return strings.Contains(logs.String(), line)
 	})
-	if page := getPage(t, cfg.StatusAddr); !strings.Contains(page, "RustSecureBox is a stub: devices are not really verified.") {
+	if page := getPage(t, cfg.StatusAddr); !strings.Contains(page, line+".") {
 		t.Fatal("the service page does not say the stub is in")
 	}
 }

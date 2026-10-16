@@ -39,6 +39,7 @@ import (
 
 	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
 	"nox.app/client-backend/internal/vault"
 )
@@ -416,6 +417,11 @@ type Restored struct {
 	// revoked after that moment is among them - nothing in a backup can know
 	// of a revocation that came later.
 	Devices []store.Device
+	// Rekeyed says the backup's server key was made by another RustSecureBox
+	// than this build's: the restore did what the first start would have -
+	// the public key rewritten, every device, token and request let go - so
+	// Devices is empty and every device pairs again, the history kept.
+	Rekeyed bool
 }
 
 // Restore unpacks the backup at archive onto target, which must be empty.
@@ -654,6 +660,13 @@ func (s *staging) prepare(ctx context.Context, dataKey []byte) (Restored, error)
 			return Restored{}, fmt.Errorf("%w: %v", ErrDamaged, err)
 		}
 		st := store.New(d.Read, d.Write)
+		// A backup of a server whose key another RustSecureBox made loses its
+		// devices at the first start anyway; done here, the list below is the
+		// one the restored server keeps.
+		_, rekeyed, err := st.ServerKey(ctx, securebox.New())
+		if err != nil && !errors.Is(err, store.ErrNoServerIdentity) {
+			return Restored{}, err
+		}
 		devices, err := st.AllDevices(ctx)
 		if err != nil {
 			return Restored{}, err
@@ -662,7 +675,7 @@ func (s *staging) prepare(ctx context.Context, dataKey []byte) (Restored, error)
 		if err != nil {
 			return Restored{}, err
 		}
-		return Restored{JournalID: id, MadeAt: time.Unix(s.madeAt, 0), Devices: devices}, nil
+		return Restored{JournalID: id, MadeAt: time.Unix(s.madeAt, 0), Devices: devices, Rekeyed: rekeyed}, nil
 	}()
 	if cerr := d.Close(); cerr != nil && err == nil {
 		err = fmt.Errorf("close the restored database: %w", cerr)

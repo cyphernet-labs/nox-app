@@ -152,7 +152,9 @@ func backupCommand(args []string) int {
 // restored server keeps its key, so devices go on without pairing, and gets a
 // new journal id, so each of them reads the conversation again. It also lets
 // in every device the backup does - one revoked since among them - so the
-// command names them.
+// command names them. A backup whose key another RustSecureBox made is the
+// exception: its devices are let go at once, as the first start would, and
+// the command says each pairs again.
 func restore(args []string) int {
 	cfg, err := config.LoadRestore(args)
 	if err != nil {
@@ -192,6 +194,11 @@ func restoredDevices(r backup.Restored, loc *time.Location) string {
 	at := func(t time.Time) string { return t.In(loc).Format("2006-01-02 15:04 MST") }
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nThe backup was made %s.", at(r.MadeAt))
+	if r.Rekeyed {
+		b.WriteString(" Its server key was made by another RustSecureBox, so the devices paired then were let go; " +
+			"the history stays. Once the server is unlocked, its service page shows a link: pair each device again with it.\n")
+		return b.String()
+	}
 	if len(r.Devices) == 0 {
 		b.WriteString(" No device was paired then: once the server is unlocked, its service page shows a link to pair one.\n")
 		return b.String()

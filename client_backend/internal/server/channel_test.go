@@ -1052,3 +1052,47 @@ type textAddr string
 
 func (a textAddr) Network() string { return "tcp" }
 func (a textAddr) String() string  { return string(a) }
+
+// The check is the start of a connection: a step of it again on a connection
+// that passed is out of order - 400 and the end of that connection, for a
+// paired device and a stranger alike (contract §1).
+func TestAStepOfTheCheckAgainEndsTheConnection(t *testing.T) {
+	ts, srv := newTestServer(t)
+	paired := newDevice(t)
+	pairAs(t, ts, srv, paired)
+
+	for _, tc := range []struct {
+		name string
+		dev  *device
+		raw  string
+	}{
+		{"/auth2 again, paired", paired, rawPost("/auth2", `{"signature":"x"}`)},
+		{"/auth again, paired", paired, rawPost("/auth", `{"pk":"x","challenge":"y"}`)},
+		{"/auth2 again, a stranger", newDevice(t), rawPost("/auth2", `{"signature":"x"}`)},
+		{"GET /auth, paired", paired, "GET /auth HTTP/1.1\r\nHost: h\r\n\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, err := dialChannel(t.Context(), ts.Listener.Addr().String(), serverKeyOf(t, srv), tc.dev.priv)
+			if err != nil {
+				t.Fatalf("channel: %v", err)
+			}
+			defer conn.Close()
+			if _, err := io.WriteString(conn, tc.raw); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			br := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(br, nil)
+			if err != nil {
+				t.Fatalf("no answer: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			if resp.StatusCode != http.StatusBadRequest || !resp.Close {
+				t.Fatalf("answer %d, close=%v; want 400 and Connection: close", resp.StatusCode, resp.Close)
+			}
+			if rest, err := io.ReadAll(br); err != nil || len(rest) != 0 {
+				t.Fatalf("the connection carried on: %q, %v", rest, err)
+			}
+		})
+	}
+}

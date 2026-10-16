@@ -25,8 +25,8 @@ import (
 // One shape for every case - machine link and invite alike - so there is one builder,
 // one parser and one set of shared vectors (testdata/link-vectors.json, a
 // copy of the contract's). The server KEY travels whole, not a fingerprint: it
-// is Ed25519's thirty-two bytes, and it is what the device checks the channel
-// against before it sends a single command.
+// is RustSecureBox's thirty-two bytes, and it is what the device checks the
+// channel against before it sends a single command.
 const (
 	pairingLinkVersion = 3
 	pairingLinkPrefix  = "nox://pair/"

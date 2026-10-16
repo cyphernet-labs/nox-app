@@ -329,12 +329,26 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 // Every request passes the door first (limitStrangers), unmatched ones
 // included: the 404 and 405 the mux writes end a stranger's connection like
 // any other answer.
+//
+// The check's two steps are the start of a connection and nothing else
+// (connauth): either one again, by any method, is a step out of order - 400,
+// and the connection ends there, as for a stranger (contract §1).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
+	mux.HandleFunc("/auth", handleCheckAgain)
+	mux.HandleFunc("/auth2", handleCheckAgain)
 	return s.logRequests(s.limitStrangers(mux))
+}
+
+// handleCheckAgain answers a step of the check on a connection that has
+// passed it: 400 with Connection: close.
+func handleCheckAgain(w http.ResponseWriter, r *http.Request) {
+	endWithAnswer(w, r)
+	w.Header().Set("Content-Length", "0")
+	w.WriteHeader(http.StatusBadRequest)
 }
 
 // configureMain sets what the main port's http.Server holds a connection to

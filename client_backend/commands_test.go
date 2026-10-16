@@ -36,6 +36,12 @@ func TestARestoreNamesTheDevicesItLetsIn(t *testing.T) {
 		t.Fatalf("the report carries a device key:\n%s", out)
 	}
 
+	rekeyed := restoredDevices(backup.Restored{MadeAt: made, Rekeyed: true}, time.UTC)
+	if !strings.Contains(rekeyed, "another RustSecureBox") || !strings.Contains(rekeyed, "pair each device again") ||
+		strings.Contains(rekeyed, "lets in") {
+		t.Fatalf("the report for a backup of another RustSecureBox:\n%s", rekeyed)
+	}
+
 	none := restoredDevices(backup.Restored{MadeAt: made}, time.UTC)
 	if !strings.Contains(none, "No device was paired then") || strings.Contains(none, "revoked") {
 		t.Fatalf("the report for a backup with no device:\n%s", none)
