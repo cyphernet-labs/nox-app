@@ -26,12 +26,12 @@ import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
 import 'package:uuid/uuid.dart';
 
-/// Cache-first chat thread (5.2) over the local Sembast DB. The [MessageRemoteDataSource]
-/// (mock this phase) seeds a chat's history ONCE on first open; thereafter the
-/// thread is paginated FROM the DB by the seq cursor (newest batch first, older
-/// batches by `before_seq` — contract §5), and [sendMessage] persists the accepted
-/// message locally. When the transport lands (027) and the binding flips (028),
-/// only the data source swaps; the DB contract and the wire shapes stay.
+/// Cache-first chat thread (5.2) over the local Sembast DB. A read that is not
+/// cache-only fetches ONE window from the [MessageRemoteDataSource] (newest batch
+/// first, older batches by `before_seq` — contract §5) and merges it into the DB;
+/// the thread is then served FROM the DB by the seq cursor, and a dead channel
+/// falls back to what is cached. [sendMessage] persists the accepted message
+/// locally.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
   MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._wireMapper, this._chatDao, this._sessionRepository);

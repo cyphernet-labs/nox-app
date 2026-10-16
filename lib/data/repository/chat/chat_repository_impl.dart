@@ -178,9 +178,8 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
 
   @override
   Stream<ChatModel?> watchChat({required String chatId}) async* {
-    // No seed here (unlike watchChats): the card/thread pass the chat in as fallback and
-    // the row already exists once the list has loaded — watching one row must not drag in
-    // the mock chats-seed delay on every card/thread open.
+    // A pure projection of one row: the card/thread pass the chat in as fallback and
+    // the row already exists once the list has loaded.
     yield* _chatDao.watchById(chatId).map((entity) => entity == null ? null : _mapper.toModel(entity: entity));
   }
 
@@ -319,10 +318,8 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   @override
   Future<RepositoryResult<bool>> isChatNameTaken({required String name, String? excludeChatId}) {
     return execute<bool>(() async {
-      // Check the accumulating DB (seeded + created), not a frozen mock set (D4). No
-      // seed here — the chats list has already seeded the store before create-chat is
-      // reachable, and keeping this off the availability path avoids the mock seed
-      // delay on every keystroke. Dart-side filter over decoded entities — a Sembast
+      // Check the local store (fetched + created), not a frozen mock set (D4); the
+      // server decides on create. Dart-side filter over decoded entities — a Sembast
       // Finder on the camelCase `name` key would silently match nothing under the
       // global field_rename:snake.
       //
