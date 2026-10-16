@@ -404,6 +404,9 @@ class OutboxService {
     try {
       result = await _files.upload(
         path: path,
+        // The queue's copy carries no name of its own (048 review): the one
+        // the person picked is declared.
+        name: attachment.name,
         mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
         // Whatever the server already holds of this file is not sent again
         // (phase 043) - after a break, a change of path or a restart alike.

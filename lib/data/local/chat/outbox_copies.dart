@@ -35,6 +35,9 @@ class OutboxCopies {
 
   static const String folder = AppDataRoot.outboxFolder;
 
+  /// The name of every copy in its send's folder.
+  static const String copyName = 'copy';
+
   static final String _sep = Platform.pathSeparator;
 
   String? _root;
@@ -49,7 +52,10 @@ class OutboxCopies {
     try {
       await _vault.ensureOpen();
       await dir.create(recursive: true);
-      final copy = File('${dir.path}$_sep${source.split(_sep).last}');
+      // Named for nothing: a sealed copy whose path said what the file is
+      // called would tell it to anyone who lists the folder (048, FR-004).
+      // The queue declares the picked name itself.
+      final copy = File('${dir.path}$_sep$copyName');
       await _seal(File(source), copy);
       return copy.path;
     } on Exception catch (error) {

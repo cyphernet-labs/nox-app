@@ -84,4 +84,10 @@ class _NoRoomFiles implements LocalFilesService {
 
   @override
   Future<void> saveTo({required String path, required String destination}) async {}
+
+  @override
+  Future<void> releasePicked(String path) async {}
+
+  @override
+  Future<void> clearPicked() async {}
 }

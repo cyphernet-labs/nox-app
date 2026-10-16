@@ -57,6 +57,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   Future<RepositoryResult<String>> upload({
     required String path,
     required String mime,
+    String? name,
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,
@@ -85,7 +86,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
       while (true) {
         // Thrown away while it waited its turn, or between two steps.
         if (cancellation?.isCancelled ?? false) throw RepositoryException.connection;
-        final ticket = await _declare(path, mime, source.size, unfinished, onUnfinished);
+        final ticket = await _declare(name ?? _nameOf(path), mime, source.size, unfinished, onUnfinished);
         final received = ticket.received;
         if (received == null) {
           // A server older than phase 043: it cannot continue, so there is
@@ -167,13 +168,12 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   /// handle is forgotten first, so a failure of the new declaration leaves
   /// nothing stale behind.
   Future<UploadTicketWireEntity> _declare(
-    String path,
+    String name,
     String mime,
     int size,
     UnfinishedUpload? unfinished,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
   ) async {
-    final name = _nameOf(path);
     if (unfinished != null) {
       final reply = await _remote.uploadBegin(name: name, sizeBytes: size, mime: mime, fileId: unfinished.fileId);
       final code = reply.error?.code;

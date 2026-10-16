@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
 import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
@@ -259,12 +260,13 @@ void main() {
     /// The plain bytes of a copy: the queue keeps it sealed (phase 048).
     Future<List<int>> plainOf(String path) async => (await SealedReader.open(File(path)))!.readAll();
 
-    test('the file is copied when its message is sent, and the entry names the copy, under the file\'s own name', () async {
+    test('the file is copied when its message is sent, and the entry names the copy, named for nothing', () async {
       final entry = (await repository.enqueue(chatId: 'c1', attachment: video())).data!;
       final copy = entry.attachment!.localPath!;
 
       expect(copy, contains('${sep}nox_outbox$sep${entry.clientMessageId}$sep'));
-      expect(copy.split(sep).last, 'trip.mp4', reason: 'the upload declares the name of the file it reads');
+      expect(copy.split(sep).last, OutboxCopies.copyName, reason: 'the folder never says what the file is called (048, FR-004)');
+      expect(entry.attachment!.name, 'trip.mp4', reason: 'the name the person picked stays on the entry, sealed with it');
       expect(await plainOf(copy), original.readAsBytesSync());
       expect((await repository.pending()).single.attachment!.localPath, copy);
       expect(original.existsSync(), isTrue, reason: 'the person\'s file is not touched');

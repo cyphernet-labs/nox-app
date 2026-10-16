@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/picker_copies.dart';
 import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:nox_app/data/service/file/temp_copies.dart';
@@ -42,4 +43,10 @@ class LocalFilesServiceImpl implements LocalFilesService {
 
   @override
   Future<void> clearCopies() => _copies.clear();
+
+  @override
+  Future<void> releasePicked(String path) => PickerCopies.release(path);
+
+  @override
+  Future<void> clearPicked() => PickerCopies.clear();
 }

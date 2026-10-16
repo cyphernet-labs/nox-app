@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
@@ -72,6 +73,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
+  final LocalFilesService _localFiles = getIt<LocalFilesService>();
   final FilePickerService _filePickerService = getIt<FilePickerService>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
   final ConnectionStatusService _connectionStatus = getIt<ConnectionStatusService>();
@@ -210,6 +212,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     _statusSub?.cancel();
     _outboxSub?.cancel();
     _transfersSub?.cancel();
+    // A draft left behind with the thread is dropped with it.
+    final current = state;
+    final draft = current is Initialized ? current.draftAttachment?.localPath : null;
+    if (draft != null) unawaited(_localFiles.releasePicked(draft));
     return super.close();
   }
 
@@ -576,9 +582,14 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // connection is sent hours later, and the refusal would arrive then. The
     // picker reports the size without reading a byte, so this costs nothing.
     if (picked.sizeBytes > _appConfigRepository.limits.maxAttachmentBytes) {
+      final refused = picked.path;
+      if (refused != null) unawaited(_localFiles.releasePicked(refused));
       emit(live.copyWith(oversizedAttachmentTick: live.oversizedAttachmentTick + 1));
       return;
     }
+    // A draft the new pick replaces is dropped.
+    final replaced = live.draftAttachment?.localPath;
+    if (replaced != null) unawaited(_localFiles.releasePicked(replaced));
     emit(
       live.copyWith(
         draftAttachment: MessageAttachment(
@@ -598,6 +609,8 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   void _onAttachmentRemoved(AttachmentRemoved event, Emitter<ChatThreadState> emit) {
     final current = state;
     if (current is! Initialized) return;
+    final dropped = current.draftAttachment?.localPath;
+    if (dropped != null) unawaited(_localFiles.releasePicked(dropped));
     emit(current.copyWith(draftAttachment: null));
   }
 

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
@@ -118,7 +119,13 @@ void main() {
     expect(names.where((n) => n.endsWith('app_dev.db')), hasLength(1), reason: '$names');
     expect(names.where((n) => n.contains('nox_attachments') && n.endsWith('f_whole.png')), hasLength(1), reason: '$names');
     expect(names.where((n) => n.endsWith('f_cut.mp4.part')), hasLength(1), reason: '$names');
-    expect(names.where((n) => n.contains('nox_outbox') && n.endsWith('nox_at_rest_picked.mp4')), hasLength(1), reason: '$names');
+    expect(
+      names.where((n) => n.contains('nox_outbox') && n.endsWith('${Platform.pathSeparator}${OutboxCopies.copyName}')),
+      hasLength(1),
+      reason: '$names',
+    );
+    // And no path in the folder says what a file is called.
+    expect(names.where((n) => n.contains('nox_at_rest_picked') || n.contains('trip.mp4')), isEmpty, reason: '$names');
 
     final key = base64.decode((await const FlutterSecureStorage().read(key: 'device.storage_key'))!);
     final needles = <String, List<int>>{

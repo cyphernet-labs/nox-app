@@ -311,6 +311,12 @@ class _RecordingFiles implements LocalFilesService {
 
   @override
   Future<void> saveTo({required String path, required String destination}) async {}
+
+  @override
+  Future<void> releasePicked(String path) async {}
+
+  @override
+  Future<void> clearPicked() async {}
 }
 
 /// Stands in for the live phase service at the one value this screen has to
