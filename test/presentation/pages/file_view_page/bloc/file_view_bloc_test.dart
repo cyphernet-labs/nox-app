@@ -316,7 +316,7 @@ class _RecordingFiles implements LocalFilesService {
   Future<void> releasePicked(String path) async {}
 
   @override
-  Future<void> clearPicked() async {}
+  Future<void> clearPicked({Set<String> keep = const <String>{}}) async {}
 }
 
 /// Stands in for the live phase service at the one value this screen has to

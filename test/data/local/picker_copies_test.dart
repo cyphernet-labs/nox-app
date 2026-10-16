@@ -42,14 +42,36 @@ void main() {
     expect(ours.existsSync(), isTrue, reason: 'only the picker\'s folders are its');
   });
 
-  test("on iOS the picker's import in the tmp inbox goes", () async {
+  test("on iOS the picker's import in the container's own tmp inbox goes - the folder TMPDIR names, not Library/Caches", () async {
     PickerCopies.debugAndroid = false;
     PickerCopies.debugIos = true;
-    final copy = make('${root.path}/tmp/com.cyphernetlabs.noxapp-Inbox/scan.pdf');
+    PickerCopies.debugTemp = null;
+    // The real temporary folder, as the app finds it on a device; the path
+    // given is the unresolved one, as the picker hands it over.
+    final inbox = Directory.systemTemp.createTempSync('nox-test').path;
+    final copy = make('$inbox-Inbox/scan.pdf');
+    addTearDown(() {
+      if (Directory('$inbox-Inbox').existsSync()) Directory('$inbox-Inbox').deleteSync(recursive: true);
+      Directory(inbox).deleteSync(recursive: true);
+    });
 
     await PickerCopies.release(copy.path);
 
     expect(copy.existsSync(), isFalse);
+  });
+
+  test('a launch keeps the copies the queue still sends from, and takes the rest - files of one inbox too', () async {
+    PickerCopies.debugAndroid = false;
+    PickerCopies.debugIos = true;
+    final queued = make('${root.path}/tmp/com.cyphernetlabs.noxapp-Inbox/queued.pdf');
+    final dropped = make('${root.path}/tmp/com.cyphernetlabs.noxapp-Inbox/dropped.pdf');
+    final elsewhere = make('${root.path}/tmp/other.app-Inbox/old.pdf');
+
+    await PickerCopies.clear(keep: {queued.path});
+
+    expect(queued.existsSync(), isTrue);
+    expect(dropped.existsSync(), isFalse);
+    expect(elsewhere.existsSync(), isFalse);
   });
 
   test("a file of the person's own is never touched - elsewhere on a phone, or anywhere on a desktop", () async {

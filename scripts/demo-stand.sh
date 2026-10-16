@@ -110,6 +110,10 @@ if [ "$RESET_APP" = 1 ]; then
   rm -rf "$HOME/Library/Containers/com.cyphernetlabs.noxapp"
   # The keychain outlives the container, and a leftover entry makes a "clean"
   # install come up already signed in - which is the one thing a demo must not do.
+  # The records of today's builds - a debug build keeps them in the login
+  # keychain under NOX's own service - and those of builds before 048, under
+  # the plugin's default one.
+  while security delete-generic-password -s com.cyphernetlabs.noxapp >/dev/null 2>&1; do :; done
   while security delete-generic-password -s flutter_secure_storage_service >/dev/null 2>&1; do :; done
 fi
 

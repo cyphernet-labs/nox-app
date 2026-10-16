@@ -29,25 +29,45 @@ abstract final class PickerCopies {
   static bool get _android => debugAndroid ?? Platform.isAndroid;
   static bool get _ios => debugIos ?? Platform.isIOS;
 
-  /// The folder of the picker's copy at [path] - the uuid folder on Android,
-  /// the inbox on iOS - or null when [path] is no copy of the picker's.
-  static Future<Directory?> _holderOf(String path) async {
-    final sep = Platform.pathSeparator;
+  /// Where the picker puts its copies, its links resolved: the cache folder
+  /// on Android; the container's own tmp on iOS - what NSTemporaryDirectory
+  /// answers, through TMPDIR, and NOT path_provider's "temporary" folder,
+  /// which is Library/Caches there. Null anywhere else.
+  static Future<String?> _root() async {
+    final String dir;
     if (_android) {
-      final cache = debugCache ?? (await getApplicationCacheDirectory()).path;
-      if (!path.startsWith('$cache$sep')) return null;
-      final rest = path.substring(cache.length + 1).split(sep);
-      if (rest.length != 2 || !_uuid.hasMatch(rest.first)) return null;
-      return Directory('$cache$sep${rest.first}');
+      dir = debugCache ?? (await getApplicationCacheDirectory()).path;
+    } else if (_ios) {
+      dir = debugTemp ?? Directory.systemTemp.path;
+    } else {
+      return null;
     }
-    if (_ios) {
-      final temp = debugTemp ?? (await getTemporaryDirectory()).path;
-      if (!path.startsWith('$temp$sep')) return null;
-      final rest = path.substring(temp.length + 1).split(sep);
-      if (rest.length != 2 || !rest.first.endsWith('-Inbox')) return null;
-      return Directory('$temp$sep${rest.first}');
+    try {
+      return Directory(dir).resolveSymbolicLinksSync();
+    } on FileSystemException {
+      return null;
     }
-    return null;
+  }
+
+  /// Whether [name] is a folder the picker makes: a uuid on Android, an
+  /// inbox on iOS.
+  static bool _isHolder(String name) => _android ? _uuid.hasMatch(name) : name.endsWith('-Inbox');
+
+  /// The folder of the picker's copy at [path] - the uuid folder on Android,
+  /// the inbox on iOS - or null when [path] is no copy of the picker's. Paths
+  /// are compared with their links resolved: on a device the picker answers
+  /// /private/var where the system folders say /var.
+  static Future<Directory?> _holderOf(String path) async {
+    final root = await _root();
+    if (root == null) return null;
+    final holder = File(path).parent;
+    try {
+      if (holder.parent.resolveSymbolicLinksSync() != root) return null;
+    } on FileSystemException {
+      return null;
+    }
+    final name = holder.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => '');
+    return _isHolder(name) ? holder : null;
   }
 
   /// Deletes the picker's copy at [path] - once the queue sealed its own, or
@@ -66,25 +86,28 @@ abstract final class PickerCopies {
     }
   }
 
-  /// Deletes every copy of the picker's (a logout): the files are what the
-  /// person attached, on a device being handed back to nobody in particular.
-  static Future<void> clear() async {
+  /// Deletes every copy of the picker's but those in [keep] - a logout, which
+  /// keeps none, or a launch, which keeps what the queue still sends from.
+  /// An inbox holds many copies: only the files kept stay in it.
+  static Future<void> clear({Set<String> keep = const <String>{}}) async {
     try {
-      if (_android) {
-        final cache = Directory(debugCache ?? (await getApplicationCacheDirectory()).path);
-        if (!cache.existsSync()) return;
-        for (final entry in cache.listSync()) {
-          if (entry is Directory && _uuid.hasMatch(entry.uri.pathSegments.lastWhere((s) => s.isNotEmpty))) {
-            await entry.delete(recursive: true);
-          }
+      final root = await _root();
+      if (root == null) return;
+      final kept = <String>{
+        for (final path in keep)
+          if (await _holderOf(path) != null && File(path).existsSync()) File(path).resolveSymbolicLinksSync(),
+      };
+      for (final entry in Directory(root).listSync()) {
+        if (entry is! Directory) continue;
+        final name = entry.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => '');
+        if (!_isHolder(name)) continue;
+        final inside = entry.listSync(recursive: true).whereType<File>().toList();
+        if (!inside.any((f) => kept.contains(f.resolveSymbolicLinksSync()))) {
+          await entry.delete(recursive: true);
+          continue;
         }
-      } else if (_ios) {
-        final temp = Directory(debugTemp ?? (await getTemporaryDirectory()).path);
-        if (!temp.existsSync()) return;
-        for (final entry in temp.listSync()) {
-          if (entry is Directory && entry.uri.pathSegments.lastWhere((s) => s.isNotEmpty).endsWith('-Inbox')) {
-            await entry.delete(recursive: true);
-          }
+        for (final file in inside) {
+          if (!kept.contains(file.resolveSymbolicLinksSync())) await file.delete();
         }
       }
     } catch (error) {

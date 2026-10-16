@@ -233,8 +233,17 @@ class LiveIdentityHandshake {
     logRepository.debug(target: this, message: 'pairing: withdrawing the request');
     final last = await _withdraw(approval);
     if (last == null) {
+      // What came in meanwhile was set aside, not lost: a deadline or a
+      // channel refused for good ends the wait now, and anything else is
+      // tried again at once - a reply that was only slow, a connection that
+      // came back - and then on every connection after.
+      if (approval.sawDeadline || approval.sawTerminal || !DateTime.now().isBefore(approval.until)) {
+        approval.settle(const _Closed(PairingCancelled()));
+        return;
+      }
       approval.withdrawPending = true;
       logRepository.debug(target: this, message: 'pairing: no channel to withdraw over, again on the next connection');
+      approval.nudge?.call(const _Connection());
       return;
     }
     approval.settle(last is _Paired ? last : const _Closed(PairingCancelled()));
@@ -261,12 +270,14 @@ class LiveIdentityHandshake {
     required DateTime until,
     required StreamController<_Nudge> nudges,
   }) async {
-    final approval = _Approval(token: token, platform: platform);
+    final approval = _Approval(token: token, platform: platform, until: until);
     _approval = approval;
     logRepository.debug(target: this, message: 'pairing: waiting for approval on the device that issued the invite');
     void nudge(_Nudge value) {
       if (!nudges.isClosed) nudges.add(value);
     }
+
+    approval.nudge = nudge;
 
     final connections = _socket.connectionOpened.listen((_) => nudge(const _Connection()));
     final phases = _socket.phase.listen((phase) {
@@ -303,7 +314,19 @@ class LiveIdentityHandshake {
     // included, and acting here as well would only answer twice. One that
     // found no channel goes out again from here.
     if (approval.cancelling) {
-      if (!approval.withdrawPending) return null;
+      if (!approval.withdrawPending) {
+        // The first withdrawal is still out: what this nudge says is kept
+        // for when it comes back empty-handed.
+        switch (nudge) {
+          case _Deadline():
+            approval.sawDeadline = true;
+          case _Terminal():
+            approval.sawTerminal = true;
+          case _Connection() || _Resolved():
+            break;
+        }
+        return null;
+      }
       switch (nudge) {
         case _Connection() || _Resolved():
           final last = await _withdraw(approval);
@@ -526,10 +549,16 @@ LiveIdentityHandshake? get liveIdentityHandshake => getIt.isRegistered<LiveIdent
 
 /// One request waiting for approval, and the single place its wait ends.
 class _Approval {
-  _Approval({required this.token, required this.platform});
+  _Approval({required this.token, required this.platform, required this.until});
 
   final String token;
   final String platform;
+
+  /// This device's own deadline for the request.
+  final DateTime until;
+
+  /// Hands the wait a nudge of its own making - a withdrawal tried again.
+  void Function(_Nudge nudge)? nudge;
 
   /// Ends the wait: the identity, or the error that says how it ended. Marked
   /// handled so an outcome nobody awaits any more is not an uncaught error.
@@ -541,6 +570,11 @@ class _Approval {
 
   /// A withdrawal that found no channel: the next connection sends it again.
   bool withdrawPending = false;
+
+  /// The deadline, or a channel refused for good, came while the first
+  /// withdrawal was out.
+  bool sawDeadline = false;
+  bool sawTerminal = false;
 
   bool get settled => result.isCompleted;
 

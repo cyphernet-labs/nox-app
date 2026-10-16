@@ -523,6 +523,21 @@ void main() {
       timeout: const Timeout(Duration(seconds: 30)),
     );
 
+    test(
+      'the deadline passing while an offline Cancel is still out ends the wait as cancelled, not stuck',
+      () async {
+        final wait = await waiting(until: DateTime.now().add(const Duration(seconds: 2)));
+        factory.refuseEvery = ChannelFailure.network;
+        await wait.socket.drop();
+
+        // The withdrawal takes its five seconds; the deadline comes in between.
+        await handshake.cancelPairing();
+
+        await expectLater(wait.result, throwsA(isA<PairingCancelled>()));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
     test('Cancel with nothing waiting does nothing', () async {
       await handshake.cancelPairing();
       expect(factory.created, isEmpty);

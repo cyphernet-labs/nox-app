@@ -31,11 +31,15 @@ abstract class LocalFilesService {
 
   /// Lets go of a file the composer picked (048 review): when it is a copy
   /// the platform's picker made in the app's own storage - Android's cache,
-  /// iOS's inbox - it is deleted; a file of the person's own is never touched.
-  /// Called when the draft is dropped, replaced or refused; the queue lets go
-  /// of it itself once it sealed its own copy.
+  /// iOS's inbox - and no queued message still sends from it, it is deleted;
+  /// a file of the person's own is never touched. Called when the draft is
+  /// dropped, replaced or refused; the queue lets go of it itself once it
+  /// sealed its own copy.
   Future<void> releasePicked(String path);
 
-  /// Deletes every copy the platform's picker left (a logout).
-  Future<void> clearPicked();
+  /// Deletes every copy the platform's picker left but those in [keep]: a
+  /// logout keeps none; a launch keeps what the queue still sends from - a
+  /// message whose own copy could not be made, or one queued by an older
+  /// build.
+  Future<void> clearPicked({Set<String> keep = const <String>{}});
 }

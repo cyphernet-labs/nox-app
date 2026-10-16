@@ -12,6 +12,7 @@ import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 
@@ -79,6 +80,14 @@ Future<void> _start() async {
   // reads it, and the person pairs again (FR-025). A keychain that cannot
   // be read right now wipes nothing.
   await authRepository.retireLegacySession();
+  // Plain copies the platform's file picker left - by a build before they
+  // were let go of, or by a draft whose process was killed: every launch
+  // takes them, but those a queued message still sends from. A queue that
+  // cannot be read keeps them all.
+  try {
+    final queued = await getIt<OutboxRepository>().pending();
+    await getIt<LocalFilesService>().clearPicked(keep: {for (final entry in queued) ?entry.attachment?.localPath});
+  } catch (_) {}
   // Bring the live channel up before the first screen resolves: the world
   // check and the applier subscription both have to precede the greeting,
   // and only the dev environment binds a starter at all.

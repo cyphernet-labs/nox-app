@@ -587,9 +587,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       emit(live.copyWith(oversizedAttachmentTick: live.oversizedAttachmentTick + 1));
       return;
     }
-    // A draft the new pick replaces is dropped.
+    // A draft the new pick replaces is dropped - unless it is the same file:
+    // on Android the same document picked again is the same path.
     final replaced = live.draftAttachment?.localPath;
-    if (replaced != null) unawaited(_localFiles.releasePicked(replaced));
+    if (replaced != null && replaced != picked.path) unawaited(_localFiles.releasePicked(replaced));
     emit(
       live.copyWith(
         draftAttachment: MessageAttachment(

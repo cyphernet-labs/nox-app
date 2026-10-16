@@ -451,5 +451,5 @@ class _NoRoomFiles implements LocalFilesService {
   Future<void> releasePicked(String path) async {}
 
   @override
-  Future<void> clearPicked() async {}
+  Future<void> clearPicked({Set<String> keep = const <String>{}}) async {}
 }
