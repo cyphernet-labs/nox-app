@@ -248,7 +248,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<DeviceKeyPair>> deviceKey() {
     return execute<DeviceKeyPair>(() async {
       final stored = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
-      if (stored != null && (DeviceKeys.isOwn(stored) || await _hasIdentifier())) {
+      if (stored != null && (await _hasIdentifier() || DeviceKeys.isOwn(stored))) {
         return RepositoryResult<DeviceKeyPair>.success(data: stored);
       }
       // Made once, on the way into the first pairing. A new pair is a device
