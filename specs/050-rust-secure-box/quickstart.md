@@ -50,6 +50,7 @@ make golden-verify     # UI не менялся — все голдены зел
    (cd client_backend && go build -o noxd .)
    mkdir -p /tmp/nox050
    client_backend/noxd -addr 127.0.0.1:8443 -db /tmp/nox050/nox.db -status-addr 127.0.0.1:8081 &
+   curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
    client_backend/noxd unlock -status-addr 127.0.0.1:8081
    ```
    В журнале — предупреждение `RustSecureBox is a stub…`; на служебной странице — та же строка.

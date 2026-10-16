@@ -771,7 +771,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   prints the backup's moment and every device it lets in, and says to revoke
   one revoked since again. A confirmation before unpacking, revocations kept
   outside the database and devices held back until approved were weighed and
-  rejected (specs/047 research R11).
+  rejected (specs/047 research R11). A backup whose key another RustSecureBox
+  made is the exception (050): the restore rekeys it as the first start would,
+  and says every device pairs again.
 - **No limit on password attempts.** The page and the commands are loopback
   only, and whoever reaches them has the machine (out of scope). Each attempt
   costs Argon2id - about a second on a small board - and they are served one at
@@ -882,6 +884,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   page says `RustSecureBox is a stub: devices are not really verified.`. The
   owner's machine runs the stub on purpose; with the real library the line
   goes by itself.
+- **The entry bounds handshakes under way, never their rate (050).** `/auth`
+  signs the challenge of any key before anything is proved (the customer's
+  order), so a stranger's connection costs the server a TLS handshake plus
+  `GetChallenge` and `SignChallenge`: microseconds with the stub, about 1 ms of
+  CPU with a real Ed25519 RustSecureBox through wasm2go - several times the
+  TLS work (specs/050 research R1). The entry's limits (8 per source, 64 for
+  this machine, 256 in all) cap how many run at once; how many a stranger
+  completes in a second is bounded only by how fast it completes TLS. A rate
+  limit would be a design decision of its own, and a semaphore around the box
+  would starve the person's own new connections under the same flood.
 - **The server accepts every key that proves itself.** Refusing unknown keys at
   the channel would make pairing impossible (a new device is unknown by
   definition) and would tell a stranger which keys are paired. Rights come from

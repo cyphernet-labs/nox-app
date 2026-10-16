@@ -31,7 +31,7 @@
 - `CheckSignature` в `/auth2` — 0,27 мс;
 - рукопожатие TLS 1.3 — 0,37 мс.
 
-Пределы входа ограничивают число одновременных рукопожатий, не их частоту (`client_backend/CLAUDE.md`, «Known deliberate omissions»). Под `-race` вызовы в десятки раз медленнее: тесты пакета сервера идут минуты.
+Пределы входа ограничивают число одновременных рукопожатий, не их частоту (`client_backend/CLAUDE.md`, «Known deliberate omissions», запись «The entry bounds handshakes under way, never their rate»). Под `-race` вызовы в десятки раз медленнее: тесты пакета сервера идут минуты.
 
 **Alternatives considered.**
 - *cgo и C ABI* — все три установщика собирают сервер с `CGO_ENABLED=0`; на машине владельца понадобились бы Rust и компилятор C, на Windows — MinGW (решение 11 трекера).
