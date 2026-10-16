@@ -7,11 +7,11 @@
 - **Decision:** 32 случайных байта, создаются при первом запуске, хранятся в `flutter_secure_storage` под `device.storage_key` с опциями «только это устройство»; те же опции — у ключа устройства и всех секретов сессии (FR-002, FR-003):
   - iOS — `KeychainAccessibility.first_unlock_this_device`;
   - Android — хранилище плагина на Android Keystore, `allowBackup="false"` и правила извлечения данных, исключающие всё;
-  - macOS — `usesDataProtectionKeychain: true` с `first_unlock_this_device`; для этого macOS-сборка подписывается командой (`DEVELOPMENT_TEAM = W84KAPTJ9Y`, как iOS) и получает `keychain-access-groups`; сборки CI — с `CODE_SIGNING_ALLOWED=NO`;
+  - macOS — в релизной сборке `usesDataProtectionKeychain: true` с `first_unlock_this_device` и `keychain-access-groups` в `Release.entitlements`: такую сборку подписывает команда, которую владелец выберет к релизу. Отладочная и profile-сборки — обычная связка ключей (`usesDataProtectionKeychain: false`) под тем же сервисом: они подписываются для запуска на этой машине, без команды. Команды разработчика в проектах iOS и macOS нет (владелец, 2026-10-12: номер, что стоял в iOS-проекте с первого коммита, — чужой);
   - Windows — DPAPI плагина (текущий пользователь), файл хранилища — в `%LOCALAPPDATA%`, не в перемещаемом профиле;
   - Linux — libsecret (локальная связка ключей).
 - **Rationale:** решение 3, Принцип III 1.4.0 (без desktop-fallback). Нынешняя macOS-связка ключей (`usesDataProtectionKeychain: false`) попадает в Time Machine и переносится Migration Assistant — так нельзя.
-- **Риск:** локальная сборка macOS требует профиля разработки команды; проверяется на этой машине (`flutter build macos` c автоматической подписью), Windows и Linux — владелец.
+- **Риск:** записи отладочной сборки macOS попадают в Time Machine — это допустимо только на машине разработчика; релизную сборку macOS без команды не собрать. Windows и Linux проверяет владелец.
 
 ## R2. Шифрование — в Rust-модуле
 
@@ -74,6 +74,8 @@
 ## R11. Итоги прогона (T004, T013, T017)
 
 **Подпись macOS (T004).** `fvm flutter build macos --debug --dart-define-from-file=config/stage.json` после перевода `Runner` на подпись командой: `error: No profiles for 'com.cyphernetlabs.noxapp' were found: Xcode couldn't find any Mac App Development provisioning profiles matching 'com.cyphernetlabs.noxapp'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild.` На машине есть сертификаты Apple Development, но нет профиля Mac App Development для этого id в команде `W84KAPTJ9Y`. Профиль заводит Xcode под учётной записью команды (сборка из IDE или `xcodebuild -allowProvisioningUpdates`) — это действие владельца; подпись в проекте не ослаблялась.
+
+**Пересмотр подписи (2026-10-12, владелец).** Команда `W84KAPTJ9Y` — чужая, и регистрировать что-либо в ней нельзя; раньше macOS-сборка шла без профиля, и так должно остаться. Подпись командой снята с обоих проектов; `SecureStoreOptions.macOs` выбирается по режиму сборки: релиз — связка ключей с защитой данных, отладка и profile — обычная; `keychain-access-groups` — только в `Release.entitlements`; CI собирает macOS, как до 048. Отладочная сборка (`fvm flutter build macos --debug --dart-define-from-file=config/stage.json`) подписывается без команды и запускается.
 
 **Бенч SC-003 (T013)** — `fvm flutter test --tags live test/data/local/at_rest_bench_test.dart`, Apple M3 Max, 10 000 сообщений в 50 чатах, медианы 7 прогонов (база — 4,82 МБ открытая, 6,81 МБ запечатанная); три запуска:
 

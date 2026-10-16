@@ -63,9 +63,9 @@ enum ChannelFailure {
   /// The TLS handshake failed.
   tls,
 
-  /// An Eidolon message of the wrong length or with a bad signature - which is
-  /// what a machine in the middle looks like - or a peer that does not speak
-  /// the channel at all.
+  /// An answer to POST /auth or POST /auth2 that is not the contract's - a
+  /// signature that does not hold, a refusal, a body of the wrong shape - or a
+  /// peer that does not speak the channel at all.
   protocol,
 
   /// The server proved a key other than the one the pairing link named.
@@ -129,7 +129,7 @@ const int channelWindowBytes = 1 << 20;
 /// Opens channels.
 abstract interface class NoxChannelApi {
   /// Opens a channel to [target]; completes once it is verified (the server
-  /// proved [serverKey], and this device proved the key of [deviceSeed]), or
+  /// proved [serverKey], and this device proved the key of [devicePrivateKey]), or
   /// fails with [ChannelOpenException].
   ///
   /// [timeout] bounds transport, TLS and the check together. [cancel], when it
@@ -139,7 +139,7 @@ abstract interface class NoxChannelApi {
   /// back.
   Future<NoxChannel> open(
     ChannelTarget target, {
-    required Uint8List deviceSeed,
+    required Uint8List devicePrivateKey,
     required Uint8List serverKey,
     required Duration timeout,
     Future<void>? cancel,

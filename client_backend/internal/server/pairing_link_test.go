@@ -305,7 +305,7 @@ func TestThePairingLinkCarriesTheStoredServerKey(t *testing.T) {
 	c.expectGreeting()
 	c.hello(1, "")
 	link, _, _ := inviteOver(t, c, 2, `{}`)
-	if got := readLink(t, link).ServerKey; !got.Equal(serverKeyOf(t, srv)) {
+	if got := readLink(t, link).ServerKey; !bytes.Equal(got, serverKeyOf(t, srv)) {
 		t.Fatalf("the link carries %x, want the stored key %x", got, serverKeyOf(t, srv))
 	}
 	// And the key the channel proves is that same key: a device dialling with
@@ -405,7 +405,7 @@ func TestAnInviteNamesTheStoredAddressesAndSaysWhichItCarries(t *testing.T) {
 	for i, data := range requests {
 		link, onion, public := inviteOver(t, c, 10+i, data)
 		got := readLink(t, link)
-		if onion || public || got.Onion != nil || !got.ServerKey.Equal(key) || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
+		if onion || public || got.Onion != nil || !bytes.Equal(got.ServerKey, key) || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
 			t.Fatalf("%s with nothing stored: onion=%v public=%v link=%+v", data, onion, public, got)
 		}
 	}
@@ -461,7 +461,7 @@ func TestTheMachineLinkCarriesTheStoredAddresses(t *testing.T) {
 	setStored(t, srv, store.AddressOnion, testOnionAddr)
 	link, _ = machineLinkNow(t, srv)
 	got := readLink(t, link)
-	if !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) || !got.ServerKey.Equal(serverKeyOf(t, srv)) ||
+	if !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) || !bytes.Equal(got.ServerKey, serverKeyOf(t, srv)) ||
 		!slices.Equal(got.Direct, []string{"nox.example.org:8443", "192.168.1.10:8080"}) {
 		t.Fatalf("machine link with both stored = %+v", got)
 	}

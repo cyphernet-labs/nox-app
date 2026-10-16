@@ -78,7 +78,7 @@ void main() {
   late FakeTorService tor;
   late ConnectionPathSelector selector;
   final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
-  final deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+  final devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
   /// Every secret the run handles, as the wire, the store and the link spell
   /// them.
@@ -105,7 +105,7 @@ void main() {
       socket,
     );
     final link = PairingLink.parse(_link);
-    secrets = [base64Encode(deviceSeed), base64Encode(serverKey), link.token, _link.substring(PairingLink.prefix.length)];
+    secrets = [base64Encode(devicePrivateKey), base64Encode(serverKey), link.token, _link.substring(PairingLink.prefix.length)];
   });
 
   tearDown(() async {
@@ -126,7 +126,7 @@ void main() {
   test('a run through Tor names no onion address', () async {
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
     await getIt<ServerAddressesRepository>().setUseTor(true);
-    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, deviceSeed: deviceSeed);
+    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
     // The path is chosen after start() returns.
@@ -160,7 +160,7 @@ void main() {
     await addresses.saveManual(manualAddress: null, manualOnion: '$typed:443');
     await addresses.setUseTor(true);
     factory.refuseEvery = ChannelFailure.torOnionNotFound;
-    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, deviceSeed: deviceSeed);
+    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
     // The second round is what turns the refused dial into a cause.
@@ -203,7 +203,7 @@ void main() {
     HttpOverrides.global = null;
     addTearDown(() => HttpOverrides.global = saved);
     final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.torOnionNotFound);
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     addTearDown(channels.unbind);
     final repository = _Repository();
 

@@ -162,7 +162,7 @@ func TestAnInviteCarriesThisMachinesKeyAndItsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the invite does not read back: %v", err)
 	}
-	if !link.ServerKey.Equal(serverKeyOf(t, srv)) {
+	if !bytes.Equal(link.ServerKey, serverKeyOf(t, srv)) {
 		t.Fatalf("the invite carries %x, want this machine's key %x", link.ServerKey, serverKeyOf(t, srv))
 	}
 	if link.Token != reply.Token {

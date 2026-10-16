@@ -1,18 +1,18 @@
 # 09 — Сборка, секреты и CI
 
-## Сейф «только это устройство» (фазы 032, 048)
+## Сейф «только это устройство» (фазы 032, 048, 050)
 
 В `flutter_secure_storage` лежат два ключа и секреты сессии (среди них — ожидание одобрения `session.pending_pairing`, фаза 046: ссылка, которую оно держит, несёт токен):
 
-- **ключ устройства** — семя Ed25519, 32 байта, `session.device_secret`. Модуль канала получает семя при каждом открытии соединения и доказывает им ключ устройства в проверке Eidolon; держит его в затираемом буфере на время рукопожатия, по сети уходит только открытый ключ;
+- **ключ устройства** — пара от RustSecureBox (закрытый и открытый ключ, по 32 байта), `session.device_key` — одной записью JSON, чтобы половины не разошлись. Модуль канала получает закрытый ключ при каждом открытии соединения и доказывает им ключ устройства в проверке `POST /auth` → `POST /auth2`; держит его в затираемом буфере на время проверки, по сети уходит только открытый ключ;
 - **ключ локальной базы** — 32 случайных байта, `device.storage_key` (base64). Им запечатаны база и файлы на диске (`04-data-layer.md` §6г); модуль канала держит его в затираемом буфере процесса.
 
-Ни один из них не попадает в системные бэкапы и на другие устройства. Опции сейфа — `SecureStoreOptions` (`lib/data/local/secure/secure_store_options.dart`), единые для всех записей:
+Ни один из них не попадает в системные бэкапы и на другие устройства (кроме отладочной сборки macOS — см. таблицу). Опции сейфа — `SecureStoreOptions` (`lib/data/local/secure/secure_store_options.dart`), единые для всех записей:
 
 | Платформа | Хранилище и опции |
 |---|---|
 | iOS | Keychain, класс `first_unlock_this_device` (читается с первой разблокировки после перезапуска, в бэкап на другой телефон не переносится), сервис `com.cyphernetlabs.noxapp` |
-| macOS | Keychain с защитой данных (`usesDataProtectionKeychain: true`), тот же класс и сервис. Требует `keychain-access-groups`, поэтому macOS-сборка подписывается командой (§7a) |
+| macOS | Релизная сборка — Keychain с защитой данных (`usesDataProtectionKeychain: true`), тот же класс и сервис; требует `keychain-access-groups`, то есть подписи командой (§7a). Отладочная и profile-сборки — обычная связка ключей с тем же сервисом: они подписываются без команды, и их записи попадают в Time Machine |
 | Android | хранилище плагина: данные AES-GCM под ключом Android Keystore, который не покидает устройство; бэкап и перенос выключены в манифесте (раздел «Данные не уходят в бэкапы») |
 | Windows | DPAPI текущего пользователя; файл плагина — в `%LOCALAPPDATA%\NOX`, а не в перемещаемом профиле |
 | Linux | libsecret (локальная связка ключей); работает, только если запущена служба ключей |
@@ -71,13 +71,13 @@ secrets/<flavor>.enc.yaml   (SOPS+age encrypted, committed)
 String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencies(env)
 ```
 
-> **Состояние сборочной инфраструктуры.** Поток выше — **целевая** форма. Приложение при этом давно не скелет: это законченный продукт поверх реальной локальной Sembast-БД (фичи 001–021 смёржены), серверный этап 1 (022–024) готов в `client_backend/`, а клиентский трек уже подключил приложение к живому серверу — фаза 025 выровняла клиента по контракту v0 (`seq`, wire-DTO, персистентный курсор `since`, `ServerLimits`), фаза 026 привезла WebSocket-транспорт и DI-флип фичи 016 в окружении `dev` (флейвор `stage`; моки остались за `prod`/`test`), фаза 027 — устойчивый outbox. Отстаёт именно сборочный контур: в репозитории **нет** ни `secrets/`-бандлов, ни `secrets:decrypt`-задач, ни age-ключа — конфигурация инжектится только закоммиченным `config/<flavor>.json` (`prod` несёт один `app.flavor`, `stage` — `app.flavor` + `app.apiUrl`), а сборки идут в `--debug` на всех пяти платформах (см. §4, §8). SOPS+age-конвейер ниже описан как конвенция, которая включается с первой реальной потребностью в секретах. Бэкенд **выбран** (Go-сервер `noxd` + встроенный SQLite, контракт v0; транспорт — `wss` и `https` по каналу нативного модуля: TLS 1.3 и проверка Eidolon против ключа сервера из ссылки спаривания; порт приезжает той же ссылкой), адрес сервера приехал с транспортом и лежит открытым (не секретным) `app.apiUrl` в `config/stage.json`, а вот секрето-несущий per-flavor набор так и не зафиксирован; токена контракт не несёт — соединение аутентифицирует канал.
+> **Состояние сборочной инфраструктуры.** Поток выше — **целевая** форма. Приложение при этом давно не скелет: это законченный продукт поверх реальной локальной Sembast-БД (фичи 001–021 смёржены), серверный этап 1 (022–024) готов в `client_backend/`, а клиентский трек уже подключил приложение к живому серверу — фаза 025 выровняла клиента по контракту v0 (`seq`, wire-DTO, персистентный курсор `since`, `ServerLimits`), фаза 026 привезла WebSocket-транспорт и DI-флип фичи 016 в окружении `dev` (флейвор `stage`; моки остались за `prod`/`test`), фаза 027 — устойчивый outbox. Отстаёт именно сборочный контур: в репозитории **нет** ни `secrets/`-бандлов, ни `secrets:decrypt`-задач, ни age-ключа — конфигурация инжектится только закоммиченным `config/<flavor>.json` (`prod` несёт один `app.flavor`, `stage` — `app.flavor` + `app.apiUrl`), а сборки идут в `--debug` на всех пяти платформах (см. §4, §8). SOPS+age-конвейер ниже описан как конвенция, которая включается с первой реальной потребностью в секретах. Бэкенд **выбран** (Go-сервер `noxd` + встроенный SQLite, контракт v0; транспорт — `wss` и `https` по каналу нативного модуля: TLS 1.3 и проверка `POST /auth` → `POST /auth2` против ключа сервера из ссылки спаривания; порт приезжает той же ссылкой), адрес сервера приехал с транспортом и лежит открытым (не секретным) `app.apiUrl` в `config/stage.json`, а вот секрето-несущий per-flavor набор так и не зафиксирован; токена контракт не несёт — соединение аутентифицирует канал.
 
 ---
 
 ## 0a. Rust для нативного модуля: канал и Tor-клиент
 
-Пакет `packages/nox_tor` — Rust-крейт: канал к серверу (TLS 1.3 на rustls и проверка Eidolon) и Tor-клиент Arti. Его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте — на всех пяти платформах: каждое соединение с сервером открывает канал модуля, другого пути к серверу у приложения нет. Встроенный Tor собирается в ту же библиотеку и работает на всех пяти платформах, Linux включительно. Что нужно на машине:
+Пакет `packages/nox_tor` — Rust-крейт: канал к серверу (TLS 1.3 на rustls и проверка `POST /auth` → `POST /auth2` с RustSecureBox — крейтом `packages/rust_secure_box`, который он собирает вместе с собой) и Tor-клиент Arti. Его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте — на всех пяти платформах: каждое соединение с сервером открывает канал модуля, другого пути к серверу у приложения нет. Встроенный Tor собирается в ту же библиотеку и работает на всех пяти платформах, Linux включительно. Что нужно на машине:
 
 | Где | Что |
 |---|---|
@@ -87,7 +87,9 @@ String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencie
 | Windows | MSVC; собирается только на Windows |
 | Linux | цели `x86_64-unknown-linux-gnu` и `aarch64-unknown-linux-gnu` из того же `rust-toolchain.toml` |
 
-`make tor-test` гоняет `cargo test` крейта и `dart test` пакета. Профиль release крейта — `opt-level = "z"`, fat LTO, `strip`, `panic = "unwind"` (паника задачи Arti не должна ронять приложение).
+`make tor-test` гоняет `cargo test` RustSecureBox, `make box-verify` (копия RustSecureBox на сервере — то, во что собирается крейт; нужны цель `wasm32-unknown-unknown` из `packages/rust_secure_box/rust-toolchain.toml` и Go), `cargo test` модуля и `dart test` пакета. Профиль release крейта — `opt-level = "z"`, fat LTO, `strip`, `panic = "unwind"` (паника задачи Arti не должна ронять приложение).
+
+Библиотека модуля не тянет за собой чужих библиотек: `liblzma` (сжатие каталогов Tor в Arti) собирается внутрь неё на всех платформах — у `liblzma-sys` включена фича `static`. Без этого сборка на хосте берёт ту `liblzma`, что находит pkg-config: на Mac с `xz` из Homebrew это `/opt/homebrew/opt/xz/lib/liblzma.5.dylib`, которую песочница приложения не открывает и которой нет на других машинах. Проверка: `otool -L` по `NOX.app/Contents/Frameworks/nox_tor.framework/nox_tor` — только системные библиотеки.
 
 ---
 
@@ -370,7 +372,7 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
 Сегодня vs целевое: `AppConfig` несёт `flavor` и `apiUrl`, и **оба поля читаются из dart-define** (`app.flavor` / `app.apiUrl`) — `initialize(...)` собирает объект из `flavorType` и `AppFlavor.getApiUrl()`. Полей под signature-key (`apiSignatureKey`) / observability-DSN в коде **нет** — это по-прежнему **целевые поля (пример/TBD)**. Сниппеты выше — сокращённые (обрезанные) цитаты реальных файлов, а не переписанный код.
 
-**Секрето-несущий набор dart-define-ключей — по-прежнему пример/TBD**, но по другой причине, чем раньше: wire-контракт **зафиксирован** (`docs/client-backend/protocol/contract-draft.md`, v0 — WebSocket и REST только под блобы, оба по каналу TLS 1.3 с проверкой Eidolon против ключа сервера из ссылки спаривания), а вот per-flavor набор секретов под него — нет. Иллюстративный allowlist (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) из §4 остаётся **примером**. Транспорт (фаза 026) уже принёс dev-адрес, но открытым `app.apiUrl`, а не через секреты. Ключ сервера в этот набор не входит — он приезжает ссылкой спаривания вместе с адресом, по которому идёт живое соединение, — и токена контракт не несёт. Когда набор зафиксируют, добавьте соответствующие поля в `AppConfig` (и заполняйте их в `AppConfigRepositoryImpl.initialize(...)`) и расширьте `jq`-allowlist синхронно.
+**Секрето-несущий набор dart-define-ключей — по-прежнему пример/TBD**, но по другой причине, чем раньше: wire-контракт **зафиксирован** (`docs/client-backend/protocol/contract-draft.md`, v0 — WebSocket и REST только под блобы, оба по каналу TLS 1.3 с проверкой `POST /auth` → `POST /auth2` против ключа сервера из ссылки спаривания), а вот per-flavor набор секретов под него — нет. Иллюстративный allowlist (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) из §4 остаётся **примером**. Транспорт (фаза 026) уже принёс dev-адрес, но открытым `app.apiUrl`, а не через секреты. Ключ сервера в этот набор не входит — он приезжает ссылкой спаривания вместе с адресом, по которому идёт живое соединение, — и токена контракт не несёт. Когда набор зафиксируют, добавьте соответствующие поля в `AppConfig` (и заполняйте их в `AppConfigRepositoryImpl.initialize(...)`) и расширьте `jq`-allowlist синхронно.
 
 > **Пустой ключ = выключенная фича, а не ошибка.** Когда секрето-несущие ключи появятся, пустое значение должно означать no-op, а не падение: `dev` без observability-DSN ⇒ `OBSERVABILITY_DSN=''` ⇒ телеметрия молчит (см. `17-analytics.md` — аналитика по умолчанию **выключена** до согласия пользователя). Флейвор передаётся **отдельным** ключом `app.flavor` (не из секретов).
 
@@ -598,7 +600,7 @@ afterEvaluate {
 В этой итерации desktop-таргеты несут **только prod-идентичность** на нативном уровне (одна нативная конфигурация на платформу). Отдельная нативная `.stage`-идентичность (и, соответственно, упаковка двух раздельных артефактов) — **на будущее** (§11a). Stage на desktop виден исключительно через `app.flavor` в Dart (`--dart-define-from-file=config/stage.json`), нативная конфигурация при этом не меняется.
 
 - **macOS.** В `macos/Runner/Configs/AppInfo.xcconfig` prod-идентичность: `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX` (подтверждено кодом). Отдельная `.stage`-идентичность (`com.cyphernetlabs.noxapp.stage`) → упаковка **на будущее** (§11a).
-- **Подпись macOS-сборки (фаза 048).** Таргет `Runner` подписывается командой во всех конфигурациях: `DEVELOPMENT_TEAM = W84KAPTJ9Y`, `CODE_SIGN_STYLE = Automatic`, `CODE_SIGN_IDENTITY = "Apple Development"`; оба файла прав (`DebugProfile.entitlements`, `Release.entitlements`) несут `keychain-access-groups` = `$(AppIdentifierPrefix)com.cyphernetlabs.noxapp`. Без группы доступа связка ключей с защитой данных отвечает `errSecMissingEntitlement` (-34018), и сейф не работает. Локальной сборке нужен профиль Mac App Development для `com.cyphernetlabs.noxapp` в команде: Xcode заводит его сам при сборке из IDE под учётной записью команды (или `xcodebuild -allowProvisioningUpdates`); без профиля `flutter build macos` останавливается на «No profiles for 'com.cyphernetlabs.noxapp' were found». CI собирает macOS без подписи (§8.2).
+- **Подпись macOS-сборки.** Команды разработчика нет ни в macOS-, ни в iOS-проекте: какой командой подписывать релиз, решает владелец. Отладочная и profile-сборки подписываются для запуска на этой машине (`CODE_SIGN_IDENTITY = "-"`), `DebugProfile.entitlements` без группы доступа, сейф — обычная связка ключей (login keychain): её записи попадают в Time Machine, что допустимо только на машине разработчика. Релизная сборка держит сейф в связке ключей с защитой данных: `Release.entitlements` несёт `keychain-access-groups` = `$(AppIdentifierPrefix)com.cyphernetlabs.noxapp` — без группы доступа эта связка отвечает `errSecMissingEntitlement` (-34018), а группа действует только в сборке, подписанной командой. Поэтому релизную сборку собирают с командой.
 - **Windows.** В `windows/CMakeLists.txt` — `BINARY_NAME = "nox_app"` (technical-имя бинарника); в `windows/runner/Runner.rc` блок `VERSIONINFO` несёт `CompanyName = "Cyphernet Labs"`, `ProductName = "NOX"`, `FileDescription = "NOX"`, `InternalName = "nox_app"`. Закоммиченный стабильный GUID приложения (между сборками) — **на будущее** (в текущем `Runner.rc` отдельного app-GUID нет). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
 - **Linux.** В `linux/CMakeLists.txt` — `APPLICATION_ID = "com.cyphernetlabs.noxapp"`, `BINARY_NAME = "nox_app"` (technical-имя). `Name` в `.desktop`-файле — `NOX`; сам `.desktop`-файл — **на будущее** (генерируется при упаковке, §11a). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
 
@@ -720,11 +722,7 @@ jobs:
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
-      # Unsigned: CI holds no certificate and never runs the app (phase 048).
       - run: flutter build macos --debug --dart-define-from-file=config/stage.json
-        env:
-          FLUTTER_XCODE_CODE_SIGNING_ALLOWED: 'NO'
-          FLUTTER_XCODE_CODE_SIGNING_REQUIRED: 'NO'
 
   compile-windows:
     runs-on: windows-latest
@@ -758,7 +756,7 @@ jobs:
 ```
 
 Замечания:
-- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем секрето-несущий `--dart-define-from-file`. Это компайл-чек, а не релиз. Все пять джобов единообразно передают `--dart-define-from-file=config/stage.json` (`app.flavor=stage` + `app.apiUrl` локального `noxd` — на compile-smoke это не влияет, сборка ни к чему не подключается); iOS добавляет `--no-codesign`, macOS — `FLUTTER_XCODE_CODE_SIGNING_ALLOWED=NO` (flutter передаёт переменные `FLUTTER_XCODE_*` в `xcodebuild` как настройки сборки; подпись командой нужна только запуску, §7a); Linux ставит `ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev` (GTK-тулчейн для desktop-эмбеддера + **build-time** зависимости плагина `flutter_secure_storage_linux`: его `CMakeLists.txt` делает `pkg_check_modules` на `libsecret-1`/`jsoncpp`, иначе `flutter build linux` падает на конфигурации CMake — `required packages were not found: libsecret-1`).
+- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем секрето-несущий `--dart-define-from-file`. Это компайл-чек, а не релиз. Все пять джобов единообразно передают `--dart-define-from-file=config/stage.json` (`app.flavor=stage` + `app.apiUrl` локального `noxd` — на compile-smoke это не влияет, сборка ни к чему не подключается); iOS добавляет `--no-codesign`; macOS-джоб не передаёт ни флагов подписи, ни переменных: отладочная сборка подписывается для запуска на этой машине (`CODE_SIGN_IDENTITY = "-"`), без команды — команды разработчика в проектах нет, а релизную сборку подписывает команда, которую выберет владелец (§7a); Linux ставит `ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev` (GTK-тулчейн для desktop-эмбеддера + **build-time** зависимости плагина `flutter_secure_storage_linux`: его `CMakeLists.txt` делает `pkg_check_modules` на `libsecret-1`/`jsoncpp`, иначе `flutter build linux` падает на конфигурации CMake — `required packages were not found: libsecret-1`).
 - Каждый джоб ставит тулчейн Rust из `rust-toolchain.toml` с целями своей платформы — Linux-джоб тоже (`x86_64-unknown-linux-gnu`): нативный хук собирает модуль `nox_tor` (канал к серверу и Tor-клиент) при каждой сборке на всех пяти платформах (§0a). Хук сам скачал бы тулчейн, но явный шаг держит лог сборки читаемым и цели — только нужными джобу. Android-джоб ставит ещё NDK `28.2.13676358`: хук линкует библиотеку clang'ом NDK раньше, чем начинает работать Gradle.
 - Этот compile-check покрывает все **5 целевых платформ** (конституция, принцип VI — паритет mobile↔desktop): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **включён**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Сверх тулчейна Rust (и NDK для Android) никаких desktop/FFI-шагов нет.
 
@@ -861,7 +859,7 @@ lib/design/gen/
 `TODO(blueprint-desktop-packaging)` — **без реализации** в этой итерации; скелет даёт только `--debug` compile-smoke (§8.2) и `build:<desktop>:<flavor>` без упаковки (§4). Когда desktop-дистрибуция активируется, по платформам:
 
 - **Windows.** MSIX-пакет + подпись инсталлятора code-signing-сертификатом (EV/OV).
-- **macOS.** DMG + `codesign` + нотаризация через `xcrun notarytool` + hardened runtime. Подпись командой для разработки заведена фазой 048 (§7a); дистрибуционная подпись и нотаризация — здесь.
+- **macOS.** DMG + `codesign` + нотаризация через `xcrun notarytool` + hardened runtime. Отладочная сборка подписывается для запуска на этой машине (`CODE_SIGN_IDENTITY = "-"`), без команды: команды разработчика в проектах нет. Релизную сборку подписывает команда, которую выберет владелец (§7a); дистрибуционная подпись и нотаризация — здесь.
 - **Linux.** AppImage и/или `.deb`.
 
 Блокер тот же, что у мобильного/desktop CD (§11): нет аккаунтов/сертификатов для подписи (Apple Developer / code-signing cert) — пока они не заведены, упаковка и подпись desktop остаются на будущее, параллельно отложенному CD.

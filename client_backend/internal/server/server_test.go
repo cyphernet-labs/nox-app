@@ -3,11 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/tls"
 	"database/sql"
-	"encoding/base64"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -23,9 +21,10 @@ import (
 
 	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/config"
+	"nox.app/client-backend/internal/connauth"
 	"nox.app/client-backend/internal/db"
-	"nox.app/client-backend/internal/eidolon"
 	"nox.app/client-backend/internal/hub"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
 	"nox.app/client-backend/internal/vault"
 )
@@ -123,10 +122,10 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	}
 	// Mirror Run again: the machine's key is settled before anything serves,
 	// because the channel proves it on every connection.
-	if _, err := st.EnsureServerIdentity(t.Context()); err != nil {
+	if _, err := st.EnsureServerIdentity(t.Context(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	serverKey, err := st.ServerKey(t.Context())
+	serverKey, _, err := st.ServerKey(t.Context(), testBox)
 	if err != nil {
 		t.Fatalf("ServerKey: %v", err)
 	}
@@ -201,7 +200,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 // serves the main port, and returns an httptest.Server whose client dials the
 // way the app does. ts.URL is https: it names the TLS the channel carries, and
 // the client's transport is the one that knows how to open it.
-func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey, devices *testDevices) *httptest.Server {
+func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, key securebox.PrivateKey, devices *testDevices) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewUnstartedServer(srv.Handler())
 	_ = ts.Listener.Close()
@@ -213,18 +212,22 @@ func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, 
 	ts.Config.RegisterOnShutdown(srv.CloseConnections)
 	ts.Start()
 	ts.URL = "https://" + raw.Addr().String()
-	ts.Client().Transport = newTestChannel(raw.Addr().String(), key.Public().(ed25519.PublicKey), devices)
+	public, err := testBox.PublicKey(key)
+	if err != nil {
+		t.Fatalf("the server's public key: %v", err)
+	}
+	ts.Client().Transport = newTestChannel(raw.Addr().String(), public[:], devices)
 	return ts
 }
 
 // testChannel is every test server's client transport: TCP, TLS 1.3 that
-// checks no certificate, then the channel check as a device against the
-// server's key - and only then HTTP. It is what the app's Rust module does,
+// checks no certificate, then POST /auth and POST /auth2 as a device against
+// the server's key - and only then HTTP. It is what the app's Rust module does,
 // and it is why ts.Client() and ts.URL go on working unchanged.
 type testChannel struct {
 	*http.Transport
 	addr      string
-	serverKey ed25519.PublicKey
+	serverKey []byte
 	devices   *testDevices
 }
 
@@ -251,16 +254,16 @@ func (d *testDevices) current() (*device, error) {
 		return d.last, nil
 	}
 	if d.stranger == nil {
-		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		stranger, err := makeDevice()
 		if err != nil {
 			return nil, err
 		}
-		d.stranger = &device{pub: base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey)), priv: priv}
+		d.stranger = stranger
 	}
 	return d.stranger, nil
 }
 
-func newTestChannel(addr string, serverKey ed25519.PublicKey, devices *testDevices) *testChannel {
+func newTestChannel(addr string, serverKey []byte, devices *testDevices) *testChannel {
 	ch := &testChannel{addr: addr, serverKey: serverKey, devices: devices}
 	ch.Transport = ch.transportAs(nil)
 	return ch
@@ -299,9 +302,9 @@ func channelOf(t *testing.T, ts *httptest.Server) *testChannel {
 }
 
 // dialChannel opens one channel as the device priv belongs to: everything a
-// device does before its first byte of HTTP, and nothing else. The returned
-// connection is the verified TLS session with no deadline left on it.
-func dialChannel(ctx context.Context, addr string, serverKey ed25519.PublicKey, priv ed25519.PrivateKey) (*tls.Conn, error) {
+// device does before its first byte of HTTP of its own, and nothing else. The
+// returned connection is the checked TLS session with no deadline left on it.
+func dialChannel(ctx context.Context, addr string, serverKey []byte, priv securebox.PrivateKey) (net.Conn, error) {
 	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
@@ -311,31 +314,32 @@ func dialChannel(ctx context.Context, addr string, serverKey ed25519.PublicKey, 
 
 // channelOver runs the channel on a transport that is already open - a TCP
 // connection, or a stream through Tor - and closes it on any failure.
-func channelOver(ctx context.Context, raw net.Conn, serverKey ed25519.PublicKey, priv ed25519.PrivateKey) (*tls.Conn, error) {
+func channelOver(ctx context.Context, raw net.Conn, serverKey []byte, priv securebox.PrivateKey) (net.Conn, error) {
+	var expected securebox.PublicKey
+	if len(serverKey) != len(expected) {
+		_ = raw.Close()
+		return nil, fmt.Errorf("the expected server key is %d bytes", len(serverKey))
+	}
+	copy(expected[:], serverKey)
 	tc := tls.Client(raw, testClientTLS())
 	if err := tc.HandshakeContext(ctx); err != nil {
 		_ = raw.Close()
 		return nil, err
 	}
-	state := tc.ConnectionState()
-	binding, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
+	checked, err := connauth.Initiate(ctx, tc, testBox, priv, raw.RemoteAddr().String(), expected)
 	if err != nil {
 		_ = raw.Close()
 		return nil, err
 	}
-	if err := eidolon.Initiate(ctx, tc, binding, priv, serverKey); err != nil {
+	if err := checked.SetDeadline(time.Time{}); err != nil {
 		_ = raw.Close()
 		return nil, err
 	}
-	if err := tc.SetDeadline(time.Time{}); err != nil {
-		_ = raw.Close()
-		return nil, err
-	}
-	return tc, nil
+	return checked, nil
 }
 
 // testClientTLS is the device's TLS: 1.3 only, no certificate check - the
-// certificate is technical, the channel check decides - no SNI, since no name
+// certificate is technical, /auth and /auth2 decide - no SNI, since no name
 // is set, and no resumption.
 func testClientTLS() *tls.Config {
 	return &tls.Config{
@@ -347,7 +351,7 @@ func testClientTLS() *tls.Config {
 }
 
 // serverKeyOf reads the machine's public key, as a link names it.
-func serverKeyOf(t *testing.T, srv *Server) ed25519.PublicKey {
+func serverKeyOf(t *testing.T, srv *Server) []byte {
 	t.Helper()
 	id, err := srv.store.ServerIdentity(context.Background())
 	if err != nil {
@@ -479,7 +483,7 @@ func TestAnAbortedStartupDoesNotRotateTheJournal(t *testing.T) {
 	}
 
 	st := store.New(dbs.Read, dbs.Write)
-	if _, err := st.EnsureServerIdentity(ctx); err == nil {
+	if _, err := st.EnsureServerIdentity(ctx, testBox); err == nil {
 		t.Fatal("a store with people and no server identity was handed a new key")
 	}
 

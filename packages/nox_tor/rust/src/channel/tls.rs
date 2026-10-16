@@ -2,7 +2,8 @@
 //!
 //! The server's certificate is a throwaway one, made from a fresh P-256 key at
 //! every start, so there is nothing to check it against and nothing is: who the
-//! server is, Eidolon proves over the channel binding this layer exports. What
+//! server is, the check over this layer proves (`auth`, POST /auth and POST
+//! /auth2). What
 //! this layer does check is that the server signed the handshake with the key
 //! of the certificate it sent (`verify_tls13_signature`), which keeps TLS
 //! sound on its own terms.
@@ -21,7 +22,7 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::client::Resumption;
 use rustls::crypto::{verify_tls13_signature, WebPkiSupportedAlgorithms};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, PeerIncompatible, SignatureScheme};
+use rustls::{ClientConfig, DigitallySignedStruct, PeerIncompatible, SignatureScheme};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
@@ -30,9 +31,6 @@ use super::code;
 
 /// What HTTP runs over the channel: WebSocket and the file transfers both.
 pub const ALPN: &[u8] = b"http/1.1";
-
-/// RFC 9266: the channel binding of TLS 1.3, 32 bytes with an empty context.
-pub const BINDING_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
 
 /// The client configuration, the same for every channel. None only if rustls
 /// refuses it, which a test below would catch first.
@@ -81,12 +79,6 @@ fn handshake_failure(e: &io::Error) -> i32 {
         io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof => code::TLS,
         _ => code::NETWORK,
     }
-}
-
-/// The channel binding both ends sign in Eidolon. A man in the middle runs two
-/// TLS sessions and gets two different values.
-pub fn channel_binding(conn: &ClientConnection) -> Result<[u8; 32], i32> {
-    conn.export_keying_material([0u8; 32], BINDING_LABEL, Some(b"")).map_err(|_| code::INTERNAL)
 }
 
 /// Takes any certificate, and checks that the handshake was signed with its
@@ -204,7 +196,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn any_certificate_does_and_both_ends_export_the_same_binding() {
+    async fn any_certificate_does() {
         let (client_io, server_io) = duplex(64 * 1024);
         let acceptor = TlsAcceptor::from(Arc::new(server(&[&rustls::version::TLS13])));
         let accepting = tokio::spawn(async move { acceptor.accept(server_io).await.unwrap() });
@@ -216,29 +208,11 @@ mod tests {
         assert_eq!(conn.protocol_version(), Some(rustls::ProtocolVersion::TLSv1_3));
         assert_eq!(server.get_ref().1.server_name(), None, "no SNI went out");
 
-        let ours = channel_binding(client.get_ref().1).unwrap();
-        let theirs = server.get_ref().1.export_keying_material([0u8; 32], BINDING_LABEL, None).unwrap();
-        assert_eq!(ours, theirs, "an empty context and none are one value in TLS 1.3");
-
         client.write_all(b"ping").await.unwrap();
         client.flush().await.unwrap();
         let mut got = [0u8; 4];
         server.read_exact(&mut got).await.unwrap();
         assert_eq!(&got, b"ping");
-    }
-
-    #[tokio::test]
-    async fn two_connections_have_two_bindings() {
-        let mut bindings = Vec::new();
-        for _ in 0..2 {
-            let (client_io, server_io) = duplex(64 * 1024);
-            let acceptor = TlsAcceptor::from(Arc::new(server(&[&rustls::version::TLS13])));
-            let accepting = tokio::spawn(async move { acceptor.accept(server_io).await });
-            let client = connect(client_io).await.unwrap();
-            accepting.await.unwrap().unwrap();
-            bindings.push(channel_binding(client.get_ref().1).unwrap());
-        }
-        assert_ne!(bindings[0], bindings[1]);
     }
 
     #[tokio::test]

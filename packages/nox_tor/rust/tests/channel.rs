@@ -1,8 +1,8 @@
 //! The channel end to end, through the C ABI the app calls: real TCP to a TLS
-//! 1.3 server standing in for noxd - a throwaway certificate, the RFC 9266
-//! binding, eidolon-auth as the responder with the shared vectors' server key -
-//! and to the servers that must not get a channel: another key, a man in the
-//! middle, an older server that answers HTTP, one that answers nothing.
+//! 1.3 server standing in for noxd - a throwaway certificate, then its side of
+//! POST /auth and POST /auth2 with RustSecureBox - and to the servers that must
+//! not get a channel: another key, a signature that does not hold, an older
+//! server that answers something else, one that answers nothing.
 //!
 //! Events are taken the way Dart's port takes them - decoded from the posted
 //! message, queued for the test to read on its own thread - and each channel
@@ -16,24 +16,23 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-use cypher::{Cert, EcPk, EcSign};
-use eidolon::EidolonState;
 use nox_tor::channel::dart::{decode, DartCObject};
 use nox_tor::channel::{code, event, CHUNK, WINDOW};
 use nox_tor::{
     nox_chan_ack, nox_chan_close, nox_chan_flush, nox_chan_open, nox_chan_reap, nox_chan_shutdown_write, nox_chan_write,
 };
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
-use rustls::{ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme, SupportedProtocolVersion};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{ServerConfig, SupportedProtocolVersion};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Runtime;
 use tokio_rustls::server::TlsStream;
-use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio_rustls::TlsAcceptor;
 
-const MESSAGE_LEN: usize = 160;
-const BINDING_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
+/// The device's, the server's and another server's private keys.
+const DEVICE_KEY: [u8; 32] = [0x11; 32];
+const SERVER_KEY: [u8; 32] = [0x22; 32];
+const OTHER_SERVER_KEY: [u8; 32] = [0x33; 32];
 /// Long enough for anything that should happen on a loopback connection.
 const PATIENCE: Duration = Duration::from_secs(10);
 
@@ -41,18 +40,11 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-// --- The shared vectors ---------------------------------------------------
+// --- Keys ------------------------------------------------------------------
 
-fn vector(name: &str) -> Vec<u8> {
-    let json = include_str!("data/eidolon-vectors.json");
-    let field = format!("\"{name}\": \"");
-    let start = json.find(&field).unwrap_or_else(|| panic!("{name} in the vectors")) + field.len();
-    let end = start + json[start..].find('"').unwrap();
-    data_encoding::HEXLOWER.decode(&json.as_bytes()[start..end]).unwrap()
-}
-
-fn key(name: &str) -> [u8; 32] {
-    vector(name).try_into().unwrap()
+/// The public key RustSecureBox gives for a private one.
+fn public(private: &[u8; 32]) -> [u8; 32] {
+    rust_secure_box::get_challenge(private).unwrap().1
 }
 
 // --- Events, as Dart receives them ----------------------------------------
@@ -104,14 +96,14 @@ struct Chan(i64, i64);
 impl Chan {
     fn open(kind: i32, host: &str, port: u16, server_key: [u8; 32], budget_ms: u32) -> Chan {
         let host = CString::new(host).unwrap();
-        let seed = key("device_seed");
+        let device = DEVICE_KEY;
         let events = new_port();
         let handle = unsafe {
             nox_chan_open(
                 kind,
                 host.as_ptr(),
                 port,
-                seed.as_ptr(),
+                device.as_ptr(),
                 server_key.as_ptr(),
                 budget_ms,
                 Some(on_post),
@@ -128,7 +120,7 @@ impl Chan {
     }
 
     fn direct(addr: SocketAddr, budget_ms: u32) -> Chan {
-        Chan::open(0, &addr.ip().to_string(), addr.port(), key("server_public_key"), budget_ms)
+        Chan::open(0, &addr.ip().to_string(), addr.port(), public(&SERVER_KEY), budget_ms)
     }
 
     /// The next event, within `within`.
@@ -250,46 +242,76 @@ async fn accept(listener: &TcpListener, config: Arc<ServerConfig>) -> TlsStream<
     TlsAcceptor::from(config).accept(tcp).await.unwrap()
 }
 
-fn binding(tls: &TlsStream<TcpStream>) -> [u8; 32] {
-    tls.get_ref().1.export_keying_material([0u8; 32], BINDING_LABEL, Some(b"")).unwrap()
+/// One request off the server's side of a connection: its path and body.
+/// None when the device ended the connection before a whole request.
+async fn read_request<R: AsyncRead + Unpin>(io: &mut R) -> Option<(String, Vec<u8>)> {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if io.read(&mut byte).await.ok()? == 0 {
+            return None;
+        }
+        head.push(byte[0]);
+    }
+    let mut headers = [httparse::EMPTY_HEADER; 16];
+    let mut request = httparse::Request::new(&mut headers);
+    request.parse(&head).ok()?;
+    let length: usize = request
+        .headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+        .and_then(|h| std::str::from_utf8(h.value).ok()?.parse().ok())?;
+    let path = request.path?.to_owned();
+    let mut body = vec![0u8; length];
+    io.read_exact(&mut body).await.ok()?;
+    Some((path, body))
 }
 
-fn key_pair(seed: [u8; 32]) -> ec25519::KeyPair {
-    ec25519::KeyPair::from_seed(ec25519::Seed::new(seed))
+fn answer(status: u16, body: &str) -> Vec<u8> {
+    format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
 }
 
-fn cert(pair: &ec25519::KeyPair) -> Cert<ec25519::Signature> {
-    Cert { pk: pair.pk, sig: EcSign::sign(&pair.sk, pair.pk.to_pk_compressed()) }
+fn b64(bytes: &[u8]) -> String {
+    data_encoding::BASE64URL_NOPAD.encode(bytes)
 }
 
-/// noxd's side of Eidolon: any device key whose two signatures hold - over its
-/// key and over this connection's binding - and its own message in answer.
-fn respond(seed: [u8; 32], message: &[u8], binding: &[u8; 32]) -> Result<Vec<u8>, String> {
-    let pair = key_pair(seed);
-    let mut state = EidolonState::responder(cert(&pair), vec![]);
-    state.init(binding);
-    let answer = state.advance(message, &pair.sk).map_err(|e| format!("{e:?}"))?;
-    assert_eq!(*state.remote_cert().unwrap().pk, key("device_public_key"));
-    Ok(answer)
+fn unb64<const N: usize>(value: &serde_json::Value) -> [u8; N] {
+    data_encoding::BASE64URL_NOPAD.decode(value.as_str().unwrap().as_bytes()).unwrap().try_into().unwrap()
 }
 
-/// The message of the server with `seed` over `binding`, whatever the device
-/// sent: what a server that answers anyway sends, and what a relay passes on.
-fn message_of(seed: [u8; 32], binding: &[u8; 32]) -> Vec<u8> {
-    let pair = key_pair(seed);
-    let mut state = EidolonState::initiator(cert(&pair), vec![]);
-    state.init(binding);
-    state.advance(&[], &pair.sk).unwrap()
+/// noxd's side of the check, as `server`: any device key whose signature over
+/// the server's challenge holds. The device's key when it does.
+async fn respond_as<S>(tls: &mut S, server: [u8; 32]) -> Result<[u8; 32], String>
+where
+    S: AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let (path, body) = read_request(tls).await.ok_or("no /auth")?;
+    assert_eq!(path, "/auth");
+    let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let device: [u8; 32] = unb64(&request["pk"]);
+    let theirs: [u8; 32] = unb64(&request["challenge"]);
+    let (ours, server_public) = rust_secure_box::get_challenge(&server).unwrap();
+    let signature = rust_secure_box::sign_challenge(&server, &theirs).unwrap();
+    let body =
+        format!(r#"{{"pk":"{}","challenge":"{}","signature":"{}"}}"#, b64(&server_public), b64(&ours), b64(&signature));
+    tls.write_all(&answer(200, &body)).await.unwrap();
+    let (path, body) = read_request(tls).await.ok_or("no /auth2")?;
+    assert_eq!(path, "/auth2");
+    let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let signature: [u8; 64] = unb64(&request["signature"]);
+    if !rust_secure_box::check_signature(&device, &ours, &signature).unwrap() {
+        tls.write_all(&answer(401, "")).await.unwrap();
+        return Err("signature".to_owned());
+    }
+    tls.write_all(&answer(200, "")).await.unwrap();
+    Ok(device)
 }
 
-/// TLS, then the server's side of Eidolon with the vectors' server key.
+/// TLS, then the server's side of the check with the server's key.
 async fn verified(listener: &TcpListener, config: Arc<ServerConfig>) -> TlsStream<TcpStream> {
     let mut tls = accept(listener, config).await;
-    let binding = binding(&tls);
-    let mut message = [0u8; MESSAGE_LEN];
-    tls.read_exact(&mut message).await.unwrap();
-    let answer = respond(key("server_seed"), &message, &binding).expect("the device's message checks out");
-    tls.write_all(&answer).await.unwrap();
+    let device = respond_as(&mut tls, SERVER_KEY).await.expect("the device passes the check");
+    assert_eq!(device, public(&DEVICE_KEY));
     tls
 }
 
@@ -310,45 +332,6 @@ fn pattern(from: usize, len: usize) -> Vec<u8> {
     (from..from + len).map(|i| (i % 251) as u8).collect()
 }
 
-/// Trusts any server, for the relay's own connection to the real server.
-#[derive(Debug)]
-struct TrustAnything;
-
-impl ServerCertVerifier for TrustAnything {
-    fn verify_server_cert(
-        &self,
-        _: &CertificateDer<'_>,
-        _: &[CertificateDer<'_>],
-        _: &ServerName<'_>,
-        _: &[u8],
-        _: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _: &[u8],
-        _: &CertificateDer<'_>,
-        _: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _: &[u8],
-        _: &CertificateDer<'_>,
-        _: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        provider().signature_verification_algorithms.supported_schemes()
-    }
-}
-
 // --- A channel that opens -------------------------------------------------
 
 #[test]
@@ -366,7 +349,7 @@ fn a_verified_channel_carries_bytes_both_ways_and_ends_cleanly() {
         (ping, read_to_gone(&mut tls).await)
     });
     let chan = Chan::direct(addr, 5_000);
-    assert_eq!(chan.expect(event::OPEN).data, key("server_public_key"));
+    assert_eq!(chan.expect(event::OPEN).data, public(&SERVER_KEY));
     assert_eq!(chan.write(b"ping"), 4);
     assert_eq!(chan.take(4, true), b"pong");
     chan.expect(event::EOF);
@@ -384,13 +367,9 @@ fn bytes_written_before_the_check_wait_for_it() {
     let rt = runtime();
     let (listener, addr) = rt.block_on(listen());
     let server = rt.spawn(async move {
-        let mut tls = accept(&listener, noxd_tls()).await;
-        let binding = binding(&tls);
-        // Exactly the device's message comes first: `verify` would refuse
-        // anything else in these 160 bytes.
-        let mut message = [0u8; MESSAGE_LEN];
-        tls.read_exact(&mut message).await.unwrap();
-        tls.write_all(&respond(key("server_seed"), &message, &binding).unwrap()).await.unwrap();
+        // Exactly the check comes first: `respond_as` would fail on anything
+        // else before /auth and /auth2.
+        let mut tls = verified(&listener, noxd_tls()).await;
         let mut early = [0u8; 5];
         tls.read_exact(&mut early).await.unwrap();
         early
@@ -578,102 +557,112 @@ fn handles_are_positive_and_never_reused() {
 // --- Servers that must not get a channel ----------------------------------
 
 #[test]
-fn another_servers_key_is_wrong_server_and_it_hears_the_message_alone() {
+fn another_servers_key_is_wrong_server_and_it_hears_auth_alone() {
     let rt = runtime();
     let (listener, addr) = rt.block_on(listen());
     let server = rt.spawn(async move {
         let mut tls = accept(&listener, noxd_tls()).await;
-        let binding = binding(&tls);
-        let mut message = [0u8; MESSAGE_LEN];
-        tls.read_exact(&mut message).await.unwrap();
         // A real server with another key: it takes the device and answers.
-        tls.write_all(&respond(key("wrong_server_seed"), &message, &binding).unwrap()).await.unwrap();
-        (message, read_to_gone(&mut tls).await)
+        let verdict = respond_as(&mut tls, OTHER_SERVER_KEY).await;
+        (verdict, read_to_gone(&mut tls).await)
     });
     let chan = Chan::direct(addr, 5_000);
     assert_eq!(chan.write(b"token"), 5, "an app that already has bytes for it");
     assert_eq!(chan.closed(), code::WRONG_SERVER);
-    let (message, after) = rt.block_on(server).unwrap();
-    // The device's key and its signature over the key - the binding's
-    // signature differs per connection.
-    assert_eq!(message[..96], vector("app_message")[..96]);
-    assert_eq!(after, b"", "the wrong server heard nothing but the message");
+    let (verdict, after) = rt.block_on(server).unwrap();
+    assert_eq!(verdict, Err("no /auth2".to_owned()), "the device stopped after /auth");
+    assert_eq!(after, b"", "the wrong server heard nothing but /auth");
 }
 
-/// A relay with a TLS session to each side passes the Eidolon messages along.
-/// The real server answers anyway here, so it is the app's own check that has
-/// to catch him: the answer is the real server's, signed over the binding of
-/// the relay's session, not the app's.
+/// A server that signs something other than the device's challenge - or with
+/// another key than the one it shows - is not a server of ours: protocol, and
+/// nothing past /auth.
 #[test]
-fn a_man_in_the_middle_is_caught_by_the_app() {
-    let rt = runtime();
-    let (server_listener, server_addr) = rt.block_on(listen());
-    let (relay_listener, relay_addr) = rt.block_on(listen());
-    let server = rt.spawn(async move {
-        let mut tls = accept(&server_listener, noxd_tls()).await;
-        let binding = binding(&tls);
-        let mut message = [0u8; MESSAGE_LEN];
-        tls.read_exact(&mut message).await.unwrap();
-        let verdict = respond(key("server_seed"), &message, &binding);
-        tls.write_all(&message_of(key("server_seed"), &binding)).await.unwrap();
-        read_to_gone(&mut tls).await;
-        verdict
-    });
-    rt.spawn(async move {
-        let mut app = accept(&relay_listener, noxd_tls()).await;
-        let tcp = TcpStream::connect(server_addr).await.unwrap();
-        let mut config = ClientConfig::builder_with_provider(provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(TrustAnything))
-            .with_no_client_auth();
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
-        let name = ServerName::try_from("relay.invalid").unwrap();
-        let mut server = TlsConnector::from(Arc::new(config)).connect(name, tcp).await.unwrap();
-        let mut message = [0u8; MESSAGE_LEN];
-        app.read_exact(&mut message).await.unwrap();
-        server.write_all(&message).await.unwrap();
-        let mut answer = [0u8; MESSAGE_LEN];
-        server.read_exact(&mut answer).await.unwrap();
-        app.write_all(&answer).await.unwrap();
-        let _ = tokio::io::copy_bidirectional(&mut app, &mut server).await;
-    });
-    let chan = Chan::direct(relay_addr, 5_000);
-    assert_eq!(chan.closed(), code::PROTOCOL);
-    // And the server, for its part, refused the device's relayed message.
-    assert_eq!(rt.block_on(server).unwrap(), Err("SigMismatch".to_owned()));
-}
-
-#[test]
-fn an_answer_of_another_length_is_protocol() {
-    for len in [100, MESSAGE_LEN - 1] {
+fn a_signature_that_does_not_hold_is_protocol() {
+    for over_ours in [false, true] {
         let rt = runtime();
         let (listener, addr) = rt.block_on(listen());
-        rt.spawn(async move {
+        let server = rt.spawn(async move {
             let mut tls = accept(&listener, noxd_tls()).await;
-            let binding = binding(&tls);
-            let mut message = [0u8; MESSAGE_LEN];
-            tls.read_exact(&mut message).await.unwrap();
-            let answer = respond(key("server_seed"), &message, &binding).unwrap();
-            tls.write_all(&answer[..len]).await.unwrap();
-            tls.shutdown().await.unwrap();
-            read_to_gone(&mut tls).await;
+            let (_, body) = read_request(&mut tls).await.unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let theirs: [u8; 32] = unb64(&request["challenge"]);
+            let (ours, server_public) = rust_secure_box::get_challenge(&SERVER_KEY).unwrap();
+            let signature = if over_ours {
+                rust_secure_box::sign_challenge(&SERVER_KEY, &ours).unwrap()
+            } else {
+                rust_secure_box::sign_challenge(&OTHER_SERVER_KEY, &theirs).unwrap()
+            };
+            let body = format!(
+                r#"{{"pk":"{}","challenge":"{}","signature":"{}"}}"#,
+                b64(&server_public),
+                b64(&ours),
+                b64(&signature)
+            );
+            tls.write_all(&answer(200, &body)).await.unwrap();
+            read_to_gone(&mut tls).await
         });
         let chan = Chan::direct(addr, 5_000);
-        assert_eq!(chan.closed(), code::PROTOCOL, "{len} bytes");
+        assert_eq!(chan.closed(), code::PROTOCOL, "signed over its own challenge: {over_ours}");
+        assert_eq!(rt.block_on(server).unwrap(), b"", "nothing past /auth");
     }
 }
 
-/// The server of 036 and before: TLS, then HTTP straight away. It reads the
-/// device's message as a request line and answers 400.
+#[test]
+fn a_refused_auth2_is_protocol() {
+    let rt = runtime();
+    let (listener, addr) = rt.block_on(listen());
+    rt.spawn(async move {
+        let mut tls = accept(&listener, noxd_tls()).await;
+        let (_, body) = read_request(&mut tls).await.unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let theirs: [u8; 32] = unb64(&request["challenge"]);
+        let (ours, server_public) = rust_secure_box::get_challenge(&SERVER_KEY).unwrap();
+        let signature = rust_secure_box::sign_challenge(&SERVER_KEY, &theirs).unwrap();
+        let body = format!(
+            r#"{{"pk":"{}","challenge":"{}","signature":"{}"}}"#,
+            b64(&server_public),
+            b64(&ours),
+            b64(&signature)
+        );
+        tls.write_all(&answer(200, &body)).await.unwrap();
+        let _ = read_request(&mut tls).await;
+        let mut refusal = answer(401, "");
+        refusal.splice(refusal.len() - 2..refusal.len() - 2, b"Connection: close\r\n".iter().copied());
+        tls.write_all(&refusal).await.unwrap();
+        tls.shutdown().await.unwrap();
+        read_to_gone(&mut tls).await;
+    });
+    let chan = Chan::direct(addr, 5_000);
+    assert_eq!(chan.closed(), code::PROTOCOL);
+}
+
+/// A server of the Eidolon check (044-049): it reads 160 bytes and answers
+/// 160 of its own. The device's /auth is no message of its, and whatever comes
+/// back is no answer of ours.
+#[test]
+fn an_eidolon_server_is_protocol() {
+    let rt = runtime();
+    let (listener, addr) = rt.block_on(listen());
+    rt.spawn(async move {
+        let mut tls = accept(&listener, noxd_tls()).await;
+        let mut message = [0u8; 160];
+        let _ = tls.read_exact(&mut message).await;
+        tls.write_all(&[0x42; 160]).await.unwrap();
+        tls.shutdown().await.unwrap();
+        read_to_gone(&mut tls).await;
+    });
+    let chan = Chan::direct(addr, 5_000);
+    assert_eq!(chan.closed(), code::PROTOCOL);
+}
+
+/// A web server at the address: TLS, then HTTP that knows nothing of /auth.
 #[test]
 fn a_server_that_answers_http_is_protocol() {
     let short = b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n400 Bad Request".to_vec();
     let mut long = b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n".to_vec();
     long.extend(b"X-Padding: ".iter().chain([b'a'; 120].iter()));
     long.extend(b"\r\nConnection: close\r\n\r\n400 Bad Request");
-    assert!(short.len() < MESSAGE_LEN && long.len() > MESSAGE_LEN);
     for response in [short, long] {
         let rt = runtime();
         let (listener, addr) = rt.block_on(listen());
@@ -746,9 +735,9 @@ fn a_server_that_never_answers_runs_out_of_the_budget() {
 #[test]
 fn an_onion_channel_without_tor_is_not_ready() {
     let onion = "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion";
-    let chan = Chan::open(1, onion, 443, key("server_public_key"), 5_000);
+    let chan = Chan::open(1, onion, 443, public(&SERVER_KEY), 5_000);
     assert_eq!(chan.closed(), code::TOR_NOT_READY);
-    let chan = Chan::open(1, "not-an-onion.example", 443, key("server_public_key"), 5_000);
+    let chan = Chan::open(1, "not-an-onion.example", 443, public(&SERVER_KEY), 5_000);
     assert_eq!(chan.closed(), code::TOR_ONION_INVALID);
 }
 

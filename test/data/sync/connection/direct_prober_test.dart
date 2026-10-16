@@ -24,7 +24,7 @@ class _Network implements NoxChannelApi {
   @override
   Future<NoxChannel> open(
     ChannelTarget target, {
-    required Uint8List deviceSeed,
+    required Uint8List devicePrivateKey,
     required Uint8List serverKey,
     required Duration timeout,
     Future<void>? cancel,
@@ -61,10 +61,10 @@ class _Network implements NoxChannelApi {
 /// FR-001, FR-002, FR-011).
 void main() {
   final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
-  final deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+  final devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
   Future<DirectProbeResult> probe(_Network network, List<String> candidates) =>
-      ChannelDirectProber(network).probe(candidates, serverKey: serverKey, deviceSeed: deviceSeed);
+      ChannelDirectProber(network).probe(candidates, serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 
   test('the server proving its key wins, and the probe channel is closed at once with nothing sent', () async {
     final network = _Network({'192.168.1.20:8443': _Answer.home});

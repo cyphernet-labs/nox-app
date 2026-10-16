@@ -30,6 +30,7 @@ import (
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
 	"nox.app/client-backend/internal/vault"
 )
@@ -151,6 +152,13 @@ type Server struct {
 	// addrWarnings are the start parameters that were not applied (045). Set
 	// once at startup before anything serves, read by the page after.
 	addrWarnings []addressWarning
+	// box is RustSecureBox (050): the keys and signatures of the channel
+	// check. One per process; safe for every connection at once.
+	box *securebox.Box
+	// boxIsStub is whether that RustSecureBox is the stub (FR-022): the page
+	// says so for as long as it is. Set once at startup, before anything
+	// serves.
+	boxIsStub bool
 	// formToken is what the service page's forms carry - Set, the link
 	// buttons and the password forms - and what every POST of the page
 	// checks: 32 random bytes per process, hex. A page from another site
@@ -237,6 +245,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		resolveHost:      resolveHost,
 		startedAt:        time.Now(),
 		formToken:        newFormToken(),
+		box:              securebox.New(),
 		requestSweep:     defaultRequestSweep,
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
@@ -320,12 +329,26 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 // Every request passes the door first (limitStrangers), unmatched ones
 // included: the 404 and 405 the mux writes end a stranger's connection like
 // any other answer.
+//
+// The check's two steps are the start of a connection and nothing else
+// (connauth): either one again, by any method, is a step out of order - 400,
+// and the connection ends there, as for a stranger (contract §1).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
+	mux.HandleFunc("/auth", handleCheckAgain)
+	mux.HandleFunc("/auth2", handleCheckAgain)
 	return s.logRequests(s.limitStrangers(mux))
+}
+
+// handleCheckAgain answers a step of the check on a connection that has
+// passed it: 400 with Connection: close.
+func handleCheckAgain(w http.ResponseWriter, r *http.Request) {
+	endWithAnswer(w, r)
+	w.Header().Set("Content-Length", "0")
+	w.WriteHeader(http.StatusBadRequest)
 }
 
 // configureMain sets what the main port's http.Server holds a connection to
@@ -758,7 +781,8 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	// wipe its chats, messages, cursor and read marks. Running it first meant an
 	// aborted startup still destroyed every client's local world, silently and
 	// before the error that stopped it was even printed.
-	machine, err := st.EnsureServerIdentity(ctx)
+	box := securebox.New()
+	machine, err := st.EnsureServerIdentity(ctx, box)
 	if err != nil {
 		return fmt.Errorf("ensure server identity: %w", err)
 	}
@@ -766,10 +790,23 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 		return fmt.Errorf("ensure journal: %w", err)
 	}
 	// The machine's private key, read once: the channel listener proves it on
-	// every connection, and nothing else ever asks for it.
-	serverKey, err := st.ServerKey(ctx)
+	// every connection, and nothing else ever asks for it. A key made by
+	// another implementation of the check - Eidolon before 050, the stub
+	// before the real RustSecureBox - is rekeyed here, before anything reads
+	// the public key, and every device pairs again (FR-021).
+	serverKey, rekeyed, err := st.ServerKey(ctx, box)
 	if err != nil {
 		return fmt.Errorf("read the server key: %w", err)
+	}
+	if rekeyed {
+		logger.Warn("server key was made by another RustSecureBox: every device pairs again")
+		if machine, err = st.ServerIdentity(ctx); err != nil {
+			return fmt.Errorf("read the server identity: %w", err)
+		}
+	}
+	boxIsStub := box.IsStub()
+	if boxIsStub {
+		logger.Warn("RustSecureBox is a stub: devices are not really verified")
 	}
 	// The address parameters land before any listener opens, so the first
 	// greeting and the first link the page or `noxd link` hands out already
@@ -785,6 +822,8 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
 	srv.addrWarnings = addrWarnings
+	srv.box = box
+	srv.boxIsStub = boxIsStub
 	srv.dataKey = key
 	// One form token for the life of the process: a form the lock page
 	// rendered is still the page's own once the server has opened.

@@ -3,7 +3,6 @@ package server
 import (
 	"container/list"
 	"context"
-	"crypto/ed25519"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -13,11 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"nox.app/client-backend/internal/eidolon"
+	"nox.app/client-backend/internal/connauth"
+	"nox.app/client-backend/internal/securebox"
 )
 
 const (
-	// defaultChannelTimeout bounds TLS and the channel check together,
+	// defaultChannelTimeout bounds TLS and the channel check - POST /auth and
+	// POST /auth2 - together,
 	// counted from the moment a connection is accepted (contract §1): the slow
 	// path's budget, for every connection. A connection from tor arrives on
 	// this same port and looks like any other (045), and TLS plus one more
@@ -62,10 +63,10 @@ const (
 )
 
 // channelPeer is what the channel check proved about a connection: the key of
-// the device on the other end. Proved, not claimed - the device signed this
-// TLS session's binding with it.
+// the device on the other end. Proved, not claimed - the device signed the
+// server's challenge with it in POST /auth2 on this very connection.
 type channelPeer struct {
-	key ed25519.PublicKey
+	key []byte
 }
 
 // deviceKey is the key the way devices.device_key stores it.
@@ -108,7 +109,9 @@ func channelConnFrom(ctx context.Context) (*channelConn, bool) {
 }
 
 // channelConn is a connection that passed both layers: the TLS session it
-// runs in, and the device key it proved there.
+// runs in, and the device key it proved there. Conn is that session - behind
+// whatever the device sent after /auth2 before its answer, when it sent
+// anything (connauth.Respond).
 type channelConn struct {
 	net.Conn
 	// raw is the connection under TLS: the TCP socket, a device's own or the
@@ -128,10 +131,13 @@ func (c *channelConn) cut() {
 
 // channelListener is the channel's front door (contract §1, research R5). It
 // takes connections off the listener it wraps and hands http.Server only the
-// ones that passed both layers - TLS 1.3, then the channel check - so no
-// handler, not even a 404, ever answers a connection that has not proved a
-// device key. The HTTP server itself does no TLS: it is given connections
-// that already have it.
+// ones that passed both layers - TLS 1.3, then the channel check, POST /auth
+// and POST /auth2 (internal/connauth) - so no handler, not even a 404, ever
+// answers a connection that has not proved a device key. The check speaks
+// HTTP, but it is answered here and not by the mux (specs/050 research R7):
+// that is what keeps every limit below over the whole check, and every
+// request http.Server serves on a proved connection. The HTTP server itself
+// does no TLS: it is given connections that already have it.
 //
 // Each connection proves itself on a goroutine of its own, under ONE deadline
 // counted from the moment it was accepted. The loop that accepts never waits,
@@ -172,7 +178,8 @@ func (c *channelConn) cut() {
 type channelListener struct {
 	raw    net.Listener
 	tls    *tls.Config
-	key    ed25519.PrivateKey
+	box    *securebox.Box
+	key    securebox.PrivateKey
 	budget time.Duration
 	logger *slog.Logger
 
@@ -239,11 +246,12 @@ type shedCounts struct {
 
 // newChannelListener starts taking connections off raw at once; Accept hands
 // out the ones that pass.
-func (s *Server) newChannelListener(raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey, budget time.Duration) *channelListener {
+func (s *Server) newChannelListener(raw net.Listener, cfg *tls.Config, key securebox.PrivateKey, budget time.Duration) *channelListener {
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &channelListener{
 		raw:          raw,
 		tls:          cfg,
+		box:          s.box,
 		key:          key,
 		budget:       budget,
 		logger:       s.logger.With("component", "channel"),
@@ -490,8 +498,10 @@ func ipOf(addr net.Addr) netip.Addr {
 }
 
 // handshake takes one connection through both layers and, if it passes,
-// waits for Accept to take it. Any failure closes the connection without a
-// word: a peer that did not prove a key gets nothing, not even the server's.
+// waits for Accept to take it. Any failure closes the connection - after the
+// check's refusal (400, 401 or 405) when the check got as far as refusing,
+// without a word when TLS failed, the budget ran out or the connection was
+// cut to make room.
 func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 	budget := p.accepted.Add(l.budget)
 	hctx, cancel := context.WithDeadline(ctx, budget)
@@ -504,7 +514,7 @@ func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 		_ = conn.SetReadDeadline(p.firstByteBy)
 		conn = &firstByteConn{Conn: conn, budget: budget}
 	}
-	tc, peer, err := l.verify(hctx, conn)
+	proved, peer, err := l.verify(hctx, conn)
 	// Passed or not, it is no longer a handshake under way. One cut to make
 	// room meanwhile is not handed out even if it passed: the socket under it
 	// is closed.
@@ -518,7 +528,7 @@ func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 		return
 	}
 	select {
-	case l.ready <- &channelConn{Conn: tc, raw: p.conn, peer: channelPeer{key: peer}}:
+	case l.ready <- &channelConn{Conn: proved, raw: p.conn, peer: channelPeer{key: peer}}:
 	case <-ctx.Done():
 		_ = p.conn.Close()
 	}
@@ -527,7 +537,7 @@ func (l *channelListener) handshake(ctx context.Context, p *pendingChannel) {
 // firstByteConn is a connection from anywhere but this machine that has not
 // said anything yet. handshake holds its reads to the first-byte deadline, and
 // the first byte to arrive moves that out to the whole budget; from then on it
-// is the socket and nothing more. Deadlines set from above - the check binding
+// is the socket and nothing more. Deadlines set from above - the check setting
 // its own, the channel clearing them once passed, the HTTP server after it -
 // go straight through.
 //
@@ -548,27 +558,22 @@ func (c *firstByteConn) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// verify runs TLS and then the check under ctx, and returns the TLS
-// connection - cleared of the deadline, which from here on is the HTTP
-// server's to set - with the device key it proved.
-func (l *channelListener) verify(ctx context.Context, conn net.Conn) (*tls.Conn, ed25519.PublicKey, error) {
+// verify runs TLS and then the check under ctx, and returns the connection to
+// hand on - cleared of the deadline, which from here on is the HTTP server's
+// to set - with the device key it proved.
+func (l *channelListener) verify(ctx context.Context, conn net.Conn) (net.Conn, []byte, error) {
 	tc := tls.Server(conn, l.tls)
 	if err := tc.HandshakeContext(ctx); err != nil {
 		return nil, nil, &tlsStageError{err}
 	}
-	state := tc.ConnectionState()
-	binding, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
-	if err != nil {
-		return nil, nil, &tlsStageError{err}
-	}
-	peer, err := eidolon.Respond(ctx, tc, binding, l.key)
+	peer, proved, err := connauth.Respond(ctx, tc, l.box, l.key)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := tc.SetDeadline(time.Time{}); err != nil {
+	if err := proved.SetDeadline(time.Time{}); err != nil {
 		return nil, nil, err
 	}
-	return tc, peer, nil
+	return proved, peer[:], nil
 }
 
 // tlsStageError marks a failure before the check began.
@@ -580,15 +585,33 @@ func (e *tlsStageError) Unwrap() error { return e.err }
 // refused logs a connection that did not pass, by how loud it deserves to be.
 //
 // A refused CHECK is somebody who completed TLS and then failed to prove a key
-// - a client of another protocol, a bug on the device, or a relay - and is
-// worth a line. A connection that never finished TLS, or went quiet, is what
-// every port on a network collects; it stays out of the log unless asked for.
-// Neither line carries a key or an address: the error names the reason only.
+// - a NOX client with a bug, a key that does not sign - and is worth a line,
+// as is RustSecureBox failing. A first request that is not a step of the check
+// at all - a GET of some path, another method - is what any HTTPS scanner
+// sends, as every port on a network collects connections that never finish
+// TLS or go quiet; those are Debug lines. The same request after a /auth that
+// passed comes from a client of this protocol, and is worth a line again. No
+// line carries a key, a challenge, a signature or an address: the error names
+// the kind only.
 func (l *channelListener) refused(err error) {
 	var stage *tlsStageError
+	notAStep := l.logger.Debug
+	if errors.Is(err, connauth.ErrAfterAuth) {
+		notAStep = l.logger.Info
+	}
 	switch {
-	case errors.Is(err, eidolon.ErrInvalidLen), errors.Is(err, eidolon.ErrInvalidCert), errors.Is(err, eidolon.ErrSigMismatch):
-		l.logger.Info("channel check refused", "reason", err.Error())
+	case errors.Is(err, connauth.ErrMalformed):
+		l.logger.Info("channel check refused", "reason", "malformed request")
+	case errors.Is(err, connauth.ErrOrder):
+		l.logger.Info("channel check refused", "reason", "steps out of order")
+	case errors.Is(err, connauth.ErrMethod):
+		notAStep("channel check refused", "reason", "method not allowed")
+	case errors.Is(err, connauth.ErrUnauthenticated):
+		notAStep("channel check refused", "reason", "request before the check")
+	case errors.Is(err, connauth.ErrSignature):
+		l.logger.Info("channel check refused", "reason", "signature does not verify")
+	case errors.Is(err, securebox.ErrBox), errors.Is(err, securebox.ErrRandom), errors.Is(err, securebox.ErrInvalidArgument):
+		l.logger.Warn("channel check failed", "reason", "RustSecureBox", "err", err)
 	case errors.As(err, &stage):
 		l.logger.Debug("channel not established", "stage", "tls", "err", err)
 	default:

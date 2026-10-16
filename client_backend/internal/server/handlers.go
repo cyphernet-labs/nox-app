@@ -43,9 +43,9 @@ var deviceChatIDPattern = regexp.MustCompile(`^c_[0-9a-f]{32}$`)
 // helloRequest mirrors contract §3.
 //
 // There is no device_key and no signature since 044: the key is the one this
-// connection proved in the channel check, over a binding no other connection
-// shares, so the greeting has nothing left to prove - and nothing in it can
-// name another key. Fields an older client still sends are ignored, never
+// connection proved in the channel check (POST /auth2, since 050), so the
+// greeting has nothing left to prove - and nothing in it can name another
+// key. Fields an older client still sends are ignored, never
 // believed.
 type helloRequest struct {
 	Schema int    `json:"schema"`

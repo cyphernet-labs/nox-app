@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"path/filepath"
@@ -38,7 +39,7 @@ func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, no
 func pairFirst(t *testing.T, s *Store, deviceKey string) Identity {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	id, err := pairID(ctx, s, issueLink(t, s, 100), deviceKey, "test", 100)
@@ -76,16 +77,16 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	}
 
 	s, closeFirst := open()
-	first, err := s.EnsureServerIdentity(ctx)
+	first, err := s.EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	// Idempotent within one process.
-	again, err := s.EnsureServerIdentity(ctx)
+	again, err := s.EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity again: %v", err)
 	}
-	if !again.PublicKey.Equal(first.PublicKey) {
+	if !bytes.Equal(again.PublicKey, first.PublicKey) {
 		t.Fatalf("key changed within one process: %x then %x", first.PublicKey, again.PublicKey)
 	}
 	closeFirst()
@@ -94,11 +95,11 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	// the old one, and rotating it silently would lock all of them out.
 	s2, closeSecond := open()
 	defer closeSecond()
-	restarted, err := s2.EnsureServerIdentity(ctx)
+	restarted, err := s2.EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity after restart: %v", err)
 	}
-	if !restarted.PublicKey.Equal(first.PublicKey) {
+	if !bytes.Equal(restarted.PublicKey, first.PublicKey) {
 		t.Fatalf("key changed across restart: %x then %x", first.PublicKey, restarted.PublicKey)
 	}
 }
@@ -207,7 +208,7 @@ func TestTokenSurvivesRestart(t *testing.T) {
 	}
 
 	s, closeFirst := open()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	token := issueLink(t, s, 100)
@@ -498,7 +499,7 @@ func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
 	if _, err := s.write.ExecContext(ctx, "DELETE FROM server_identity"); err != nil {
 		t.Fatalf("simulate a partial restore: %v", err)
 	}
-	_, err := s.EnsureServerIdentity(ctx)
+	_, err := s.EnsureServerIdentity(ctx, testBox)
 	if err == nil {
 		t.Fatal("a new server key was minted for a store that already holds people")
 	}

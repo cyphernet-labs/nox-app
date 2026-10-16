@@ -23,7 +23,7 @@ class _SilentLog implements LogRepository {
 /// before its channel is verified, and what becomes of it.
 void main() {
   final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
-  final deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+  final devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
   HttpOverrides? saved;
 
   setUp(() {
@@ -40,7 +40,7 @@ void main() {
 
   test('a token handed to a connection whose server proves another key never leaves the device (SC-003)', () async {
     final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.wrongServer);
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     final connection = WebSocketChannelFactory(channels).connect(Uri.parse('wss://192.168.1.20:8443/ws'));
     // Handed over the moment the connection exists, as `pair` is.
     connection.add('{"id":1,"cmd":"pair","data":{"token":"AAECAwQFBgcICQoLDA0ODw"}}');
@@ -64,7 +64,7 @@ void main() {
       ws.listen(ws.add, onDone: ws.close);
     });
     final api = LoopbackChannelApi(server.port);
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     final connection = WebSocketChannelFactory(channels).connect(Uri.parse('wss://192.168.1.20:8443/ws'));
     final echoed = connection.frames.first;
     connection.add('{"id":1,"cmd":"session.hello"}');
@@ -79,7 +79,7 @@ void main() {
     // completes it: awaited, that wedged a reconnect, a logout half-way
     // through its wipe and a failed sign-in's rollback.
     final api = ScriptedChannelApi();
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     final errors = <Object>[];
     final finished = Completer<void>();
     // Not awaited itself: an error inside the zone never completes the
@@ -125,7 +125,7 @@ void main() {
       upgraded = true;
       socket.listen(received.add, onError: (Object _) {});
     });
-    final channels = ChannelHttpClient(LoopbackChannelApi(server.port))..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(LoopbackChannelApi(server.port))..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     final connection = WebSocketChannelFactory(channels).connect(Uri.parse('wss://192.168.1.20:8443/ws'));
     connection.frames.listen((_) {}, onError: (Object _) {});
     connection.add('{"cmd":"pair"}');
@@ -145,7 +145,7 @@ void main() {
   });
 
   test('a dial bounds the connect of the socket client itself, so a give-up reaches the module', () {
-    final channels = ChannelHttpClient(ScriptedChannelApi())..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(ScriptedChannelApi())..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     final factory = WebSocketChannelFactory(channels);
 
     unawaited(factory.connect(Uri.parse('wss://192.168.1.20:8443/ws')).close());

@@ -277,8 +277,8 @@ class NoxSocketClient {
   /// allowed before the greeting: the server does not know this device's key
   /// yet, so a greeting would be refused, and waiting for one would make
   /// pairing impossible rather than awkward. The key itself is not in the command - the server
-  /// takes it from the connection, whose Eidolon check this device has just
-  /// passed with it (phase 044). And nothing goes out before the channel has
+  /// takes it from the connection, whose check - POST /auth and POST /auth2 -
+  /// this device has just passed with it (phases 044, 050). And nothing goes out before the channel has
   /// verified the server's key: a machine with another key never sees the
   /// token.
   ///
@@ -622,7 +622,8 @@ class NoxSocketClient {
   /// happens after the epoch wipe puts a device back to zero.
   ///
   /// No key, no signature (phase 044): the connection already proved this
-  /// device in its Eidolon check, before the server could greet at all.
+  /// device in its check (POST /auth2, phase 050), before the server could
+  /// greet at all.
   ///
   /// Bound to the [connection] that greeted. Every await below can outlive
   /// that connection - a network change, a Tor circuit that drops, a restart -

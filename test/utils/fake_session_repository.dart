@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -77,8 +78,12 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) => throw UnimplementedError();
 
   @override
-  Future<RepositoryResult<String>> deviceSecret() async =>
-      const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=');
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey() async => const RepositoryResult<DeviceKeyPair>.success(
+    data: DeviceKeyPair(
+      privateKey: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+      publicKey: 'cHVibGljLWtleS1vZi10aGlzLWRldmljZS0zMmJ5dGU=',
+    ),
+  );
 
   @override
   Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) async =>
@@ -94,6 +99,9 @@ class FakeSessionRepository implements SessionRepository {
 
   @override
   Future<RepositoryResult<bool>> predatesServerKey() async => const RepositoryResult<bool>.success(data: false);
+
+  @override
+  Future<RepositoryResult<bool>> predatesSecureBox() async => const RepositoryResult<bool>.success(data: false);
 
   /// Raised by [updateLabel] the way the real store raises it: a greeting states
   /// a name only after a rename.

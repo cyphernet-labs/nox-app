@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
 )
 
@@ -24,8 +25,8 @@ import (
 // One shape for every case - machine link and invite alike - so there is one builder,
 // one parser and one set of shared vectors (testdata/link-vectors.json, a
 // copy of the contract's). The server KEY travels whole, not a fingerprint: it
-// is Ed25519's thirty-two bytes, and it is what the device checks the channel
-// against before it sends a single command.
+// is RustSecureBox's thirty-two bytes, and it is what the device checks the
+// channel against before it sends a single command.
 const (
 	pairingLinkVersion = 3
 	pairingLinkPrefix  = "nox://pair/"
@@ -38,7 +39,7 @@ const (
 	addrTypeOnion = 4
 
 	// linkHeaderSize is version, key and token: the least a link can be.
-	linkHeaderSize = 1 + ed25519.PublicKeySize + 16
+	linkHeaderSize = 1 + securebox.PublicKeySize + 16
 	// maxLinkNameBytes is the longest host name a link carries - DNS's own
 	// limit, and what a one-byte length leaves room for beside the port.
 	maxLinkNameBytes = 253
@@ -55,7 +56,9 @@ var (
 // PairingLink is a version-3 link read back: what cmd/smoke needs to reach a
 // server, and what the tests compare with the shared vectors.
 type PairingLink struct {
-	ServerKey ed25519.PublicKey
+	// ServerKey is the server's public key from RustSecureBox (050), 32
+	// bytes: what the device holds the answer to POST /auth to.
+	ServerKey []byte
 	// Token is the token as `pair` carries it: base64url without padding.
 	Token string
 	// Direct are the direct addresses as host:port, in the link's order: the
@@ -75,9 +78,9 @@ type PairingLink struct {
 // It refuses to render what the parse rules would refuse to read - no
 // address, a port of 0, a name that is empty, too long or not UTF-8 - so a
 // server never prints a link no device can use.
-func BuildPairingLink(serverKey ed25519.PublicKey, token string, direct []string, onion ed25519.PublicKey) (string, error) {
-	if len(serverKey) != ed25519.PublicKeySize {
-		return "", fmt.Errorf("server key is %d bytes, want %d", len(serverKey), ed25519.PublicKeySize)
+func BuildPairingLink(serverKey []byte, token string, direct []string, onion ed25519.PublicKey) (string, error) {
+	if len(serverKey) != securebox.PublicKeySize {
+		return "", fmt.Errorf("server key is %d bytes, want %d", len(serverKey), securebox.PublicKeySize)
 	}
 	tok, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(tok) != 16 {
@@ -156,8 +159,8 @@ func ParsePairingLink(link string) (PairingLink, error) {
 		return PairingLink{}, ErrLinkMalformed
 	}
 	out := PairingLink{
-		ServerKey: ed25519.PublicKey(payload[1 : 1+ed25519.PublicKeySize]),
-		Token:     base64.RawURLEncoding.EncodeToString(payload[1+ed25519.PublicKeySize : linkHeaderSize]),
+		ServerKey: append([]byte(nil), payload[1:1+securebox.PublicKeySize]...),
+		Token:     base64.RawURLEncoding.EncodeToString(payload[1+securebox.PublicKeySize : linkHeaderSize]),
 	}
 	known := 0
 	for at := linkHeaderSize; at < len(payload); {
@@ -247,7 +250,7 @@ type linkCarries struct {
 // Pairing through the onion address works - the first device included
 // (FR-008): the connection from tor arrives on the same port as any other and
 // proves itself the same way.
-func buildLink(serverKey ed25519.PublicKey, token, direct string, conf configuredAddresses) (string, linkCarries, error) {
+func buildLink(serverKey []byte, token, direct string, conf configuredAddresses) (string, linkCarries, error) {
 	addrs := make([]string, 0, 2)
 	if conf.Public != "" {
 		addrs = append(addrs, conf.Public)

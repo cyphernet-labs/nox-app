@@ -32,7 +32,7 @@ const String _onionHost = 'abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyza
 /// carries real HTTP and WebSocket traffic.
 void main() {
   final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
-  final deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+  final devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
   late _RecordingLog log;
   HttpOverrides? saved;
 
@@ -67,13 +67,13 @@ void main() {
 
   test('every open carries the bound keys and the path budget', () async {
     final api = ScriptedChannelApi();
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     unawaited(channels.client.getUrl(Uri.parse('https://10.0.0.5:8443/ws')).then((_) {}, onError: (Object _) {}));
     unawaited(channels.client.getUrl(Uri.parse('https://$_onionHost/ws')).then((_) {}, onError: (Object _) {}));
     await Future<void>.delayed(Duration.zero);
     expect(api.calls, hasLength(2));
     expect(api.calls[0].serverKey, serverKey);
-    expect(api.calls[0].deviceSeed, deviceSeed);
+    expect(api.calls[0].devicePrivateKey, devicePrivateKey);
     expect(api.calls[0].timeout, ChannelHttpClient.directOpenTimeout);
     expect(api.calls[1].target, const OnionTarget(_onionHost));
     expect(api.calls[1].timeout, ChannelHttpClient.onionOpenTimeout);
@@ -82,7 +82,7 @@ void main() {
 
   test('a refusal reaches the caller as the channel failure, through every envelope', () async {
     final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.wrongServer);
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 
     Object? plain;
     try {
@@ -115,7 +115,7 @@ void main() {
 
   test('a connect the pool gives up on is cancelled in the module, and a late channel is closed on arrival', () async {
     final api = ScriptedChannelApi();
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     channels.client.connectionTimeout = const Duration(milliseconds: 50);
     await expectLater(channels.client.getUrl(Uri.parse('https://10.0.0.5:8443/ws')), throwsA(isA<SocketException>()));
     final call = api.calls.single;
@@ -132,12 +132,12 @@ void main() {
     final channels = ChannelHttpClient(api);
     var discarded = 0;
     channels.onDiscarded = () => discarded++;
-    channels.bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    channels.bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     final first = channels.client;
-    channels.bind(serverKey: Uint8List.fromList(serverKey), deviceSeed: Uint8List.fromList(deviceSeed));
+    channels.bind(serverKey: Uint8List.fromList(serverKey), devicePrivateKey: Uint8List.fromList(devicePrivateKey));
     expect(identical(channels.client, first), isTrue);
     expect(discarded, 1);
-    channels.bind(serverKey: Uint8List(32), deviceSeed: deviceSeed);
+    channels.bind(serverKey: Uint8List(32), devicePrivateKey: devicePrivateKey);
     expect(identical(channels.client, first), isFalse, reason: 'another server');
     expect(discarded, 2);
     channels.unbind();
@@ -149,7 +149,7 @@ void main() {
     // A logout: the person's server is nobody this install may reach now, an
     // open still running included.
     final api = ScriptedChannelApi();
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     // Each outcome taken as it comes, so a request failing early is no
     // unhandled error.
     final requests = [
@@ -175,7 +175,7 @@ void main() {
 
   test('the log names the path and the outcome - never an onion host or a key', () async {
     final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.torOnionNotFound);
-    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
     await expectLater(channels.client.getUrl(Uri.parse('https://$_onionHost/ws')), throwsA(isA<ChannelOpenException>()));
     final line = log.lines.singleWhere((l) => l.startsWith('channel:'));
     expect(line, contains('onion'));
@@ -206,7 +206,7 @@ void main() {
 
     test('a request and its answer travel the channel', () async {
       final api = LoopbackChannelApi(server.port);
-      final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+      final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
       final request = await channels.transferClient.getUrl(Uri.parse('https://192.168.1.20:8443/health'));
       final response = await request.close();
       expect(await utf8.decodeStream(response), 'GET /health 0');
@@ -217,7 +217,7 @@ void main() {
     test('a body larger than the window is written through addStream, held to the window, and arrives whole', () async {
       // Paced, so the queue outgrows the window and the writer is held back.
       final api = LoopbackChannelApi(server.port, 16 * 1024 * 1024);
-      final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+      final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
       final dio = Dio()..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => channels.transferClient);
       final size = 3 * channelWindowBytes + 17;
       final response = await dio.put<String>(
@@ -234,7 +234,7 @@ void main() {
 
     test('a WebSocket runs over the channel both ways', () async {
       final api = LoopbackChannelApi(server.port);
-      final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+      final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
       final socket = IOWebSocketChannel.connect(Uri.parse('wss://192.168.1.20:8443/ws'), customClient: channels.client);
       await socket.ready;
       final echoed = socket.stream.first;

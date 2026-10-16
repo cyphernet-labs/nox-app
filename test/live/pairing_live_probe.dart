@@ -106,7 +106,7 @@ void main() {
     // were deleted while pairing succeeded, spending the one-shot token.
     stdout.writeln('SERVER: ${(await session.serverAddress()).data}');
     expect((await session.serverAddress()).data, isNotNull, reason: 'the paired server must survive the sign-in');
-    expect((await session.deviceSecret()).hasData, isTrue, reason: 'the device key must survive the sign-in');
+    expect((await session.deviceKey()).hasData, isTrue, reason: 'the device key must survive the sign-in');
 
     final named = await auth.completeOnboarding(label: 'LiveAnna');
     stdout.writeln('NAME: ${named.hasData ? 'ok' : named.exception}');

@@ -25,7 +25,7 @@ import 'package:nox_tor/channel.dart';
 /// blind - but only when none was passed at all: one passed empty or unreadable
 /// is a command that failed to make it, and fails the probe.
 class LiveTarget {
-  LiveTarget._(this.link) : deviceSeed = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
+  LiveTarget._(this.link) : devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
 
   static const String _define = String.fromEnvironment('link');
 
@@ -35,7 +35,7 @@ class LiveTarget {
   final PairingLink link;
 
   /// This run's device key seed.
-  final Uint8List deviceSeed;
+  final Uint8List devicePrivateKey;
 
   /// The target, or null when nothing was passed or it will not parse.
   static LiveTarget? fromDefine() {
@@ -61,7 +61,8 @@ class LiveTarget {
 
   /// A channel client bound to this server and this run's device key, shared
   /// by both transports of the probe exactly as the app shares one.
-  ChannelHttpClient client() => ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: deviceSeed);
+  ChannelHttpClient client() =>
+      ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, devicePrivateKey: devicePrivateKey);
 
   /// The link's first direct address - what the connection screen shows in
   /// its address field (phase 045). These probes dial it directly.

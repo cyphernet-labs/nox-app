@@ -32,7 +32,7 @@ import 'live_target.dart';
 /// native module built from this tree, against a `noxd` built from this tree,
 /// with a fresh database - the link it prints, a pairing by it, the greeting,
 /// a message, and a file up and down. Every connection is a channel: TCP,
-/// TLS 1.3, then the Eidolon check of both keys.
+/// TLS 1.3, then POST /auth and POST /auth2 with RustSecureBox (phase 050).
 ///
 /// It also measures what SC-006 asks of a channel at home - open in under a
 /// second - and checks the refusal that matters most: a channel that expects
@@ -74,7 +74,7 @@ void main() {
       final watch = Stopwatch()..start();
       final channel = await api.open(
         DirectTarget(home.host, home.port),
-        deviceSeed: target.deviceSeed,
+        devicePrivateKey: target.devicePrivateKey,
         serverKey: target.link.serverKey,
         timeout: const Duration(seconds: 5),
       );
@@ -92,7 +92,12 @@ void main() {
     // --- SC-003: a channel expecting another server key never opens. ---
     final stranger = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
     await expectLater(
-      api.open(DirectTarget(home.host, home.port), deviceSeed: target.deviceSeed, serverKey: stranger, timeout: const Duration(seconds: 5)),
+      api.open(
+        DirectTarget(home.host, home.port),
+        devicePrivateKey: target.devicePrivateKey,
+        serverKey: stranger,
+        timeout: const Duration(seconds: 5),
+      ),
       throwsA(isA<ChannelOpenException>().having((e) => e.failure, 'failure', ChannelFailure.wrongServer)),
     );
 

@@ -14,6 +14,7 @@ import (
 
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/securebox"
 )
 
 // testKey is the data key every test database here is encrypted with.
@@ -21,6 +22,10 @@ var testKey = bytes.Repeat([]byte{0x3c}, db.KeySize)
 
 // migrationsFS is the on-disk migrations directory, shared by tests that open
 // a database themselves rather than through newStore.
+
+// testBox is RustSecureBox, which makes the server key (050).
+var testBox = securebox.New()
+
 func migrationsFS(t *testing.T) fs.FS {
 	t.Helper()
 	return os.DirFS("../../migrations")
@@ -910,7 +915,7 @@ func person(t *testing.T, s *Store, name string) Identity {
 	if id, err := s.ResolveIdentity(ctx, deviceKey, name, 1); err == nil {
 		return id
 	}
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	if _, err := pairID(ctx, s, issueLink(t, s, 1), deviceKey, "test", 1); err != nil {

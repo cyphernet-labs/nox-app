@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -241,14 +240,14 @@ func TestAFreshServerWaitsForItsFirstPasswordWithItsMainPortShut(t *testing.T) {
 
 // firstRun sets up a server, pairs a device on it and stops it: what a
 // restart then finds on disk.
-func firstRun(t *testing.T, cfg config.Config) (*device, ed25519.PublicKey) {
+func firstRun(t *testing.T, cfg config.Config) (*device, []byte) {
 	t.Helper()
 	logs, stop := runServer(t, cfg)
 	raw, err := base64.StdEncoding.DecodeString(loggedServerKey(logs.String()))
 	if err != nil {
 		t.Fatalf("server key: %v", err)
 	}
-	serverKey := ed25519.PublicKey(raw)
+	serverKey := raw
 	link, err := RequestMachineLink(t.Context(), cfg.StatusAddr)
 	if err != nil {
 		t.Fatalf("RequestMachineLink: %v", err)

@@ -492,7 +492,7 @@ func person(t *testing.T, s *store.Store, name string) store.Identity {
 	if id, err := s.ResolveIdentity(ctx, deviceKey, name, 1); err == nil {
 		return id
 	}
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	link, err := s.IssueMachineLink(ctx, 1)

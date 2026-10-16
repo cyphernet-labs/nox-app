@@ -1,25 +1,24 @@
 package store
 
 import (
+	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
+
+	"nox.app/client-backend/internal/securebox"
 )
 
 // ServerIdentity is the machine's own long-lived identity: the key a device
 // recognises it by.
 //
-// The key is Ed25519 and it never touches TLS (feature 044). The server proves
-// it inside every channel, signing the session's binding (internal/eidolon),
-// and the pairing link carries it whole - thirty-two bytes, where the P-256
-// point of 036 needed a fingerprint to fit. TLS gets a throwaway certificate of
-// its own on every start, so the two roles cannot be confused: this key names
-// the MACHINE and is never handed to a TLS stack, which is also why nothing
-// about what Dart's BoringSSL offers in a handshake constrains it any more.
+// The key comes from RustSecureBox (feature 050), the library the app and the
+// server share for the connection check: the server proves it in every
+// answer to POST /auth (internal/connauth), and the pairing link carries it
+// whole - thirty-two bytes. It never touches TLS: TLS gets a throwaway
+// certificate of its own on every start, so the two roles cannot be confused.
 //
 // Both halves live in the database file rather than beside it, because the
 // authentication model's case 6 warns that a backup holding only the DB would
@@ -35,23 +34,31 @@ import (
 // whether a device can still reach it is the device count - one fact, kept in
 // one place, rather than a marker beside it that could disagree.
 type ServerIdentity struct {
-	// PublicKey is the machine's Ed25519 public key: what the pairing link
-	// carries, and what the server's message in the channel check presents.
-	PublicKey ed25519.PublicKey
+	// PublicKey is the machine's public key, 32 bytes: what the pairing link
+	// carries, and what the answer to POST /auth presents.
+	PublicKey []byte
+}
+
+// KeySource is RustSecureBox as the store needs it: a new pair, and the public
+// key of a private one. internal/securebox.Box is the one in production.
+type KeySource interface {
+	GenerateKeys() (securebox.KeyPair, error)
+	PublicKey(own securebox.PrivateKey) (securebox.PublicKey, error)
 }
 
 // ErrNoServerIdentity is returned when the machine has no key yet. Callers
 // bootstrap with EnsureServerIdentity rather than treating it as a failure.
 var ErrNoServerIdentity = errors.New("server identity not initialised")
 
-// EnsureServerIdentity returns the machine's identity, generating it on the
-// first ever call. Idempotent: a second caller finds the row the first wrote.
+// EnsureServerIdentity returns the machine's identity, generating it with keys
+// on the first ever call. Idempotent: a second caller finds the row the first
+// wrote.
 //
 // Generation and insertion share one immediate transaction, so two goroutines
 // racing at startup cannot end up with two different keys - which would be
 // worse than a failure, because devices paired against the losing key would
 // expect a key the server no longer has.
-func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error) {
+func (s *Store) EnsureServerIdentity(ctx context.Context, keys KeySource) (ServerIdentity, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("begin ensure server identity: %w", err)
@@ -81,62 +88,101 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 				"paired device - restore server_identity from the same backup as the rest of the database", people)
 	}
 
-	// The SEED is stored, not Go's 64-byte private key: it is the standard
-	// shape of an Ed25519 private key, the one every other implementation
-	// reads, and the rest of the key follows from it.
-	var seed [ed25519.SeedSize]byte
-	if _, err := rand.Read(seed[:]); err != nil {
+	pair, err := keys.GenerateKeys()
+	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("generate server key: %w", err)
 	}
-	pub := ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
-
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO server_identity (id, public_key, private_key) VALUES (1, ?, ?)",
-		base64.StdEncoding.EncodeToString(pub), base64.StdEncoding.EncodeToString(seed[:]))
+		base64.StdEncoding.EncodeToString(pair.PublicKey[:]), base64.StdEncoding.EncodeToString(pair.PrivateKey[:]))
+	clear(pair.PrivateKey[:])
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("insert server identity: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return ServerIdentity{}, fmt.Errorf("commit ensure server identity: %w", err)
 	}
-	return ServerIdentity{PublicKey: pub}, nil
+	return ServerIdentity{PublicKey: pair.PublicKey[:]}, nil
 }
 
 // ServerKey reads the private half. Narrow on purpose: it is the only way in,
 // and it is reached once, at startup, by the code that answers the channel
 // check.
 //
-// The seed is checked against the stored public key before it is handed out.
 // The two columns say one thing twice - the link is built from one, the check
-// is signed with the other - and a pair that disagrees would hand every device
-// a key the server cannot prove. Refusing to start says so where it can be
-// fixed; serving would say it as a refusal on every device.
-func (s *Store) ServerKey(ctx context.Context) (ed25519.PrivateKey, error) {
-	var pubB64, seedB64 string
-	err := s.read.QueryRowContext(ctx,
-		"SELECT public_key, private_key FROM server_identity WHERE id = 1").Scan(&pubB64, &seedB64)
+// is signed with the other - so the stored public key is checked against the
+// one keys gives for the private key. They disagree when the key was made by
+// ANOTHER implementation: the Eidolon check before feature 050, the stub
+// before the real RustSecureBox (FR-021). Every device's key came from that
+// other implementation too, so none of them can pass the check any more. The
+// server then keeps its private key, writes the public key keys gives for it,
+// and lets every device go - rekeyed reports it, for the caller to say so in
+// the log. Everything the person wrote stays; the next machine link joins a
+// device to them with all of it.
+func (s *Store) ServerKey(ctx context.Context, keys KeySource) (key securebox.PrivateKey, rekeyed bool, err error) {
+	var pubB64, privB64 string
+	err = s.read.QueryRowContext(ctx,
+		"SELECT public_key, private_key FROM server_identity WHERE id = 1").Scan(&pubB64, &privB64)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNoServerIdentity
+		return key, false, ErrNoServerIdentity
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read server private key: %w", err)
+		return key, false, fmt.Errorf("read server private key: %w", err)
 	}
-	seed, err := base64.StdEncoding.DecodeString(seedB64)
+	priv, err := base64.StdEncoding.DecodeString(privB64)
 	if err != nil {
-		return nil, fmt.Errorf("decode server private key: %w", err)
+		return key, false, fmt.Errorf("decode server private key: %w", err)
 	}
-	if len(seed) != ed25519.SeedSize {
-		return nil, fmt.Errorf("server private key is %d bytes, want a %d-byte Ed25519 seed", len(seed), ed25519.SeedSize)
+	if len(priv) != securebox.PrivateKeySize {
+		return key, false, fmt.Errorf("server private key is %d bytes, want %d", len(priv), securebox.PrivateKeySize)
 	}
-	pub, err := decodeServerPublicKey(pubB64)
+	copy(key[:], priv)
+	clear(priv)
+	stored, err := decodeServerPublicKey(pubB64)
 	if err != nil {
-		return nil, err
+		return securebox.PrivateKey{}, false, err
 	}
-	priv := ed25519.NewKeyFromSeed(seed)
-	if !pub.Equal(priv.Public()) {
-		return nil, errors.New("server_identity is inconsistent: the stored public key is not the private key's")
+	public, err := keys.PublicKey(key)
+	if err != nil {
+		return securebox.PrivateKey{}, false, fmt.Errorf("the public key of the server key: %w", err)
 	}
-	return priv, nil
+	if bytes.Equal(stored, public[:]) {
+		return key, false, nil
+	}
+	if err := s.rekeyServerIdentity(ctx, public); err != nil {
+		return securebox.PrivateKey{}, false, err
+	}
+	return key, true, nil
+}
+
+// rekeyServerIdentity writes the public key of another implementation and lets
+// every device go, in ONE transaction: the devices, every pairing token - an
+// unspent one would pair against a key no device can check, a spent one
+// carries no rights - and every request, which names a token. Pairing is
+// off-journal (invariant 3): no event is written.
+func (s *Store) rekeyServerIdentity(ctx context.Context, public securebox.PublicKey) error {
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rekey server identity: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, q := range []string{
+		"DELETE FROM pair_requests",
+		"DELETE FROM pair_tokens",
+		"DELETE FROM devices",
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("rekey server identity: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE server_identity SET public_key = ? WHERE id = 1",
+		base64.StdEncoding.EncodeToString(public[:])); err != nil {
+		return fmt.Errorf("rekey server identity: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit rekey server identity: %w", err)
+	}
+	return nil
 }
 
 // ServerIdentity reads the machine's identity without creating one.
@@ -180,13 +226,13 @@ func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, erro
 // decodeServerPublicKey reads the stored public key and refuses anything that
 // is not thirty-two bytes: a link built from it would carry a key no channel
 // check can ever match.
-func decodeServerPublicKey(b64 string) (ed25519.PublicKey, error) {
+func decodeServerPublicKey(b64 string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
 		return nil, fmt.Errorf("decode server public key: %w", err)
 	}
-	if len(raw) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("server public key is %d bytes, want a %d-byte Ed25519 key", len(raw), ed25519.PublicKeySize)
+	if len(raw) != securebox.PublicKeySize {
+		return nil, fmt.Errorf("server public key is %d bytes, want %d", len(raw), securebox.PublicKeySize)
 	}
-	return ed25519.PublicKey(raw), nil
+	return raw, nil
 }

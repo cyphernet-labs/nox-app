@@ -17,6 +17,7 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
@@ -38,7 +39,6 @@ import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -62,6 +62,11 @@ void main() {
   provideDummy<RepositoryResult<String?>>(const RepositoryResult<String?>.success(data: null));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
   provideDummy<RepositoryResult<PendingPairing?>>(const RepositoryResult<PendingPairing?>.success(data: null));
+  provideDummy<RepositoryResult<DeviceKeyPair>>(
+    const RepositoryResult<DeviceKeyPair>.success(
+      data: DeviceKeyPair(privateKey: '', publicKey: ''),
+    ),
+  );
 
   late MockSessionRepository session;
   late MockAppStateRepository appState;
@@ -326,7 +331,10 @@ void main() {
   // phase 046 SC-006): the key stops being a way in, rather than merely being
   // forgotten here.
   group('logout revokes this device\'s own key first (SC-006)', () {
-    const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+    const pair = DeviceKeyPair(
+      privateKey: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+      publicKey: 'cHVibGljLWtleS1vZi10aGlzLWRldmljZS0zMmJ5dGU=',
+    );
     late _RecordingDevices devices;
     late _FixedPhase phase;
     late List<String> order;
@@ -338,7 +346,7 @@ void main() {
       getIt.allowReassignment = true;
       getIt.registerSingleton<DeviceRepository>(devices);
       getIt.registerSingleton<SessionPhaseService>(phase);
-      when(session.deviceSecret()).thenAnswer((_) async => const RepositoryResult<String>.success(data: seed));
+      when(session.deviceKey()).thenAnswer((_) async => const RepositoryResult<DeviceKeyPair>.success(data: pair));
       when(session.clear()).thenAnswer((_) async {
         order.add('clear');
         return const RepositoryResult<bool>.success(data: true);
@@ -349,7 +357,7 @@ void main() {
     test('connected: the revoke of this very key goes out before anything is wiped', () async {
       await repository.logout();
 
-      expect(devices.revoked, [await DeviceKeys.publicKey(seed)]);
+      expect(devices.revoked, [pair.publicKey]);
       expect(order, ['revoke', 'clear', 'chats']);
     });
 
@@ -448,6 +456,7 @@ void main() {
 
     test('a session with its server key is left alone', () async {
       when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
 
       final result = await repository.retireLegacySession();
 
@@ -460,12 +469,55 @@ void main() {
       // Still locked after a reboot, say: a valid session as likely as an old
       // one, and a transient failure never logs anybody out.
       when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
 
       final result = await repository.retireLegacySession();
 
       expect(result.data, isFalse);
       verifyNever(session.clear());
       verifyNever(chats.clean());
+    });
+  });
+
+  group('a session whose device key another check made (phase 050, FR-019)', () {
+    setUp(() {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      // A build with a live channel: only there does a session carry a device key.
+      getIt
+        ..allowReassignment = true
+        ..registerSingleton<LiveIdentityHandshake>(MockLiveIdentityHandshake());
+    });
+
+    test('a build with no live channel never asks: its sessions carry no device key', () async {
+      // The mock flavors pair without a key, so "no key" there is every
+      // session - retiring it would log the person out at every launch.
+      await getIt.unregister<LiveIdentityHandshake>();
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.predatesSecureBox());
+      verifyNever(session.clear());
+    });
+
+    test('is retired once, through the forced logout: the full wipe and the pairing screen', () async {
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isTrue);
+      verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+
+    test('RustSecureBox or the keychain failing to answer wipes nothing', () async {
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
     });
   });
 
@@ -561,9 +613,11 @@ void main() {
       getIt.allowReassignment = true;
       getIt.registerSingleton<LiveIdentityHandshake>(handshake);
       when(appState.currentState).thenReturn(AppStateType.authorized);
-      when(
-        session.deviceSecret(),
-      ).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
+      when(session.deviceKey()).thenAnswer(
+        (_) async => const RepositoryResult<DeviceKeyPair>.success(
+          data: DeviceKeyPair(privateKey: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=', publicKey: 'cHVibGljLWtleQ=='),
+        ),
+      );
       when(
         session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
       ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
@@ -688,7 +742,9 @@ void main() {
     test('the device key is read before anything is presented, and an unreadable one rolls back', () async {
       // The channel opens with it; a keychain that cannot give it up is a
       // failed attempt, never a pairing with a key nobody will find again.
-      when(session.deviceSecret()).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.unknown));
+      when(
+        session.deviceKey(),
+      ).thenAnswer((_) async => const RepositoryResult<DeviceKeyPair>.error(exception: RepositoryException.unknown));
 
       final result = await repository.signIn(identifier: link);
 

@@ -14,6 +14,7 @@ pub mod channel;
 pub mod engine;
 pub mod obsolete;
 pub mod onion;
+pub mod secure_box;
 pub mod status;
 pub mod vault;
 
@@ -124,14 +125,15 @@ pub extern "C" fn nox_tor_version() -> *const c_char {
 /// `events_port`, a native port of the isolate that opens it.
 ///
 /// # Safety
-/// `host` is NUL-terminated UTF-8; `device_seed32` and `server_key32` point at
-/// 32 bytes each; `post` is `Dart_PostCObject`, or behaves as it does.
+/// `host` is NUL-terminated UTF-8; `device_key32` (the device's private key
+/// from RustSecureBox) and `server_key32` point at 32 bytes each; `post` is
+/// `Dart_PostCObject`, or behaves as it does.
 #[no_mangle]
 pub unsafe extern "C" fn nox_chan_open(
     target_kind: i32,
     host: *const c_char,
     port: u16,
-    device_seed32: *const u8,
+    device_key32: *const u8,
     server_key32: *const u8,
     connect_timeout_ms: u32,
     post: Option<channel::dart::PostFn>,
@@ -146,7 +148,7 @@ pub unsafe extern "C" fn nox_chan_open(
         if host.is_empty()
             || port == 0
             || connect_timeout_ms == 0
-            || device_seed32.is_null()
+            || device_key32.is_null()
             || server_key32.is_null()
             || events_port == 0
         {
@@ -159,17 +161,14 @@ pub unsafe extern "C" fn nox_chan_open(
             _ => return invalid,
         };
         // Straight from the caller's bytes into a heap buffer that wipes
-        // itself: no copy of the seed is left on this stack.
-        let mut seed = Box::new(Zeroizing::new([0u8; 32]));
-        seed.copy_from_slice(std::slice::from_raw_parts(device_seed32, 32));
-        // No real seed is all zero, and ec25519 would panic on one.
-        if seed.iter().all(|&b| b == 0) {
-            return invalid;
-        }
+        // itself: no copy of the key is left on this stack. Which keys are
+        // acceptable is RustSecureBox's to say, in the check.
+        let mut device = Box::new(Zeroizing::new([0u8; 32]));
+        device.copy_from_slice(std::slice::from_raw_parts(device_key32, 32));
         let mut server_key = [0u8; 32];
         server_key.copy_from_slice(std::slice::from_raw_parts(server_key32, 32));
         let budget = Duration::from_millis(u64::from(connect_timeout_ms));
-        channel::open(target, seed, server_key, budget, channel::dart::Port::new(post, events_port))
+        channel::open(target, device, server_key, budget, channel::dart::Port::new(post, events_port))
     })
 }
 
@@ -465,9 +464,9 @@ mod tests {
 
     fn open_onion(host: &str, budget_ms: u32) -> i64 {
         let host = CString::new(host).unwrap();
-        let (seed, key) = ([1u8; 32], [2u8; 32]);
+        let (device, key) = ([1u8; 32], [2u8; 32]);
         let handle =
-            unsafe { nox_chan_open(1, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), budget_ms, record(), PORT) };
+            unsafe { nox_chan_open(1, host.as_ptr(), 443, device.as_ptr(), key.as_ptr(), budget_ms, record(), PORT) };
         assert!(handle > 0, "{handle}");
         handle
     }
@@ -477,31 +476,30 @@ mod tests {
         let invalid = i64::from(code::RET_INVALID_ARGUMENT);
         let host = CString::new("127.0.0.1").unwrap();
         let empty = CString::new("").unwrap();
-        let (seed, key, zero) = ([1u8; 32], [2u8; 32], [0u8; 32]);
+        let (device, key) = ([1u8; 32], [2u8; 32]);
         let not_utf8 = [0xffu8, 0xfe, 0];
-        let open = |kind, host: *const c_char, port, seed: *const u8, key: *const u8, ms, post| unsafe {
-            nox_chan_open(kind, host, port, seed, key, ms, post, PORT)
+        let open = |kind, host: *const c_char, port, device: *const u8, key: *const u8, ms, post| unsafe {
+            nox_chan_open(kind, host, port, device, key, ms, post, PORT)
         };
         let null = std::ptr::null();
         for (refused, why) in [
-            (open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, None), "nothing to post with"),
+            (open(0, host.as_ptr(), 443, device.as_ptr(), key.as_ptr(), 1000, None), "nothing to post with"),
             (
-                unsafe { nox_chan_open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record(), 0) },
+                unsafe { nox_chan_open(0, host.as_ptr(), 443, device.as_ptr(), key.as_ptr(), 1000, record(), 0) },
                 "no port to post to",
             ),
-            (open(0, null as *const c_char, 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "no host"),
-            (open(0, empty.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "an empty host"),
+            (open(0, null as *const c_char, 443, device.as_ptr(), key.as_ptr(), 1000, record()), "no host"),
+            (open(0, empty.as_ptr(), 443, device.as_ptr(), key.as_ptr(), 1000, record()), "an empty host"),
             (
-                open(0, not_utf8.as_ptr() as *const c_char, 443, seed.as_ptr(), key.as_ptr(), 1000, record()),
+                open(0, not_utf8.as_ptr() as *const c_char, 443, device.as_ptr(), key.as_ptr(), 1000, record()),
                 "not UTF-8",
             ),
-            (open(0, host.as_ptr(), 0, seed.as_ptr(), key.as_ptr(), 1000, record()), "port 0"),
-            (open(0, host.as_ptr(), 443, null, key.as_ptr(), 1000, record()), "no seed"),
-            (open(0, host.as_ptr(), 443, seed.as_ptr(), null, 1000, record()), "no server key"),
-            (open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 0, record()), "no time at all"),
-            (open(2, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "an unknown kind"),
-            (open(-1, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "a negative kind"),
-            (open(0, host.as_ptr(), 443, zero.as_ptr(), key.as_ptr(), 1000, record()), "an all-zero seed"),
+            (open(0, host.as_ptr(), 0, device.as_ptr(), key.as_ptr(), 1000, record()), "port 0"),
+            (open(0, host.as_ptr(), 443, null, key.as_ptr(), 1000, record()), "no device key"),
+            (open(0, host.as_ptr(), 443, device.as_ptr(), null, 1000, record()), "no server key"),
+            (open(0, host.as_ptr(), 443, device.as_ptr(), key.as_ptr(), 0, record()), "no time at all"),
+            (open(2, host.as_ptr(), 443, device.as_ptr(), key.as_ptr(), 1000, record()), "an unknown kind"),
+            (open(-1, host.as_ptr(), 443, device.as_ptr(), key.as_ptr(), 1000, record()), "a negative kind"),
         ] {
             assert_eq!(refused, invalid, "{why}");
         }

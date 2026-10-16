@@ -41,7 +41,7 @@ import '../../channel/fake_channel.dart';
 /// address each request names; the module's TLS and check are its own tests'.
 ChannelHttpClient _channels([LoopbackChannelApi? api]) =>
     ChannelHttpClient(api ?? LoopbackChannelApi())
-      ..bind(serverKey: Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i)), deviceSeed: Uint8List(32));
+      ..bind(serverKey: Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i)), devicePrivateKey: Uint8List(32));
 
 class _Config implements AppConfigRepository {
   @override

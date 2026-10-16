@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"io"
@@ -9,8 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"nox.app/client-backend/internal/eidolon"
 )
 
 // The TLS layer of the channel, on its own. Who is on each end is the channel
@@ -39,8 +36,8 @@ func TestAPlainRequestIsAnsweredWithNothing(t *testing.T) {
 	}
 }
 
-// TLS 1.2 is refused. The exporter the check signs is TLS 1.3's, and without
-// this the minimum version rests on one line nothing would notice the loss of.
+// TLS 1.2 is refused: the contract says TLS 1.3 only, and without this the
+// minimum version rests on one line nothing would notice the loss of.
 func TestATLS12ClientIsRefused(t *testing.T) {
 	ts, _ := newTestServer(t)
 
@@ -154,30 +151,5 @@ func TestEveryConnectionIsAFullHandshake(t *testing.T) {
 		if resumed {
 			t.Fatalf("connection %d resumed a session", i)
 		}
-	}
-}
-
-// The binding is the RFC 9266 exporter with an EMPTY context. The app's
-// module asks for exactly that (Some(b"") in rustls) while this side passes
-// nil; in TLS 1.3 the two are the same value, and if they ever were not, every
-// device would fail the check with a signature mismatch nobody could explain.
-func TestTheBindingIsTheSameWithANilOrAnEmptyContext(t *testing.T) {
-	ts, _ := newTestServer(t)
-	conn, err := tls.Dial("tcp", ts.Listener.Addr().String(), testClientTLS())
-	if err != nil {
-		t.Fatalf("tls.Dial: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
-	state := conn.ConnectionState()
-	withNil, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
-	if err != nil {
-		t.Fatalf("exporter with nil: %v", err)
-	}
-	withEmpty, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, []byte{}, eidolon.BindingSize)
-	if err != nil {
-		t.Fatalf("exporter with an empty context: %v", err)
-	}
-	if !bytes.Equal(withNil, withEmpty) {
-		t.Fatalf("nil context %x, empty context %x", withNil, withEmpty)
 	}
 }

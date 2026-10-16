@@ -23,11 +23,11 @@ class DirectProbeResult {
 /// Tries the server's direct addresses (phase 040).
 abstract class DirectProber {
   /// Tries [candidates] in order of preference and returns the first where the
-  /// server proves [serverKey] to a device proving the key of [deviceSeed].
+  /// server proves [serverKey] to a device proving the key of [devicePrivateKey].
   ///
   /// Both are copied before this returns: the caller's arrays stay the
   /// caller's, and it may wipe them while the round is still running.
-  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed});
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey});
 }
 
 /// Probes by opening a channel and closing it at once (phase 044).
@@ -56,20 +56,20 @@ class ChannelDirectProber implements DirectProber {
   static const Duration budget = Duration(seconds: 5);
 
   @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) async {
+  Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) async {
     if (candidates.isEmpty) return const DirectProbeResult();
-    // The round's own copies: the caller may wipe its seed while attempts
+    // The round's own copies: the caller may wipe its key while attempts
     // started later in the round still need it. Wiped when the round is over.
     final key = Uint8List.fromList(serverKey);
-    final seed = Uint8List.fromList(deviceSeed);
+    final device = Uint8List.fromList(devicePrivateKey);
     try {
-      return await _round(candidates, serverKey: key, deviceSeed: seed);
+      return await _round(candidates, serverKey: key, devicePrivateKey: device);
     } finally {
-      seed.fillRange(0, seed.length, 0);
+      device.fillRange(0, device.length, 0);
     }
   }
 
-  Future<DirectProbeResult> _round(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) async {
+  Future<DirectProbeResult> _round(List<String> candidates, {required Uint8List serverKey, required Uint8List devicePrivateKey}) async {
     final won = Completer<String?>();
     // Opens still under way when the round is settled are dropped in the
     // module, not left to run out their time.
@@ -91,7 +91,7 @@ class ChannelDirectProber implements DirectProber {
     void attempt(String candidate) {
       started++;
       unawaited(
-        _try(candidate, serverKey: serverKey, deviceSeed: deviceSeed, cancel: roundOver.future).then((outcome) {
+        _try(candidate, serverKey: serverKey, devicePrivateKey: devicePrivateKey, cancel: roundOver.future).then((outcome) {
           finished++;
           switch (outcome) {
             case _Outcome.home:
@@ -130,7 +130,7 @@ class ChannelDirectProber implements DirectProber {
   Future<_Outcome> _try(
     String candidate, {
     required Uint8List serverKey,
-    required Uint8List deviceSeed,
+    required Uint8List devicePrivateKey,
     required Future<void> cancel,
   }) async {
     // Host and port off the text, the one reading every address gets: through
@@ -142,7 +142,7 @@ class ChannelDirectProber implements DirectProber {
     try {
       final channel = await _api.open(
         DirectTarget(address.host, address.port),
-        deviceSeed: deviceSeed,
+        devicePrivateKey: devicePrivateKey,
         serverKey: serverKey,
         timeout: attemptTimeout,
         cancel: cancel,

@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -30,7 +29,7 @@ import (
 // runSession is a device paired and greeted on a server Run started.
 type runSession struct {
 	cfg       config.Config
-	serverKey ed25519.PublicKey
+	serverKey []byte
 	dev       *device
 	c         *wsClient
 	next      int
@@ -50,7 +49,7 @@ func pairOnRun(t *testing.T, cfg config.Config, logs *syncLog) *runSession {
 	if err != nil {
 		t.Fatalf("RequestMachineLink: %v", err)
 	}
-	s := &runSession{cfg: cfg, serverKey: ed25519.PublicKey(raw), dev: newDevice(t), next: 3}
+	s := &runSession{cfg: cfg, serverKey: raw, dev: newDevice(t), next: 3}
 	s.c = dialRun(t, cfg.Addr, s.serverKey, s.dev)
 	s.c.expectGreeting()
 	s.c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"macos"}}`, readLink(t, link.Link).Token))
@@ -187,7 +186,7 @@ func TestNothingOnTheServersDiskIsInTheClear(t *testing.T) {
 		"the public address": []byte("nox-at-rest-marker"),
 		"the onion address":  []byte(strings.TrimSuffix(testOnionAddr, ".onion")),
 		"the device key":     []byte(s.dev.pub),
-		"the device key raw": s.dev.priv.Public().(ed25519.PublicKey),
+		"the device key raw": s.dev.key[:],
 		"the server key":     []byte(base64.StdEncoding.EncodeToString(s.serverKey)),
 		"the server key raw": s.serverKey,
 		"a schema":           []byte("CREATE TABLE"),

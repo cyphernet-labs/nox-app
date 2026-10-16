@@ -242,7 +242,7 @@ void main() {
       _Lifecycle(),
       socket,
       recheckEvery: const Duration(hours: 1),
-    )..begin(linkAddress: _link, serverKey: Uint8List(32), deviceSeed: Uint8List(32));
+    )..begin(linkAddress: _link, serverKey: Uint8List(32), devicePrivateKey: Uint8List(32));
     sync = SyncService(
       socket,
       getIt<SyncRepository>(),

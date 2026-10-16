@@ -17,17 +17,23 @@ protocol does not exist yet (Q13).
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Who connects is decided by the channel (feature 044).** Every connection -
-the WebSocket and every file transfer alike - is TCP (straight from the
-device, or from the tor service forwarding the onion service), then TLS 1.3
-on a THROWAWAY certificate the server mints in memory at every start and
-nobody checks, then the Eidolon exchange over the TLS 1.3 exporter
-(RFC 9266, `internal/eidolon`): the device sends its Ed25519 key with a
-signature over the key and one over the binding, the server checks both and
-answers with the machine's own Ed25519 key the same way. Only then does
-`http.Server` see the connection, carrying the device key it proved
-(`channelPeer`). The server accepts ANY key that proves itself and grants
-rights by the store: a paired device gets everything, an unknown key only
+**Who connects is decided by the channel (features 044, 050).** Every
+connection - the WebSocket and every file transfer alike - is TCP (straight
+from the device, or from the tor service forwarding the onion service), then
+TLS 1.3 on a THROWAWAY certificate the server mints in memory at every start
+and nobody checks, then the check `POST /auth` → `POST /auth2`
+(`internal/connauth`, contract §1): the device sends its key and a challenge,
+the server answers with the machine's key, its own challenge and a signature
+over the device's, and the device answers with a signature over the
+server's. The check is answered by the channel LISTENER, not the mux, so only
+then does `http.Server` see the connection, carrying the device key it proved
+(`channelPeer`) - and every entry limit covers the whole check. Keys and
+signatures come from RustSecureBox (`internal/securebox`), the one library
+the app's Rust module runs too, here as its WebAssembly translated into Go
+(`boxwasm`, generated - see *Toolchain*). It is a STUB for now: every start
+logs a warning and the open service page says so. There is no channel
+binding in the check - the customer's scheme treats TLS as un-interceptable.
+The server accepts ANY key that proves itself and grants rights by the store: a paired device gets everything, an unknown key only
 `pair` and `pair.cancel` - within two minutes, on one of at most 32 such
 connections (`unpaired.go`), unless an invite it presented waits for Allow:
 that connection waits, free of both, until the request closes (046);
@@ -125,6 +131,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   people scan to pair a device with their server - on the service page, and in
   the terminal for `noxd link -qr`. Pure Go, no dependencies of its own, no
   CGO, so `CGO_ENABLED=0` static builds are untouched.
+- **RustSecureBox is not a dependency but generated source (050).**
+  `internal/securebox/boxwasm` is the crate `packages/rust_secure_box` built for
+  wasm32 and translated into Go by `wasm2go` v0.4.15 - the tool SQLite reaches
+  this server through as well - and it imports the standard library only. The
+  tool runs as `go run github.com/ncruces/wasm2go@v0.4.15` from
+  `build-wasm.sh`, so it never enters go.mod; building `noxd` needs neither
+  Rust nor a C compiler. `make box-verify` (part of `make tor-test`) fails when
+  the committed copy is not what the crate builds to.
 - Dev tools go through `tool` directives in go.mod (Go 1.24+), never a
   `tools.go` with blank imports.
 
@@ -327,10 +341,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
   one of the event-less lifecycles of invariant 3
-- `internal/store/serverkey.go` — the machine's own Ed25519 key pair on the
-  single `server_identity` row. No owner: "can anybody reach this machine" is
-  `countDevices`, the one spelling of it, asked by the service page, the
-  startup line and the last device going away
+- `internal/store/serverkey.go` — the machine's own RustSecureBox key pair on
+  the single `server_identity` row. A pair another implementation made is
+  rekeyed at start (050): `ServerKey` keeps the private key, writes the public
+  key RustSecureBox gives for it and lets every device go. No owner: "can
+  anybody reach this machine" is `countDevices`, the one spelling of it,
+  asked by the service page, the startup line and the last device going away
 - `internal/store/pairing.go` — the two kinds of one-shot token and `Pair`:
   the machine link (at most one unspent - issuing one voids the others in the
   same transaction; minted by `noxd link`, by the page's buttons, and by the
@@ -371,9 +387,18 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
-- `internal/eidolon/`   — the channel check (044): the 160-byte message, the
-  responder the server runs and the initiator `cmd/smoke` and the tests run;
-  shared vectors with the app's Rust module in `testdata/vectors.json`
+- `internal/connauth/`  — the channel check (050): `Respond`, the server's side of
+  `POST /auth` and `POST /auth2` that the channel listener runs (two requests
+  read with `http.ReadRequest` under a 16 KiB bound, answers written by hand,
+  refusals 400/401/405 with `Connection: close`, nothing at all when the
+  budget runs out or RustSecureBox fails), and `Initiate`, the device's side
+  `cmd/smoke` and the tests run
+- `internal/securebox/` — RustSecureBox in the server (050): `Box`, a pool of
+  WebAssembly instances (one call at a time each; a trap is `ErrBox` and the
+  instance is thrown away), random bytes from `crypto/rand` through the ONE
+  import, `IsStub` by the probe key; `boxwasm/` is GENERATED by
+  `packages/rust_secure_box/build-wasm.sh` (`make box-wasm`) and never edited;
+  the shared vectors in `testdata/rsb-vectors.json`
 - `internal/server/channel.go` — the front door: a listener wrapper that takes
   every connection through TLS and the check on a goroutine of its own, under
   ONE deadline from accept - 30 s, the slow-path budget, for every connection,
@@ -500,7 +525,7 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   pooled connection gets a private database.
 - HTTP and WS go through the REAL front door: the test server listens through
   the channel listener, and the test client dials TCP → TLS 1.3 without
-  certificate checks → `eidolon.Initiate` with a device key, then speaks HTTP
+  certificate checks → `connauth.Initiate` with a device key, then speaks HTTP
   or WebSocket over that connection (`dialAs` in `server_test.go`). NOT
   `httptest.NewTLSServer`: a stock TLS server skips the check this server is
   built around.
@@ -577,9 +602,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the sealed key and the finished attachments, never over an existing file and
   never as anything but `<file>.partial` until it is whole. `noxd restore <file>
   -db <path>` puts it onto an empty place with the same password, gives the
-  journal a new id - every device re-reads the history, none pairs again - and
-  names the devices the restored server lets in, with the moment the backup
-  was made. Never copy a live DB; local filesystem only (WAL breaks on network
+  journal a new id - every device re-reads the history, none pairs again, unless
+  another RustSecureBox made the backup's key (050: the restore rekeys it and
+  every device pairs again) - and names the devices the restored server lets
+  in, with the moment the backup was made. Never copy a live DB; local filesystem only (WAL breaks on network
   mounts). tor's `HiddenServiceDir` is not in a backup: a server restored
   elsewhere without it gets a new onion address.
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
@@ -746,7 +772,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   prints the backup's moment and every device it lets in, and says to revoke
   one revoked since again. A confirmation before unpacking, revocations kept
   outside the database and devices held back until approved were weighed and
-  rejected (specs/047 research R11).
+  rejected (specs/047 research R11). A backup whose key another RustSecureBox
+  made is the exception (050): the restore rekeys it as the first start would,
+  and says every device pairs again.
 - **No limit on password attempts.** The page and the commands are loopback
   only, and whoever reaches them has the machine (out of scope). Each attempt
   costs Argon2id - about a second on a small board - and they are served one at
@@ -831,23 +859,52 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   person's other devices for anything. A revoked device that was itself asking
   to join is denied too: the person who revoked it is not to be asked to let it
   back in on a request it opened before.
-- The server's private key lives INSIDE the database file - an Ed25519 seed in
-  `server_identity`. The model's case 6 warns that a backup holding only the DB
-  would leave the devices facing a stranger; one artifact makes that impossible,
+- The server's private key lives INSIDE the database file - RustSecureBox's
+  32-byte private key in `server_identity` (050). The model's case 6 warns that
+  a backup holding only the DB would leave the devices facing a stranger; one artifact makes that impossible,
   and anyone who can read the file already has every message.
-- **Two keys, two jobs.** The machine's Ed25519 key is what devices check in the
-  channel exchange and what the pairing link carries (32 bytes, no fingerprint);
+- **Two keys, two jobs.** The machine's RustSecureBox key is what devices check
+  in the answer to `/auth` and what the pairing link carries (32 bytes, no
+  fingerprint);
   the TLS certificate's key is a throwaway P-256 minted in memory at every start
   and checked by nobody. Mixing them up - pinning the certificate, or putting the
   machine key into TLS - brings back exactly what 044 removed.
+- **A key made by another RustSecureBox re-pairs every device (050).** At
+  every start `store.ServerKey` compares the stored public key with what the
+  library gives for the stored private key. They differ only across an
+  implementation switch - Eidolon to the stub, the stub to the real library -
+  and then every device's key came from the other one too: the public key is
+  rewritten and every device, pairing token and request deleted in one
+  transaction (no event: pairing is off-journal), and the log says so. People,
+  chats, messages, files and the journal stay - the next machine link joins a
+  device to the same person with all of it. Refusing to start instead would
+  cost the owner a new database.
+- **The stub is announced, never refused (050, FR-022).** `Box.IsStub` asks the
+  library for the public key of 32 bytes of `0x01` and compares it with the
+  stub's: while it matches, every start logs a warning and the open service
+  page says `RustSecureBox is a stub: devices are not really verified.`. The
+  owner's machine runs the stub on purpose; with the real library the line
+  goes by itself.
+- **The entry bounds handshakes under way, never their rate (050).** `/auth`
+  signs the challenge of any key before anything is proved (the customer's
+  order), so a stranger's connection costs the server a TLS handshake plus
+  `GetChallenge` and `SignChallenge`: microseconds with the stub, about 1 ms of
+  CPU with a real Ed25519 RustSecureBox through wasm2go - several times the
+  TLS work (specs/050 research R1). The entry's limits (8 per source, 64 for
+  this machine, 256 in all) cap how many run at once; how many a stranger
+  completes in a second is bounded only by how fast it completes TLS. A rate
+  limit would be a design decision of its own, and a semaphore around the box
+  would starve the person's own new connections under the same flood.
 - **The server accepts every key that proves itself.** Refusing unknown keys at
   the channel would make pairing impossible (a new device is unknown by
   definition) and would tell a stranger which keys are paired. Rights come from
   the store, per command: `pair` and `pair.cancel` for anyone, everything else
   for paired keys.
-- **A failed check is answered with silence.** The server writes nothing - not
-  even its own message - and closes the connection; a peer that did not prove a
-  key learns nothing, including which machine it reached.
+- **A failed check is answered with its refusal, never with more.** 400, 401
+  or 405 with `Connection: close` and no body (contract §1), then the
+  connection is closed; a budget that ran out is silence. The answer to
+  `/auth` does carry the machine's key to any key that asked - the device
+  needs it before it signs anything, and the pairing link carries it anyway.
 - **A key nobody paired gets one request per connection, and on `/ws` two
   minutes and 32 such sessions at once** (045: the onion service is open to
   anybody who knows its address, and a key made for the occasion passes the

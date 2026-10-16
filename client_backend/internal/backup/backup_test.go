@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/securebox"
 	"nox.app/client-backend/internal/store"
 	"nox.app/client-backend/internal/vault"
 )
@@ -45,6 +47,10 @@ type server struct {
 // newServer makes a server's data in dir: a key file, a database with a
 // person's chat and message carrying the marker, one finished attachment and
 // one upload that never finished.
+
+// testBox is RustSecureBox, which makes the server key (050).
+var testBox = securebox.New()
+
 func newServer(t *testing.T, dir string) *server {
 	t.Helper()
 	ctx := context.Background()
@@ -63,7 +69,7 @@ func newServer(t *testing.T, dir string) *server {
 		t.Fatalf("Migrate: %v", err)
 	}
 	s.st = store.New(s.dbs.Read, s.dbs.Write)
-	id, err := s.st.EnsureServerIdentity(ctx)
+	id, err := s.st.EnsureServerIdentity(ctx, testBox)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
@@ -325,6 +331,38 @@ func TestARestoreNamesTheDevicesItLetsBackIn(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "dev-phone/android,dev-laptop/macos" {
 		t.Fatalf("the restore names %v, want both devices of the backup - the phone revoked since among them", got)
+	}
+	if restored.Rekeyed {
+		t.Fatal("a backup of this build's RustSecureBox was rekeyed")
+	}
+}
+
+// A backup of a server whose key another RustSecureBox made - the Eidolon
+// check's, or the stub's once the real library came - loses its devices at the
+// first start; the restore does it at once, so what it reports is what the
+// restored server keeps (FR-018).
+func TestARestoreOfAnotherRustSecureBoxsKeyLetsTheDevicesGo(t *testing.T) {
+	s := newServer(t, t.TempDir())
+	ctx := context.Background()
+	link, err := s.st.IssueMachineLink(ctx, 1000)
+	if err != nil {
+		t.Fatalf("IssueMachineLink: %v", err)
+	}
+	if _, err := s.st.Pair(ctx, link.Token, "dev-phone", "android", 1000); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	other := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, securebox.PublicKeySize))
+	if _, err := s.dbs.Write.ExecContext(ctx, "UPDATE server_identity SET public_key = ? WHERE id = 1", other); err != nil {
+		t.Fatalf("another implementation's key: %v", err)
+	}
+	dst := s.write(t)
+
+	restored, err := Restore(ctx, dst, emptyTarget(t), asked(password))
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if !restored.Rekeyed || len(restored.Devices) != 0 {
+		t.Fatalf("rekeyed %v with %d devices, want the key rewritten and no device", restored.Rekeyed, len(restored.Devices))
 	}
 }
 

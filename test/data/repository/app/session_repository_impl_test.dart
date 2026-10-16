@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,9 +10,11 @@ import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:nox_tor/secure_box.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -185,12 +188,14 @@ void main() {
       expect((await repository.serverKey()).data, isNull);
     });
 
-    test('the device seed is a real 32-byte key, not a random string', () async {
-      final seed = (await repository.deviceSecret()).data!;
-      // The module opens every channel with it: if this ever stops being a
-      // key, every connection fails with an error nobody can trace to here.
-      expect(base64.decode(seed).length, 32);
-      expect((await DeviceKeys.publicKey(seed)).isNotEmpty, isTrue);
+    test('the device key is RustSecureBox\'s pair, made once and kept', () async {
+      final pair = (await repository.deviceKey()).data!;
+      // The module opens every channel with the private half: if this ever
+      // stops being a key, every connection fails with an error nobody can
+      // trace to here.
+      expect(base64.decode(pair.privateKey).length, 32);
+      expect(DeviceKeys.publicKeyOf(pair.privateKey), pair.publicKey);
+      expect((await repository.deviceKey()).data, pair, reason: 'made once, then read');
     });
   });
 
@@ -233,6 +238,95 @@ void main() {
     });
   });
 
+  group('a session whose device key another check made (phase 050, FR-019)', () {
+    const storage = FlutterSecureStorage();
+
+    test('an identifier with no device key pair - a session of the Eidolon check - predates RustSecureBox', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await storage.write(key: 'session.device_secret', value: base64.encode(List<int>.filled(32, 7)));
+      expect((await repository.predatesSecureBox()).data, isTrue);
+    });
+
+    test('a pair whose public key is not RustSecureBox\'s for its private one predates it too', () async {
+      final pair = (await repository.deviceKey()).data!;
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await storage.write(
+        key: 'session.device_key',
+        value: jsonEncode({'private': pair.privateKey, 'public': base64.encode(List<int>.filled(32, 9))}),
+      );
+      expect((await repository.predatesSecureBox()).data, isTrue);
+    });
+
+    test('a pair of this build\'s RustSecureBox does not, and no session at all predates nothing', () async {
+      expect((await repository.predatesSecureBox()).data, isFalse);
+      await repository.deviceKey();
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      expect((await repository.predatesSecureBox()).data, isFalse);
+    });
+
+    test('a kept pair another RustSecureBox made is replaced while nothing is paired with it', () async {
+      // An attempt under the stub that never paired (an expired link, Deny),
+      // then the real library: the old pair would pair a key the app does
+      // not know as its own, and be retired at the next launch.
+      final pair = (await repository.deviceKey()).data!;
+      final foreign = base64.encode(List<int>.filled(32, 9));
+      await storage.write(key: 'session.device_key', value: jsonEncode({'private': pair.privateKey, 'public': foreign}));
+
+      final next = (await repository.deviceKey()).data!;
+
+      expect(next.publicKey, isNot(foreign));
+      expect(DeviceKeys.isOwn(next), isTrue);
+      expect((await repository.deviceKey()).data, next, reason: 'stored, then read');
+    });
+
+    test('a session holding such a pair keeps it: the launch retires the session, nothing else replaces its key', () async {
+      final pair = (await repository.deviceKey()).data!;
+      final foreign = DeviceKeyPair(privateKey: pair.privateKey, publicKey: base64.encode(List<int>.filled(32, 9)));
+      await storage.write(key: 'session.device_key', value: jsonEncode({'private': foreign.privateKey, 'public': foreign.publicKey}));
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+
+      expect((await repository.deviceKey()).data, foreign);
+      expect((await repository.predatesSecureBox()).data, isTrue);
+    });
+
+    test('a private key RustSecureBox refuses predates it; any other failure of the box is an error', () async {
+      final pair = (await repository.deviceKey()).data!;
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      addTearDown(() => DeviceKeys.box = const NativeSecureBoxApi());
+
+      DeviceKeys.box = const _FailingBox(SecureBoxCode.invalidArgument);
+      expect((await repository.predatesSecureBox()).data, isTrue);
+      expect(DeviceKeys.isOwn(pair), isFalse);
+
+      DeviceKeys.box = const _FailingBox(SecureBoxCode.random);
+      expect((await repository.predatesSecureBox()).hasData, isFalse, reason: 'an error, which wipes nothing');
+      // A paired device's key is read without the box: a box that fails
+      // never keeps it from connecting.
+      expect((await repository.deviceKey()).data, pair);
+    });
+
+    test('a keychain that cannot be read says so, and never claims the key is another\'s', () async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final prefs = await SharedPreferences.getInstance();
+      final locked = SessionRepositoryImpl(const _LockedStorage(), prefs);
+      expect((await locked.predatesSecureBox()).hasData, isFalse, reason: 'an error, which wipes nothing');
+    });
+
+    test('the bootstrap sweep drops the Eidolon seed, and a logout takes the pair', () async {
+      await storage.write(key: 'session.device_secret', value: 'seed');
+      await repository.sweepLegacyKeys();
+      expect(await storage.read(key: 'session.device_secret'), isNull);
+      await repository.deviceKey();
+      await repository.clear();
+      expect(await storage.read(key: 'session.device_key'), isNull);
+    });
+  });
+
   group('discardSignIn (feature 031)', () {
     test('undoes the sign-in so the session resolves to null', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
@@ -241,20 +335,20 @@ void main() {
     });
 
     test('keeps the device key - a sign-in that never reached the server changed no install', () async {
-      final before = (await repository.deviceSecret()).data;
+      final before = (await repository.deviceKey()).data;
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
 
       await repository.discardSignIn();
 
       // clear() would rotate it, and the next successful attempt would then
       // register a second device for one install.
-      expect((await repository.deviceSecret()).data, before);
+      expect((await repository.deviceKey()).data, before);
     });
 
     test('clear DOES rotate the device key, which is why sign-in must not use it', () async {
-      final before = (await repository.deviceSecret()).data;
+      final before = (await repository.deviceKey()).data;
       await repository.clear();
-      expect((await repository.deviceSecret()).data, isNot(before));
+      expect((await repository.deviceKey()).data, isNot(before));
     });
   });
 
@@ -523,10 +617,19 @@ void main() {
 
     test('the store of today is for this device only', () {
       expect(SecureStoreOptions.ios.accessibility, KeychainAccessibility.first_unlock_this_device);
-      expect(SecureStoreOptions.macOs.accessibility, KeychainAccessibility.first_unlock_this_device);
-      expect(SecureStoreOptions.macOs.usesDataProtectionKeychain, isTrue);
+      expect(SecureStoreOptions.macOsRelease.accessibility, KeychainAccessibility.first_unlock_this_device);
+      expect(SecureStoreOptions.macOsRelease.usesDataProtectionKeychain, isTrue);
       expect(SecureStoreOptions.ios.synchronizable, isFalse);
-      expect(SecureStoreOptions.macOs.synchronizable, isFalse);
+      expect(SecureStoreOptions.macOsRelease.synchronizable, isFalse);
+    });
+
+    test('a debug build on macOS keeps the store in the login keychain, under the same service', () {
+      // Signed to run locally, with no team and so no access group, which the
+      // data-protection keychain would refuse.
+      expect(SecureStoreOptions.macOs, same(SecureStoreOptions.macOsLocal));
+      expect(SecureStoreOptions.macOsLocal.usesDataProtectionKeychain, isFalse);
+      expect(SecureStoreOptions.macOsLocal.accountName, SecureStoreOptions.macOsRelease.accountName);
+      expect(SecureStoreOptions.macOsLocal.synchronizable, isFalse);
     });
   });
 
@@ -697,4 +800,23 @@ class _RecordingWrites extends FlutterSecureStorage {
     writes.add((key: key, ios: iOptions, macOs: mOptions));
     return super.write(key: key, value: value);
   }
+}
+
+/// RustSecureBox answering every key question with [code].
+class _FailingBox implements SecureBoxApi {
+  const _FailingBox(this.code);
+
+  final SecureBoxCode code;
+
+  @override
+  SecureBoxKeyPair generateKeys() => const NativeSecureBoxApi().generateKeys();
+
+  @override
+  ({Uint8List challenge, Uint8List publicKey}) getChallenge(Uint8List privateKey) => throw SecureBoxException(code);
+
+  @override
+  Uint8List signChallenge(Uint8List privateKey, Uint8List challenge) => throw SecureBoxException(code);
+
+  @override
+  bool checkSignature(Uint8List publicKey, Uint8List challenge, Uint8List signature) => throw SecureBoxException(code);
 }

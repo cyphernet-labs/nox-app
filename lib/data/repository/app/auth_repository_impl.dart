@@ -11,7 +11,6 @@ import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
@@ -154,15 +153,15 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return _finishSignIn(onboardingComplete: false);
       }
 
-      final seed = await _sessionRepository.deviceSecret();
-      if (!seed.hasData) {
+      final deviceKey = await _sessionRepository.deviceKey();
+      if (!deviceKey.hasData) {
         // Rolled back like every other exit in this method. saveServer has
         // already run, so returning without it leaves the address and the
         // key of a machine this install has no session with - the next launch
         // dials it, greets as unpaired for ever, and the world epoch is keyed
         // on it.
         await _rollBackSignIn();
-        return RepositoryResult<bool>.error(exception: seed.exception!);
+        return RepositoryResult<bool>.error(exception: deviceKey.exception!);
       }
 
       try {
@@ -239,8 +238,8 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return RepositoryResult<bool>.error(exception: exception);
       } on Object catch (e, st) {
         // The TYPE only. A FormatException from a base64 decode carries the
-        // offending source in its message, which here would be the link or the
-        // key seed - and a token in a log is still a usable pairing credential
+        // offending source in its message, which here would be the link or a
+        // key - and a token in a log is still a usable pairing credential
         // (Principle I, FR-035).
         logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
         await _rollBackSignIn();
@@ -352,11 +351,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       return;
     }
     try {
-      final seed = await _sessionRepository.deviceSecret();
-      if (!seed.hasData) return;
-      await devices.revoke(deviceKey: await DeviceKeys.publicKey(seed.data!));
+      final pair = await _sessionRepository.deviceKey();
+      if (!pair.hasData) return;
+      await devices.revoke(deviceKey: pair.data!.publicKey);
     } on Object catch (e, st) {
-      // The type only: a decode failure would otherwise put the seed in the log.
+      // The type only: an error's text must never carry a key into the log.
       logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
     }
   }
@@ -673,11 +672,19 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
 
   @override
   Future<RepositoryResult<bool>> retireLegacySession() async {
+    // Two kinds of session no connection can carry any more: one paired before
+    // the secure channel (044), with no server key to check against, and one
+    // whose device key another implementation of the check made (050) - the
+    // Eidolon check's, or the stub's once the real RustSecureBox came. An
+    // error from either question is a keychain that cannot be read right now
+    // - a valid session as likely as an old one - and never a reason to wipe.
+    // A build with no live channel (the mock flavors) never makes a device
+    // key, so the second question is only asked where a session carries one:
+    // there, no key at all would retire every session at every launch.
     final predates = await _sessionRepository.predatesServerKey();
-    // An error here is a keychain that cannot be read right now - a valid
-    // session as likely as an old one - and never a reason to wipe.
-    if (predates.data != true) return const RepositoryResult<bool>.success(data: false);
-    logRepository.debug(target: this, message: 'bootstrap: a session paired before the secure channel, pairing again');
+    final otherBox = predates.data == true || liveIdentityHandshake == null ? predates : await _sessionRepository.predatesSecureBox();
+    if (predates.data != true && otherBox.data != true) return const RepositoryResult<bool>.success(data: false);
+    logRepository.debug(target: this, message: 'bootstrap: a session the check of this build cannot carry, pairing again');
     final out = await logout(forced: true);
     return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
   }

@@ -112,9 +112,9 @@ class LiveSessionStarter {
       logRepository.debug(target: this, message: 'sync: paired address has no server key, refusing to connect');
       return;
     }
-    final seed = await _session.deviceSecret();
-    final deviceSeed = seed.hasData ? _keyBytes(seed.data) : null;
-    if (deviceSeed == null) {
+    final pair = await _session.deviceKey();
+    final devicePrivateKey = pair.hasData ? _keyBytes(pair.data!.privateKey) : null;
+    if (devicePrivateKey == null) {
       // The key this device proves itself with cannot be read right now - a
       // keychain still locked after a reboot. A failed attempt, never a wipe:
       // without the key there is simply nothing to connect with yet.
@@ -124,7 +124,7 @@ class LiveSessionStarter {
     }
     // Bound on every start, never captured at construction: the client is a
     // singleton that outlives pairing, re-pairing and logout.
-    _channels.bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    _channels.bind(serverKey: serverKey, devicePrivateKey: devicePrivateKey);
 
     // Keyed on the SERVER, by its key (phase 040, FR-011; phase 044). An
     // address is a place: the server moves between them, and the same one
@@ -146,8 +146,8 @@ class LiveSessionStarter {
     _socket.onUnauthenticated = () => unawaited(_deviceRejected());
     // Asked before every attempt: direct first, then Tor (phase 040). Its
     // probes open channels too, under the same two keys.
-    _selector.begin(linkAddress: _hostPort(apiUrl), serverKey: serverKey, deviceSeed: deviceSeed);
-    deviceSeed.fillRange(0, deviceSeed.length, 0);
+    _selector.begin(linkAddress: _hostPort(apiUrl), serverKey: serverKey, devicePrivateKey: devicePrivateKey);
+    devicePrivateKey.fillRange(0, devicePrivateKey.length, 0);
     await _socket.start(targets: _selector, credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
   }
 

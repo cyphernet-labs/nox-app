@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -101,7 +102,7 @@ func dialable(srv *Server) {
 func TestAMachineWithNoDeviceShowsALinkAtOnce(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
-	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 
@@ -110,7 +111,7 @@ func TestAMachineWithNoDeviceShowsALinkAtOnce(t *testing.T) {
 	// key to expect in the channel. A link carrying anything else hands out a
 	// server nobody can reach.
 	got := readLink(t, linkOf(t, body))
-	if !got.ServerKey.Equal(serverKeyOf(t, srv)) {
+	if !bytes.Equal(got.ServerKey, serverKeyOf(t, srv)) {
 		t.Fatalf("the page's link carries %x, want this machine's key %x", got.ServerKey, serverKeyOf(t, srv))
 	}
 	if len(got.Direct) != 1 || got.Direct[0] != "192.168.1.10:8080" {
@@ -225,7 +226,7 @@ func TestTheServicePageShowsEveryStateOfTheMachineLink(t *testing.T) {
 			ts, srv := newTestServer(t)
 			dialable(srv)
 			// Startup mints the machine key before it ever draws a page.
-			if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+			if _, err := srv.store.EnsureServerIdentity(ctx, testBox); err != nil {
 				t.Fatalf("EnsureServerIdentity: %v", err)
 			}
 			tc.arrange(t, ts, srv)
@@ -520,7 +521,7 @@ func TestALoopbackBindDrawsNoCodeAndSaysWhy(t *testing.T) {
 	}
 
 	_, srv := newTestServer(t)
-	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	body := statusBody(t, srv)
@@ -576,7 +577,7 @@ func TestThePageRefusesAHostThatIsNotThisMachine(t *testing.T) {
 // 127.0.0.1, which is precisely the code this page refuses to draw.
 func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
 	_, srv := newTestServer(t)
-	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 
@@ -671,7 +672,7 @@ func TestTheLinkButtonRefusesAFormThatIsNotThePagesOwn(t *testing.T) {
 func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
-	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 
@@ -719,7 +720,7 @@ func statusResponse(t *testing.T, srv *Server) *httptest.ResponseRecorder {
 func TestTheMachineLinkCanBeCopied(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
-	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 
@@ -746,7 +747,7 @@ func TestTheMachineLinkCanBeCopied(t *testing.T) {
 func TestThePolicyAdmitsExactlyTheScriptThePageServed(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
-	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background(), testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 

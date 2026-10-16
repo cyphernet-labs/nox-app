@@ -5,7 +5,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -353,10 +352,13 @@ void main() {
     network.change();
     await liveUntil('live through Tor', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
 
-    // An onion address nobody publishes - a real key, so the address is
-    // well formed down to its curve point.
-    final nobodysKey = await (await Ed25519().newKeyPair()).extractPublicKey();
-    final nobody = torService.onionFromPublicKey(Uint8List.fromList(nobodysKey.bytes))!;
+    // An onion address nobody publishes - a real Ed25519 key, so the address
+    // is well formed down to its curve point: RFC 8032's first test vector.
+    final nobodysKey = [
+      for (var i = 0; i < 64; i += 2)
+        int.parse('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'.substring(i, i + 2), radix: 16),
+    ];
+    final nobody = torService.onionFromPublicKey(Uint8List.fromList(nobodysKey))!;
     expect((await addresses.saveManual(manualAddress: null, manualOnion: '$nobody:443')).hasData, isTrue);
     watch = Stopwatch()..start();
     await reconnect();

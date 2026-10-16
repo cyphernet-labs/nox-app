@@ -21,6 +21,7 @@ import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
@@ -84,13 +85,13 @@ void main() {
   });
 
   test('the device key survives a rollback, so a retry is the same install', () async {
-    final before = (await session.deviceSecret()).data;
+    final before = (await session.deviceKey()).data;
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: false);
     await session.saveServer(address: '10.0.0.1:9000', serverKey: kKeyA);
 
     await session.discardSignIn();
 
-    expect((await session.deviceSecret()).data, before, reason: 'a failed attempt changed no install');
+    expect((await session.deviceKey()).data, before, reason: 'a failed attempt changed no install');
     // The server it pointed at goes, though: leaving it would aim the next
     // connection at a machine this install never paired with.
     expect((await session.serverAddress()).data, isNull);
@@ -98,7 +99,7 @@ void main() {
 
   test('logout takes the key and the server with it', () async {
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-    final before = (await session.deviceSecret()).data;
+    final before = (await session.deviceKey()).data;
     await session.saveServer(address: '10.0.0.1:9000', serverKey: kKeyA);
 
     await session.clear();
@@ -106,7 +107,7 @@ void main() {
     expect((await session.serverAddress()).data, isNull);
     // A new key, because this is a different install of the app as far as the
     // server is concerned - which is why sign-in must never take this path.
-    expect((await session.deviceSecret()).data, isNot(before));
+    expect((await session.deviceKey()).data, isNot(before));
   });
 
   test('the paired server address is what a later connection uses', () async {
@@ -252,9 +253,9 @@ void main() {
       await starter.start();
       await settle();
 
-      final seed = (await session.deviceSecret()).data!;
+      final pair = (await session.deviceKey()).data!;
       expect(prober.keys.first.serverKey, base64.decode(kKeyA));
-      expect(prober.keys.first.deviceSeed, base64.decode(seed));
+      expect(prober.keys.first.devicePrivateKey, base64.decode(pair.privateKey));
     });
 
     test('pairing with a DIFFERENT server binds the new key, not the cached one', () async {
@@ -646,11 +647,12 @@ void main() {
       final args = hello!['data'] as Map<String, dynamic>;
       expect(args.containsKey('device_key'), isFalse);
       expect(args.containsKey('signature'), isFalse);
-      // The seed is the one thing that must never travel. Compared against the
+      // The device's key is the one thing that must never travel. Compared against the
       // stored value rather than against a shape, because a bug that sent it
       // would send exactly this string.
-      final seed = (await session.deviceSecret()).data;
-      expect(hello.toString(), isNot(contains(seed!)));
+      final pair = (await session.deviceKey()).data!;
+      expect(hello.toString(), isNot(contains(pair.privateKey)));
+      expect(hello.toString(), isNot(contains(pair.publicKey)));
     });
 
     test('a device key that cannot be read is a failed attempt, never a wipe', () async {
@@ -816,7 +818,7 @@ void main() {
       // course, and treating that as a revocation wiped the key and the address
       // a sign-in in progress had just written.
       await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
-      final before = (await session.deviceSecret()).data;
+      final before = (await session.deviceKey()).data;
 
       await starter.start();
       await settle();
@@ -824,7 +826,7 @@ void main() {
       await settle();
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect((await session.deviceSecret()).data, before);
+      expect((await session.deviceKey()).data, before);
       expect((await session.serverAddress()).data, '10.0.0.5:9000');
     });
   });
@@ -838,7 +840,8 @@ class _LockedSeed implements SessionRepository {
   final SessionRepository _real;
 
   @override
-  Future<RepositoryResult<String>> deviceSecret() async => const RepositoryResult<String>.error(exception: RepositoryException.unknown);
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey() async =>
+      const RepositoryResult<DeviceKeyPair>.error(exception: RepositoryException.unknown);
 
   @override
   Future<RepositoryResult<String?>> serverAddress() => _real.serverAddress();

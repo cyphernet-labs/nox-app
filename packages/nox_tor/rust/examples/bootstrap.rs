@@ -6,8 +6,8 @@
 //! the same directories, and - with an onion host - times the first and a
 //! repeated connection to the service: the hedged connect every onion channel
 //! makes (044), by the address alone (045), up to the open Tor stream. TLS and
-//! Eidolon come on top of that in a channel and need a paired device's seed, so
-//! they are not timed here.
+//! the /auth check come on top of that in a channel and need a paired device's
+//! key, so they are not timed here.
 
 use std::time::{Duration, Instant};
 

@@ -15,12 +15,13 @@ import (
 
 // The TLS layer of the channel (contract §1, feature 044) and nothing more.
 //
-// TLS here buys an encrypted session and the binding the channel check signs;
-// it does NOT decide who is on the other end. That is the check's job
-// (channel.go): the device proves its key and the server proves the machine's,
-// both over this session's exporter. So the certificate is technical - a
-// throwaway key minted in memory on every start, which no client compares with
-// anything - and the machine's own key never meets a TLS stack at all.
+// TLS here buys an encrypted session; it does NOT decide who is on the other
+// end. That is the check's job (channel.go, internal/connauth): in POST /auth
+// and POST /auth2 the device proves its key and the server proves the
+// machine's, each by signing the other's challenge. So the certificate is
+// technical - a throwaway key minted in memory on every start, which no client
+// compares with anything - and the machine's own key never meets a TLS stack
+// at all.
 
 // certificateLifetime is how long the certificate claims to be valid.
 //
@@ -83,8 +84,7 @@ func channelTLSConfig(now time.Time) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		// Both ends are written today and owe nothing to anything older; the
-		// exporter the check signs is TLS 1.3's (RFC 9266).
+		// Both ends are written today and owe nothing to anything older.
 		MinVersion: tls.VersionTLS13,
 		// http/1.1 and nothing else: the WebSocket upgrade this server is built
 		// around does not exist over h2.
