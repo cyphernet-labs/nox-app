@@ -109,10 +109,11 @@ nox_app/
 │   │   │   ├── base_mapper.dart                 BaseMapper<E,M,...> (+ list-варианты)
 │   │   │   └── item/item_mapper.dart            ItemMapper (entity ⇄ model)
 │   │   ├── remote/
-│   │   │   ├── api_client.dart                  тонкая обёртка над Dio: initBase() = base URL из AppConfig.apiUrl +
-│   │   │   │                                     AuthInterceptor. Для команд контракта v0 инертна: живой транспорт —
-│   │   │   │                                     WS-конверт (NoxSocketClient, фаза 026), и живые data-sources ходят
-│   │   │   │                                     через него; Dio зарезервирован под upload/download блобов (фаза 028)
+│   │   │   ├── api_client.dart                  тонкая обёртка над Dio для байтов вложений (фаза 028): initBase(address:)
+│   │   │   │                                     = base URL спаренного сервера + AuthInterceptor; зовёт его только
+│   │   │   │                                     LiveSessionStarter. Команды идут WS-конвертом (NoxSocketClient, фаза 026)
+│   │   │   ├── channel/                         канал нативного модуля (фазы 044, 050): ChannelHttpClient — клиенты
+│   │   │   │                                     сокета и Dio, ChannelSocket — Socket поверх канала, ChannelFailure
 │   │   │   ├── socket/                          живой канал контракта v0 (фаза 026): nox_socket_client.dart (конверт,
 │   │   │   │                                     корреляция команд, фазы сессии, reconnect + keepalive),
 │   │   │   │                                     socket_channel_factory.dart (порт соединения), server_frame.dart

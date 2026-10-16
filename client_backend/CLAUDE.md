@@ -333,8 +333,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   or a line at a time from standard input
 - `service_windows.go`, `service_other.go`, `servicelog.go` — `noxd` as a
   Windows service (049): started by the service control manager it logs to
-  `noxd.log` beside the database (set aside as `noxd.log.1` at 16 MiB) and
-  stops on the manager's Stop or Shutdown; everywhere else main runs as before
+  `noxd.log` beside the database (set aside as `noxd.log.1` at 16 MiB - best
+  effort: a log another program holds open grows on, with a warning, rather
+  than keeping the server from starting) and stops on the manager's Stop or
+  Shutdown; everywhere else main runs as before
 - `commands.go`          — the `noxd` subcommands by name, and unlock, password,
   backup and restore (047); `link` stays in `main.go`
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
@@ -859,6 +861,21 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   person's other devices for anything. A revoked device that was itself asking
   to join is denied too: the person who revoked it is not to be asked to let it
   back in on a request it opened before.
+- **A revoked device's connection runs NOTHING more of its own.** dropDevice
+  marks it (`client.revoked`, under `Server.mu`) before it queues
+  `device.revoked`: every command read after that is `unauthenticated`
+  (contract §2.1), however long the goodbye takes, and the goodbye itself is
+  cut after `revokedFlush` (5 s) - a peer that stops reading would otherwise
+  hold it for `writeTimeout` a queued frame and keep issuing commands, other
+  devices' revocation among them. `device.revoke` also goes through
+  `store.RevokeDeviceAs`, which refuses a caller whose own row is gone inside
+  the same transaction, like `IssueDeviceInvite` and `DecidePairRequest`.
+- **A stranger's request is a Debug line.** `logRequests` writes Info only for
+  a request whose connection proved a paired key (`limitStrangers` notes it on
+  the request): anyone can mint a key and pass the check, and nothing bounds
+  how often (050), so strangers' lines at Info would push out an operator's.
+  Refusals at the check follow the same rule: a first request that is no step
+  of it is Debug, one after a good `/auth` is Info (`connauth.ErrAfterAuth`).
 - The server's private key lives INSIDE the database file - RustSecureBox's
   32-byte private key in `server_identity` (050). The model's case 6 warns that
   a backup holding only the DB would leave the devices facing a stranger; one artifact makes that impossible,

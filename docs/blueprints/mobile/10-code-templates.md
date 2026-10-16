@@ -953,7 +953,7 @@ class ItemDao {
 
 ## 10. Обработка ошибок слоя данных — без типизированной иерархии исключений
 
-> **Правило данного блюпринта:** слой данных **не** заводит собственную иерархию типизированных исключений — `ApiException`, `DaoException` и `BaseDomainExceptionHelper` намеренно отсутствуют. Единственный механизм — тонкий mixin `BaseRepositoryHelper.execute<TD>()` (см. §11): он оборачивает операцию репозитория в guarded try/catch, **обязательно** логирует через `LogRepository` и мапит ошибки в доменный `RepositoryException`. Веток **три**: уже смапленный доменный сбой (`on BaseRepositoryException`) проходит насквозь неразбавленным, `DioException` мапится по типу соединения и HTTP-статусу (`_mapDioException`), всё остальное → `unknown`. Конкретный доменный код callback может вернуть и сам — явным `return RepositoryResult.error(exception: RepositoryException.<code>)` (например `notFound` при cache-miss) либо бросив его через `unwrapEnvelope` (§11b). Полное описание — в [04-data-layer.md](04-data-layer.md) §5; шаблон `RepositoryException`-enum — в §3e выше.
+> **Правило данного блюпринта:** слой данных **не** заводит собственную иерархию типизированных исключений — `ApiException`, `DaoException` и `BaseDomainExceptionHelper` намеренно отсутствуют. Единственный механизм — тонкий mixin `BaseRepositoryHelper.execute<TD>()` (см. §11): он оборачивает операцию репозитория в guarded try/catch, **обязательно** логирует через `LogRepository` и мапит ошибки в доменный `RepositoryException`. Веток **четыре**: уже смапленный доменный сбой (`on BaseRepositoryException`) проходит насквозь неразбавленным, мёртвый канал (`on SocketUnavailableException`) становится `connection`, `DioException` мапится по типу соединения и HTTP-статусу (`_mapDioException`), всё остальное → `unknown`. Конкретный доменный код callback может вернуть и сам — явным `return RepositoryResult.error(exception: RepositoryException.<code>)` (например `notFound` при cache-miss) либо бросив его через `unwrapEnvelope` (§11b). Полное описание — в [04-data-layer.md](04-data-layer.md) §5; шаблон `RepositoryException`-enum — в §3e выше.
 
 ---
 
@@ -977,11 +977,12 @@ abstract class LogRepository {
 
 **Целевой путь:** `lib/data/exception/base_repository_helper.dart`
 
-Mixin оборачивает операцию в try/catch, **обязательно логирует через `LogRepository`** и мапит ошибки в доменный `RepositoryException`. `executionFunction` возвращает **уже-обёрнутый** `RepositoryResult<TD>` (callback заканчивается `return RepositoryResult.success(data: …)` или `return RepositoryResult.error(exception: RepositoryException.<code>)`). Никакого `on BaseDomainExceptionHelper`, никакого `ApiException` / `DaoException` — три catch-ветки плюс хелпер разворачивания конверта.
+Mixin оборачивает операцию в try/catch, **обязательно логирует через `LogRepository`** и мапит ошибки в доменный `RepositoryException`. `executionFunction` возвращает **уже-обёрнутый** `RepositoryResult<TD>` (callback заканчивается `return RepositoryResult.success(data: …)` или `return RepositoryResult.error(exception: RepositoryException.<code>)`). Никакого `on BaseDomainExceptionHelper`, никакого `ApiException` / `DaoException` — четыре catch-ветки плюс хелпер разворачивания конверта.
 
 ```dart
 import 'package:dio/dio.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -997,6 +998,12 @@ mixin BaseRepositoryHelper {
       // `unknown` by the catch-all.
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: e);
+    } on SocketUnavailableException catch (e, stackTrace) {
+      // The live channel is down, or a command went unanswered. Without this
+      // branch it lands in the catch-all as `unknown`, and every cache fallback
+      // guarded on `connection` becomes unreachable code.
+      logRepository.error(target: this, error: e, stackTrace: stackTrace);
+      return RepositoryResult<TD>.error(exception: RepositoryException.connection);
     } on DioException catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: _mapDioException(e));
@@ -2266,7 +2273,7 @@ void main() {
 - [ ] `BaseMapper<E, M, AdResult, AdParam>` + mapper `@lazySingleton`, вся коэрция enum/DateTime внутри него.
 - [ ] Env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory) + реактивный DAO (`watch`/`onSnapshots`/`transaction`/`mutate`); **без типизированного `DaoException`** — сырой throw при сбое хранилища, `null`/no-op при отсутствии записи.
 - [ ] Слой данных **без** типизированной иерархии исключений: нет `ApiException`, нет `DaoException`, нет `BaseDomainExceptionHelper` — единственный механизм — `BaseRepositoryHelper.execute` (`BaseRepositoryException` — насквозь, `DioException` — через `_mapDioException`, прочее → `unknown`).
-- [ ] `BaseRepositoryHelper.execute<TD>(Function executionFunction)` (`with BaseRepositoryHelper` только, без `on`-ограничения; три catch-ветки; callback возвращает уже-обёрнутый `RepositoryResult`) + `unwrapEnvelope<TD>(response, what)` с `RepositoryException.fromWireCode`, с **обязательным** `LogRepository.error` (никакого `print`) + impl `@LazySingleton(as: Interface, env:[dev,prod,test])` с DAO-stream-subscribed `BehaviorSubject` и `@disposeMethod`; пагинированный список — network-only.
+- [ ] `BaseRepositoryHelper.execute<TD>(Function executionFunction)` (`with BaseRepositoryHelper` только, без `on`-ограничения; четыре catch-ветки — доменная насквозь, `SocketUnavailableException` → `connection`, `DioException` по типу/статусу, прочее → `unknown`; callback возвращает уже-обёрнутый `RepositoryResult`) + `unwrapEnvelope<TD>(response, what)` с `RepositoryException.fromWireCode`, с **обязательным** `LogRepository.error` (никакого `print`) + impl `@LazySingleton(as: Interface, env:[dev,prod,test])` с DAO-stream-subscribed `BehaviorSubject` и `@disposeMethod`; пагинированный список — network-only.
 - [ ] Dio `ApiClient` + `RequestBuilder<T>` + `RequestBuilderHelper` + `GetItemsApi` (обёртка в `ResponseEntity`).
 - [ ] Freezed BLoC-трио: `<Feature>ListEvent` (`@freezed sealed`: `Initialize`/`LoadItems`/`RefreshRequested`/`UpdateSearchQuery`/`ShowItemDetails`), `<Feature>ListState` (`@freezed sealed`: `Initializing`/`Initialized{pagingState,items,nextPage,isLastPage,…}` — без поля `total`/`Error`), `<Feature>ListBloc extends BaseBloc` с `applyPage`, `PublishSubject` side-effects, restartable-поиском. Никакого ручного `Equatable`.
 - [ ] `PagingStateExt.applyPage` (v5 stateless, generic over `K = String = item id`, возвращает запись `(updatedList, pagingState, nextPage)`, принимает `(List<T>, PageMetadata)`; конец списка — `!meta.hasMore`, один helper на оба пути контракта v0); ошибки идут в `pagingState.error`.

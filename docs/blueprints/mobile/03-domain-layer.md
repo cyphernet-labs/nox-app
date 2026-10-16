@@ -227,7 +227,7 @@ enum RepositoryException implements BaseRepositoryException {
 
 Типизированной иерархии `ApiException` / `DaoException` **нет** — это сознательное решение (подтверждено комментарием в `repository_exception.dart`). Хвост значений зеркалит коды ошибок контракта v0 §2.1, чтобы отказ команды оставался различимым end-to-end; статический `RepositoryException.fromWireCode(String)` — единственная точка маппинга кода с провода, и незнакомый этой сборке код деградирует в `internal` (правило эволюции), а не роняет клиент.
 
-Data-слой маппит необработанные ошибки прямо в этот enum внутри `BaseRepositoryHelper.execute`, у которого **три** catch-ветки: `on BaseRepositoryException` (уже смаппленный доменный отказ — например код с провода из `unwrapEnvelope` — проходит насквозь и **не** размывается в `unknown`), затем `on DioException` (таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, прочее → `internal`), затем catch-all → `unknown`. Подробности — `04-data-layer.md` §5.
+Data-слой маппит необработанные ошибки прямо в этот enum внутри `BaseRepositoryHelper.execute`, у которого **четыре** catch-ветки: `on BaseRepositoryException` (уже смаппленный доменный отказ — например код с провода из `unwrapEnvelope` — проходит насквозь и **не** размывается в `unknown`), затем `on SocketUnavailableException` → `connection` (живой канал не поднят или команда осталась без ответа), затем `on DioException` (таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, прочее → `internal`), затем catch-all → `unknown`. Подробности — `04-data-layer.md` §5.
 
 | Значение | Смысл |
 |---|---|
@@ -235,10 +235,10 @@ Data-слой маппит необработанные ошибки прямо 
 | `internal` | Невосстановимое внутреннее состояние или серверная ошибка (5xx); сюда же деградирует незнакомый код с провода. |
 | `authentication` | Неверные учётные данные / провал аутентификации (неправильный логин/пароль). |
 | `connection` | Сетевой/I-O сбой, таймаут, недостижимый сервер. |
-| `unauthenticated` | Вызывающий не аутентифицирован (токен истёк, нужен повторный вход) — 401 / `unauthenticated`. |
+| `unauthenticated` | Ключ устройства не среди спаренных — `unauthenticated` / `401`. Принудительный выход вызывает только `unauthenticated` в ответ на `session.hello` (так выглядит и отзыв устройства); `401` от `/files` — неудавшаяся передача, не выход. |
 | `notFound` | Запрошенный ресурс не существует — 404 / `not_found`. |
 | `invalidRequest` | Запрос не прошёл валидацию сервера — `invalid_request`. |
-| `nameTaken` | Имя чата или label уже занято — `name_taken`. |
+| `nameTaken` | Имя чата уже занято на этом сервере — `name_taken`. Имя человека на уникальность не проверяется. |
 | `payloadTooLarge` | Payload больше объявленных сервером лимитов — `payload_too_large`. |
 | `attachmentGone` | Загруженный blob истёк или уже собран — `attachment_gone`. |
 | `rateLimited` | Сервер притормозил клиента — `rate_limited`. |

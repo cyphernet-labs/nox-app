@@ -137,7 +137,7 @@ Future<void> configureDependencies(String env) async {
 - `ConnectivityService` — `ConnectivityServiceImpl` для `[dev, prod]`, `MockConnectivityService` для `[test]` (плагину нужен platform channel, которого под `flutter_test` нет);
 - `ChatRemoteDataSource` / `MessageRemoteDataSource` — после флипа фазы 026 `Real*` живут в `[dev]`, моки сужены до `[prod, test]` (§6.2);
 - `SessionPhaseService` — `SocketSessionPhaseService` (фаза сессии из живого канала) в `[dev]`, `ConnectivitySessionPhaseService` (фаза из коннективности) в `[prod, test]`. С фазы 036 у него есть и `reconnect()`: терминальной фазе лестницы переподключения не осталось, и без явного «попробовать ещё раз» приложение, однажды отказавшее серверу, не возвращается никогда. В мок-окружениях это no-op — канала там нет.
-- `TorService` (фаза 040) — `NativeTorService` (Arti через `package:nox_tor`) в `[dev, prod]`, `FakeTorService` в `[test]`: тесты никогда не грузят нативную библиотеку, а фейк по умолчанию «не поддерживается», поэтому тест, который не включил его сам, идёт только прямым путём.
+- `TorService` (фаза 040) — `NativeTorService` (Arti через `package:nox_tor`) в `[dev, prod]`, `FakeTorService` в `[test]`: тесты никогда не поднимают Tor (нативную библиотеку они грузят только ради хранилища `NoxVault`, фаза 048), а фейк по умолчанию «не поддерживается», поэтому тест, который не включил его сам, идёт только прямым путём.
 - `AppLifecycleService` и `NetworkChangeService` (фаза 040) — `AppLifecycleServiceImpl` / `NetworkChangeServiceImpl` в `[dev, prod]`, `ForegroundAppLifecycleService` / `QuietNetworkChangeService` в `[test]`.
 - `ConnectionStatusService` (фаза 040) — `LiveConnectionStatusService` (фаза сокета + выбор пути + статус Tor) в `[dev]`, вывод из `SessionPhaseService` в `[prod, test]`.
 - `ServerAddressesRepository` (фазы 040, 045) — одна реализация на все три окружения поверх защищённого хранилища: настройки связи (адреса сервера, ручная правка, `Use Tor`) нужны экрану подключения и разделу «Связь» в любом флейворе.
@@ -624,7 +624,7 @@ class LoggerLogRepository implements LogRepository {
 
 ## 10. `main.dart` — последовательность запуска
 
-Точный порядок: привязка Flutter → `runZonedGuarded` → резолв флейвора → `await configureDependencies(env)` → `await getIt.allReady()` → инициализация конфиг-репозитория → уборка устаревших ключей и снятие сессии без ключа сервера → подъём живого канала и слива очереди исходящих → `runApp(AppRoot())`. Маппинг флейвор → окружение: `prod` → `Environment.prod`, `stage` → `Environment.dev`.
+Точный порядок: `runZonedGuarded` → привязка Flutter → `AppDataRoot.useLocalFolderOnWindows()` → резолв флейвора → `await configureDependencies(env)` → `await getIt.allReady()` → инициализация конфиг-репозитория → уборка устаревших ключей → `appStateRepository.holdUntil(started)` → `runApp(AppRoot())` → `await started`. `started` — это `_start()`: исключение папки данных из бэкапа → уборка открытых данных сборок до 048 → удаление временных открытых копий → `authRepository.openLocalData()` → снятие сессии, которая не может проверить соединение → подъём живого канала → слив очереди исходящих. Маппинг флейвор → окружение: `prod` → `Environment.prod`, `stage` → `Environment.dev`.
 
 ```dart
 import 'dart:async';
@@ -632,6 +632,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -640,46 +641,41 @@ import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 
 void main() {
   runZonedGuarded<Future<void>>(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      // 1) Before anything asks for a folder, the secure store's own file among
+      //    them: on Windows the data lives in the local application data.
+      AppDataRoot.useLocalFolderOnWindows();
 
-      // 1) Resolve flavor at compile time, map flavor -> DI environment.
+      // 2) Resolve flavor at compile time, map flavor -> DI environment.
       final flavor = AppFlavor.getFlavor();
       final env = flavor == AppFlavorType.prod ? Environment.prod : Environment.dev;
 
-      // 2) Build the container (+ lock orientation in parallel), then await async pre-resolves.
+      // 3) Build the container (+ lock orientation in parallel), then await async pre-resolves.
       await Future.wait<dynamic>([
         configureDependencies(env),
         SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
       ]);
       await getIt.allReady(); // resolve every preResolve: true async registration (today: SharedPreferences)
 
-      // 3) Initialize the config/observability repository with the resolved flavor.
-      final configRepository = getIt<AppConfigRepository>();
-      await configRepository.initialize(flavorType: flavor);
+      // 4) Initialize the config/observability repository with the resolved flavor.
+      await getIt<AppConfigRepository>().initialize(flavorType: flavor);
 
-      // 4) One-time upgrade housekeeping: keys nothing reads any more go here,
+      // 5) One-time upgrade housekeeping: keys nothing reads any more go here,
       //    once, never inside a read. Reports rather than throws.
       await sessionRepository.sweepLegacyKeys();
-      // 5) A session with no server key has nothing to check a connection
-      //    against: it is wiped once (a forced logout) and the person pairs
-      //    again. A keychain that cannot be read right now wipes nothing.
-      await authRepository.retireLegacySession();
 
-      // 6) Bring the live channel up before the first screen resolves — only the
-      //    dev environment binds a starter at all, hence the isRegistered guard.
-      if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().start();
-      // 7) The outgoing queue drains in EVERY flavor, unlike the socket-bound
-      //    starter above: a message written before the last close has to leave
-      //    whether or not this build talks to a real server.
-      getIt<OutboxService>().start();
-
-      // 8) Go.
+      // 6) The first screen waits for the start: the splash stays up meanwhile,
+      //    and no state is resolved from a session the start has not finished with.
+      final started = _start();
+      appStateRepository.holdUntil(started);
       runApp(const AppRoot());
+      await started;
     },
     (error, stack) {
       // Last-resort guard: anything uncaught above the widget tree lands here.
@@ -690,21 +686,48 @@ void main() {
     },
   );
 }
+
+Future<void> _start() async {
+  // 7) Out of every platform backup, and the unsealed leftovers of older builds gone.
+  await AppDataRoot.excludeFromBackup();
+  await AppDataRoot.sweepLegacy();
+  // 8) Plain copies a player or another app was reading when the app last closed.
+  await getIt<LocalFilesService>().clearCopies();
+  // 9) The local data under its key, before anything reads it.
+  await authRepository.openLocalData();
+  // 10) A session that cannot check a connection is wiped once; the person pairs again.
+  await authRepository.retireLegacySession();
+  // 11) The live channel, dev only, and guarded: cached data beats no screen at all.
+  if (getIt.isRegistered<LiveSessionStarter>()) {
+    try {
+      await getIt<LiveSessionStarter>().start();
+    } on Object catch (e, s) {
+      logRepository.error(target: 'main', error: e, stackTrace: s);
+    }
+  }
+  // 12) The outgoing queue drains in EVERY flavor.
+  getIt<OutboxService>().start();
+}
 ```
 
 Разбор шагов:
 
-1. **`WidgetsFlutterBinding.ensureInitialized()`** — обязателен до любого обращения к платформенным каналам (ориентация, `PackageInfo`, `path_provider`).
-2. **`AppFlavor.getFlavor()` + маппинг** — единственное место, где флейвор превращается в DI-окружение (`prod` → `Environment.prod`, `stage` → `Environment.dev`).
-3. **`Future.wait([configureDependencies(env), setPreferredOrientations(...)])`** — сборка контейнера и блокировка ориентации идут параллельно (независимы).
-4. **`getIt.allReady()`** — блокирует до завершения всех `preResolve: true` async-регистраций. Вызов делает **настоящую** работу: `@preResolve`-`SharedPreferences` из `RegisterModule` (§2) резолвится именно здесь, поэтому без `allReady()` первый же `getIt<SharedPreferences>()` в сессии/настройках бросил бы «not ready». Будущие async-потребители (например `PackageInfo.fromPlatform()` из целевой формы §3) подключаются к тому же вызову и правки `main.dart` не требуют.
-5. **`configRepository.initialize(flavorType: flavor)`** — поднимает конфиг/обсёрвабилити-репозиторий (например, инициализация Sentry-сообщений, чтение Remote Config-подобных значений) уже после готового контейнера.
-6. **`sessionRepository.sweepLegacyKeys()`** — разовая уборка ключей, которые больше никто не читает (`session.is_owner`, записи приглашения версии 2, `session.server_fingerprint`, `session.device_secret`). Здесь, а не внутри чтения сессии: миграция внутри самого горячего чтения попадала бы в конверт ошибок, решающий, увидит человек свои чаты или экран Login. Вызов отчитывается результатом и не бросает — guard не нужен.
-7. **`authRepository.retireLegacySession()`** — сессия, у которой есть идентификатор, но нет ключа сервера (`session.server_key`), не может проверить ни одно соединение: проверка `/auth` сверяет ключ сервера с ключом из ссылки. Не пройдёт проверку и сессия, чья пара ключей устройства сделана не RustSecureBox этой сборки (`SessionRepository.predatesSecureBox()`: записи `session.device_key` нет или хранимый открытый ключ не тот, что RustSecureBox даёт для хранимого закрытого): сервер такой ключ не узнает. Такая сессия стирается один раз — принудительным выходом, — и человек спаривается заново; миграции нет. Ошибка чтения защищённого хранилища не стирает ничего: это с той же вероятностью действующая сессия. Тоже до `LiveSessionStarter.start()` — до того, как что-либо прочтёт сессию.
-8. **`LiveSessionStarter.start()` под `getIt.isRegistered<T>()`** — живой канал поднимается до первого экрана (проверка мира и подписка применителя обязаны опередить приветствие). Guard обязателен: стартер зарегистрирован только в `[Environment.dev]` (§3), и в `prod`/`test` его в контейнере нет.
-9. **`OutboxService.start()` — без guard'а**: очередь исходящих зарегистрирована во всех трёх окружениях (§6.3), и слив нужен в любой сборке — сообщение, записанное до прошлого закрытия приложения, должно уйти независимо от того, говорит ли эта сборка с реальным сервером.
-10. **`runApp(AppRoot())`** — корневой виджет. `AppRoot` поднимает `AppRootBloc` (тема: light/dark + `themeMode`) — см. [06-theming.md](06-theming.md).
-11. **`runZonedGuarded`** — внешний guard: всё непойманное над деревом виджетов попадает в callback ошибки и роутится через единственный лог-канал.
+1. **`runZonedGuarded`** — внешний guard: всё непойманное над деревом виджетов попадает в callback ошибки и роутится через единственный лог-канал.
+2. **`WidgetsFlutterBinding.ensureInitialized()`** — обязателен до любого обращения к платформенным каналам (ориентация, `PackageInfo`, `path_provider`).
+3. **`AppDataRoot.useLocalFolderOnWindows()`** — до того, как кто-либо спросит папку, файл защищённого хранилища в том числе. На Windows ставит `LocalAppDataPathProvider` в `PathProviderPlatform.instance`, и `path_provider` отвечает `%LOCALAPPDATA%\NOX` каждому вызывающему: перемещаемый профиль эту папку с машины не уносит. На остальных платформах вызов ничего не делает. Вызов после первого обращения к папке опоздал бы: база, файлы и хранилище легли бы в перемещаемую папку.
+4. **`AppFlavor.getFlavor()` + маппинг** — единственное место, где флейвор превращается в DI-окружение (`prod` → `Environment.prod`, `stage` → `Environment.dev`).
+5. **`Future.wait([configureDependencies(env), setPreferredOrientations(...)])`** — сборка контейнера и блокировка ориентации идут параллельно (независимы).
+6. **`getIt.allReady()`** — блокирует до завершения всех `preResolve: true` async-регистраций. Вызов делает **настоящую** работу: `@preResolve`-`SharedPreferences` из `RegisterModule` (§2) резолвится именно здесь, поэтому без `allReady()` первый же `getIt<SharedPreferences>()` в сессии/настройках бросил бы «not ready». Будущие async-потребители (например `PackageInfo.fromPlatform()` из целевой формы §3) подключаются к тому же вызову и правки `main.dart` не требуют.
+7. **`getIt<AppConfigRepository>().initialize(flavorType: flavor)`** — поднимает конфиг/обсёрвабилити-репозиторий (например, инициализация Sentry-сообщений, чтение Remote Config-подобных значений) уже после готового контейнера.
+8. **`sessionRepository.sweepLegacyKeys()`** — разовая уборка ключей, которые больше никто не читает: `session.is_owner`, записи приглашения версии 2 (`session.invite_onion`, `session.invite_access_key`), `session.server_fingerprint`, `session.device_secret`, ключ доступа к onion-сервису и его отметка (`session.access_key`, `session.access_key_registered`), а на iOS и macOS — все записи под параметрами хранилища сборок до 048. Здесь, а не внутри чтения сессии: миграция внутри самого горячего чтения попадала бы в конверт ошибок, решающий, увидит человек свои чаты или экран Login. Вызов отчитывается результатом и не бросает — guard не нужен.
+9. **`appStateRepository.holdUntil(started)` → `runApp(AppRoot())` → `await started`** — дерево виджетов поднимается сразу, а первое состояние приложения не резолвится, пока старт не закончится: `watchAppState()` ждёт переданный `Future`, и сплэш стоит всё это время — столько, сколько отвечает защищённое хранилище. Старт, закончившийся ошибкой, приложение всё равно открывает (`holdUntil` глотает ошибку, лог пишет внешний guard). `AppRoot` поднимает `AppRootBloc` (тема: light/dark + `themeMode`) — см. [06-theming.md](06-theming.md). Первый экран работает уже после старта: возобновление спаривания, ждущего одобрения (2.1), читает то, что старт оставил.
+10. **`AppDataRoot.excludeFromBackup()`** — папка данных помечается `isExcludedFromBackup` при каждом запуске через канал `nox/backup` раннера (iOS и macOS; папка, созданная заново после стирания, — новая папка без метки). На Android бэкап выключен манифестом, Windows и Linux ничего не требуют. Best effort: ошибка только логируется.
+11. **`AppDataRoot.sweepLegacy()`** — удаляет открытые данные сборок до 048 там, где это собственные данные приложения: база в Documents на iOS/Android/macOS, вложения в кэше, на Windows — файл хранилища, копии и состояние Tor в перемещаемой папке. Documents человека на Windows и Linux и на Mac вне песочницы не трогает.
+12. **`LocalFilesService.clearCopies()`** — удаляет открытые временные копии (`<temp>/nox_open/`), которые читал плеер или другое приложение, когда приложение закрылось в прошлый раз.
+13. **`authRepository.openLocalData()`** — локальные данные открываются под своим ключом до того, как их что-либо прочтёт. Ключ открывает свою базу — дальше; нет ни ключа, ни базы — новый ключ, оставшиеся файлы удаляются; нет ключа, а база есть, или база ключом не открывается — данные стираются пофайлово, принудительный выход, человек спаривается заново; защищённое хранилище не ответило — ничего не стирается, вопрос повторяется через 2, 4, 8, 16, 30, 30… с. Подробности — [04-data-layer.md](04-data-layer.md) §6г.
+14. **`authRepository.retireLegacySession()`** — сессия, у которой есть идентификатор, но нет ключа сервера (`session.server_key`), не может проверить ни одно соединение: проверка `/auth` сверяет ключ сервера с ключом из ссылки. Не пройдёт проверку и сессия, чья пара ключей устройства сделана не RustSecureBox этой сборки (`SessionRepository.predatesSecureBox()`: записи `session.device_key` нет или хранимый открытый ключ не тот, что RustSecureBox даёт для хранимого закрытого): сервер такой ключ не узнает. Такая сессия стирается один раз — принудительным выходом, — и человек спаривается заново; миграции нет. Ошибка чтения защищённого хранилища не стирает ничего: это с той же вероятностью действующая сессия. После `openLocalData()` и до `LiveSessionStarter.start()` — до того, как что-либо прочтёт сессию.
+15. **`LiveSessionStarter.start()` под `getIt.isRegistered<T>()` и `try`/`catch`** — живой канал поднимается до первого экрана (проверка мира и подписка применителя обязаны опередить приветствие). Guard регистрации обязателен: стартер зарегистрирован только в `[Environment.dev]` (§3), и в `prod`/`test` его в контейнере нет. Ошибка старта логируется и приложение не держит: `start()` стирает локальный мир, когда сервер оказался другим, и кэш, который не стёрся, — не причина не показать ни одного экрана.
+16. **`OutboxService.start()` — без guard'а**: очередь исходящих зарегистрирована во всех трёх окружениях (§6.3), и слив нужен в любой сборке — сообщение, записанное до прошлого закрытия приложения, должно уйти независимо от того, говорит ли эта сборка с реальным сервером.
 
 > **Об ошибках BLoC и логировании.** Отдельного BLoC-обсёрвера в проекте **нет**. Логирование ошибок уже происходит на уровне репозиториев через обязательный `LogRepository` (`BaseRepositoryHelper.execute` всегда логирует — см. [04-data-layer.md](04-data-layer.md)), а ошибки в обработчиках BLoC оборачиваются `BaseBloc.executeLogic` (см. [05-presentation-layer.md](05-presentation-layer.md)) — поэтому отдельный BLoC-обсёрвер не нужен.
 
@@ -764,5 +787,5 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] `LogRepository` интерфейс (`lib/domain/repository/`, `Object? target`) + `LoggerLogRepository` impl `@LazySingleton(as: LogRepository)` (`lib/data/repository/`, `Logger(printer: SimplePrinter(printTime: true))` + `_tag`); в `lib/` нет сырого `print`/`debugPrint`.
 - [ ] `PackageInfo`: в скелете не зарегистрирован; в целевой форме — async `preResolve: true` вне теста, `setMockInitialValues` под тестом (подключается с первым потребителем).
 - [ ] `global_aliases.dart` — top-level **геттеры** (не `final`); сегодня их десять (`logRepository`, `itemRepository`, `settingsRepository`, `chatRepository`, `appStateRepository`, `authRepository`, `sessionRepository`, `cameraPermissionService`, `notificationPermissionService`, `qrImageDecodeService`), новые добавляются по мере «разогрева»; всё, у чего алиаса нет, BLoC зовёт через `getIt<T>()` напрямую.
-- [ ] `main.dart`: `ensureInitialized` → `runZonedGuarded(...)` → `AppFlavor.getFlavor` → `await configureDependencies(env)` → `await getIt.allReady()` → `getIt<AppConfigRepository>().initialize(flavorType:)` → `sessionRepository.sweepLegacyKeys()` → `authRepository.retireLegacySession()` (сессия без `session.server_key` стирается один раз; ошибка чтения не стирает ничего) → `LiveSessionStarter.start()` **под `getIt.isRegistered<T>()`** (dev-only регистрация) → `OutboxService.start()` (без guard'а, зарегистрирован везде) → `runApp(AppRoot)`; маппинг `prod→prod`, `stage→dev`.
+- [ ] `main.dart`: `runZonedGuarded(...)` → `ensureInitialized` → `AppDataRoot.useLocalFolderOnWindows()` (до первого обращения к папке) → `AppFlavor.getFlavor` → `await configureDependencies(env)` → `await getIt.allReady()` → `getIt<AppConfigRepository>().initialize(flavorType:)` → `sessionRepository.sweepLegacyKeys()` → `appStateRepository.holdUntil(started)` → `runApp(AppRoot)` → `await started`, где `started = _start()`: `AppDataRoot.excludeFromBackup()` → `AppDataRoot.sweepLegacy()` → `LocalFilesService.clearCopies()` → `authRepository.openLocalData()` (ключ потерян при данных на диске — стоит данных и спаривания; хранилище не отвечает — стоит только ожидания) → `authRepository.retireLegacySession()` (сессия без `session.server_key` или с парой ключей не этой RustSecureBox стирается один раз; ошибка чтения не стирает ничего) → `LiveSessionStarter.start()` **под `getIt.isRegistered<T>()`** (dev-only регистрация) и в `try`/`catch` → `OutboxService.start()` (без guard'а, зарегистрирован везде); маппинг `prod→prod`, `stage→dev`.
 - [ ] Один прогон `build_runner build --delete-conflicting-outputs` после любой правки аннотации/конструктора; `.config.dart` никогда не редактируется руками.

@@ -455,7 +455,7 @@ abstract class MessageRemoteDataSource {
 
 ### 5.5 Репозитории (network-only)
 
-Network-only команды: **без** DAO/`BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Каждый метод обёрнут в `execute<T>()` (mixin `BaseRepositoryHelper`, `lib/data/exception/base_repository_helper.dart`) — он всегда логирует через `LogRepository` и имеет **три** catch-ветки: `on BaseRepositoryException` (уже смапленный доменный код проходит наверх **неразбавленным**), `on DioException` (коэрция по типу/статусу: таймауты и `connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, остальное → `internal`) и catch-all → `unknown`.
+Network-only команды: **без** DAO/`BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Каждый метод обёрнут в `execute<T>()` (mixin `BaseRepositoryHelper`, `lib/data/exception/base_repository_helper.dart`) — он всегда логирует через `LogRepository` и имеет **четыре** catch-ветки: `on BaseRepositoryException` (уже смапленный доменный код проходит наверх **неразбавленным**), `on SocketUnavailableException` → `connection`, `on DioException` (коэрция по типу/статусу: таймауты и `connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, остальное → `internal`) и catch-all → `unknown`.
 
 Конверт разворачивает **готовый** хелпер `unwrapEnvelope<TD>(response, what)` того же миксина — руками `response.data` не проверять:
 

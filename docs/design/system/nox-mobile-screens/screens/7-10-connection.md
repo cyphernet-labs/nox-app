@@ -13,14 +13,14 @@ Detail scaffold: back arrow + title “Connection” + brand gradient hairline. 
 - `field-error` — A changed field fails the format check: “This isn't a valid server address.” / “This isn't a valid onion address.” under it, live while typing; Save stays off.
 - `saving` — A write is under way: the fields and Save are disabled.
 - `save-failed` — “Could not save. Try again.” under Save. A Use Tor switch that did not save has flipped back.
-- `problem` — No connection: the line above the fields carries the cause, else “No connection”.
+- `problem` — No connection: the line above the fields carries the cause, else “No connection”. An onion address the Tor module refused is the exception: “This isn't a valid onion address.” sits under the onion field, and the line above stays empty.
 
 ## Behavior
 - The format rules are 2.4's, for what was changed: `host:port` (an IPv4 address, a bracketed IPv6 address or a DNS name; port 1–65535; never an onion name) and a version-3 onion address whose version byte and checksum hold. A value already in effect is not checked again.
 - Save stores the edits and starts the connection again at once, so the next attempt goes by them. A value equal to what the server says counts as no edit: that field follows the server again from then on. An emptied onion field means no onion address. A server whose onion address moved is simply typed in here — no new pairing.
 - Use Tor applies the moment it is switched and starts the connection again. Switched off, Tor stops at once and a connection that went through it is dropped: the device goes direct only. Switched on, Tor is tried whenever no direct address answers and an onion address is known; the device returns to the direct path as soon as it answers. Off by default, and per device — not synced.
 - The server is the source of truth about its own addresses. A public or onion address it states replaces the person's edit of that field, and shows up in an untouched field while the section is open; a field the person is typing in keeps what they typed. An edit lasts until the server states that field again — it is there for a server the device cannot reach as it is.
-- The line above the fields shows only while there is no connection — a whole round of path finding failed, or another server answered behind the onion address: one of the six causes (see 5.1), else “No connection”. It is a live region, and it goes the moment a connection is greeted.
+- The line above the fields shows only while there is no connection — a whole round of path finding failed, or another server answered behind the onion address: one of the causes (see 5.1), else “No connection”. It is a live region, and it goes the moment a connection is greeted. An onion address the Tor module refused is said once, at the onion field, where it is fixed, and never in the line; that error goes with the no-connection state, and Save comes on as soon as a changed address passes the format check.
 
 ## Navigation
 - Arrives from Settings (7.1): the “Connection” row, directly under “Devices”.

@@ -15,13 +15,13 @@ Fills the Settings detail pane (02); no push, selection swaps the pane. The menu
 - `field-error` — A changed field fails it: the error under the field, live; Save off.
 - `saving` — Fields and Save disabled.
 - `save-failed` — “Could not save. Try again.”; a Use Tor switch that did not save has flipped back.
-- `problem` — No connection: the cause above the fields, else “No connection”.
+- `problem` — No connection: the cause above the fields, else “No connection”. An onion address the Tor module refused is said under the onion field instead, and the line above stays empty.
 
 ## Behavior
 - Same as mobile 7.10. Save stores the edits — a value equal to the server's counts as no edit, so that field follows the server again — and starts the connection again at once; a moved onion address is typed in, no new pairing; an emptied onion field means no onion address.
 - Use Tor applies the moment it is switched and starts the connection again; switched off, Tor stops at once and a connection through it is dropped. Off by default, per device.
 - Addresses the server states replace the person's edit of the same field and show up in untouched fields while the pane is open; a field being typed in keeps what was typed.
-- The line above the fields shows only while there is no connection: one of the six causes (see 01 · Chats), else “No connection”; a live region.
+- The line above the fields shows only while there is no connection: one of the causes (see 01 · Chats), else “No connection”; a live region. An onion address the Tor module refused is said once, at the onion field, never in the line; the error goes with the no-connection state.
 
 ## Navigation
 - Menu item “Connection” → this pane.
