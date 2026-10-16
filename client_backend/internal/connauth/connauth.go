@@ -67,9 +67,10 @@ var (
 	ErrMethod = errors.New("connauth: method not allowed")
 	// ErrUnauthenticated is any other path before the check passed: 401.
 	ErrUnauthenticated = errors.New("connauth: request before the check")
-	// ErrAfterAuth marks a refusal of the second request, after a /auth that
-	// passed: whoever sent it speaks this protocol - a scanner does not get a
-	// well-formed /auth right. It wraps the refusal's own kind.
+	// ErrAfterAuth marks everything that ends a connection after a /auth that
+	// passed - a refusal of the second request, or the connection ending
+	// there - and wraps that error's own kind. Whoever got that far speaks
+	// this protocol: a scanner does not get a well-formed /auth right.
 	ErrAfterAuth = errors.New("connauth: after /auth")
 	// ErrSignature is a signature that does not verify: 401 from the server;
 	// on the device's side, the server's signature over its challenge.
@@ -157,27 +158,35 @@ func respond(conn net.Conn, box *securebox.Box, serverKey securebox.PrivateKey) 
 		return none, nil, fmt.Errorf("connauth: send the answer to /auth: %w", err)
 	}
 
-	// Step 2: /auth2, over the server's challenge, by the key of step 1.
-	body, err = readStep(conn, br, Auth2Path)
-	if err != nil {
+	if err := respondAuth2(conn, br, box, device, ours); err != nil {
 		return none, nil, fmt.Errorf("%w: %w", ErrAfterAuth, err)
+	}
+	return device, withRest(conn, br), nil
+}
+
+// respondAuth2 is step 2: /auth2, over the server's challenge ours, by the key
+// device showed in step 1.
+func respondAuth2(conn net.Conn, br *bufio.Reader, box *securebox.Box, device securebox.PublicKey, ours securebox.Challenge) error {
+	body, err := readStep(conn, br, Auth2Path)
+	if err != nil {
+		return err
 	}
 	var req2 auth2Request
 	var theirSignature securebox.Signature
 	if json.Unmarshal(body, &req2) != nil || !decode(req2.Signature, theirSignature[:]) {
-		return none, nil, refuse(conn, http.StatusBadRequest, ErrMalformed)
+		return refuse(conn, http.StatusBadRequest, ErrMalformed)
 	}
 	valid, err := checkSignature(box, device, ours, theirSignature)
 	if err != nil {
-		return none, nil, err
+		return err
 	}
 	if !valid {
-		return none, nil, refuse(conn, http.StatusUnauthorized, ErrSignature)
+		return refuse(conn, http.StatusUnauthorized, ErrSignature)
 	}
 	if err := writeAnswer(conn, http.StatusOK, nil, false); err != nil {
-		return none, nil, fmt.Errorf("connauth: send the answer to /auth2: %w", err)
+		return fmt.Errorf("connauth: send the answer to /auth2: %w", err)
 	}
-	return device, withRest(conn, br), nil
+	return nil
 }
 
 // checkSignature is box.CheckSignature with a public key the library refuses

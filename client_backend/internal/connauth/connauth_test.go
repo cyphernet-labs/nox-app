@@ -147,8 +147,8 @@ func TestEveryRefusalOfTheFirstRequest(t *testing.T) {
 			if !resp.Close {
 				t.Fatal("a refusal without Connection: close")
 			}
-			if got := <-done; !errors.Is(got.err, c.kind) {
-				t.Fatalf("kind %v, want %v", got.err, c.kind)
+			if got := <-done; !errors.Is(got.err, c.kind) || errors.Is(got.err, ErrAfterAuth) {
+				t.Fatalf("kind %v, want %v and not after /auth", got.err, c.kind)
 			}
 		})
 	}
@@ -218,8 +218,8 @@ func TestEveryRefusalOfTheSecondRequest(t *testing.T) {
 			if resp.StatusCode != c.status || !resp.Close {
 				t.Fatalf("status %d close %v, want %d", resp.StatusCode, resp.Close, c.status)
 			}
-			if got := <-done; !errors.Is(got.err, c.kind) {
-				t.Fatalf("kind %v, want %v", got.err, c.kind)
+			if got := <-done; !errors.Is(got.err, c.kind) || !errors.Is(got.err, ErrAfterAuth) {
+				t.Fatalf("kind %v, want %v after /auth", got.err, c.kind)
 			}
 		})
 	}

@@ -142,6 +142,10 @@ func TestAFailedCheckIsRefusedLoggedAndClosed(t *testing.T) {
 		{"GET on /auth", http.StatusMethodNotAllowed, "DEBUG", "method not allowed", func(c *tls.Conn, br *bufio.Reader) *http.Response {
 			return checkRequest(t, c, br, "GET /auth HTTP/1.1\r\nHost: h\r\n\r\n")
 		}},
+		{"GET on /auth2 after /auth", http.StatusMethodNotAllowed, "INFO", "method not allowed", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+			passAuth(t, c, br, d)
+			return checkRequest(t, c, br, "GET /auth2 HTTP/1.1\r\nHost: h\r\n\r\n")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, err := tls.Dial("tcp", addr, testClientTLS())
