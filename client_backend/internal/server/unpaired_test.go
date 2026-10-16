@@ -700,3 +700,38 @@ func TestAStrangersRequestIsADebugLineAndADevicesAnInfoOne(t *testing.T) {
 		})
 	}
 }
+
+// Inside a stranger's WebSocket session the same holds: its frames - pair,
+// pair.cancel, a greeting refused - are Debug lines, however many it sends;
+// a greeted device's commands are Info ones.
+func TestAStrangersFramesAreDebugLinesAndADevicesCommandsInfoOnes(t *testing.T) {
+	buf := &syncBuffer{}
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "frames.db"),
+		slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer closeAll()
+	dev, _ := firstDevice(t, ts, srv)
+
+	stranger := dialAs(t, ts, nil, newDevice(t))
+	stranger.expectGreeting()
+	for i := 1; i <= 20; i++ {
+		stranger.send(fmt.Sprintf(`{"id":%d,"cmd":"pair","data":0}`, i))
+		stranger.expectReply(i)
+	}
+	stranger.send(`{"id":21,"cmd":"session.hello","data":{"schema":1}}`)
+	stranger.expectReply(21)
+	eventually(t, "the stranger's frames are logged", func() bool {
+		return strings.Count(buf.String(), `level=DEBUG msg="command handled"`) >= 21
+	})
+	if strings.Contains(buf.String(), `level=INFO msg="command handled"`) {
+		t.Fatal("a stranger's frame was an Info line")
+	}
+
+	device := dialAs(t, ts, srv, dev)
+	device.expectGreeting()
+	device.hello(1, "")
+	device.send(`{"id":2,"cmd":"device.list","data":{}}`)
+	device.expectOK(2)
+	eventually(t, "the device's command is an Info line", func() bool {
+		return strings.Contains(buf.String(), `level=INFO msg="command handled" conn=`) && strings.Contains(buf.String(), "cmd=device.list")
+	})
+}

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/coder/websocket"
@@ -75,7 +77,7 @@ func (c *client) readLoop() {
 		if err != nil {
 			status := websocket.CloseStatus(err)
 			if status == -1 && !errors.Is(err, c.ctx.Err()) {
-				c.logger.Info("connection read ended", "err", err)
+				c.logger.Log(context.Background(), c.lineLevel(), "connection read ended", "err", err)
 			}
 			return
 		}
@@ -157,7 +159,19 @@ func (c *client) dispatch(cmd protocol.Command) {
 	default:
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "unknown command"))
 	}
-	c.logger.Info("command handled", "cmd", cmd.Cmd, "id", cmd.ID)
+	c.logger.Log(c.ctx, c.lineLevel(), "command handled", "cmd", cmd.Cmd, "id", cmd.ID)
+}
+
+// lineLevel is how loud a line about this connection's traffic is: Info for a
+// device that greeted, Debug before. A key nobody paired can be minted by
+// anyone and its session lasts minutes, so its frames at Info would grow the
+// log with the frame rate and push out what an operator needs - the rule
+// logRequests keeps for HTTP.
+func (c *client) lineLevel() slog.Level {
+	if c.helloDone {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
 }
 
 // cleanup releases hub resources after the read loop ends.
