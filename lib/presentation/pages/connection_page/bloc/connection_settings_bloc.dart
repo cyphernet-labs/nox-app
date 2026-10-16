@@ -70,11 +70,31 @@ class ConnectionSettingsBloc extends BaseBloc<ConnectionSettingsEvent, Connectio
     // bloc, which throws into the zone rather than anywhere it is handled.
     if (isClosed) return;
     // The watch hands over what is stored on listen, and every change after.
-    _storedSub ??= _addresses.watch().listen((stored) => add(ConnectionSettingsEvent.storedChanged(stored)), onError: (Object _) {});
+    // A read that fails - a secure store not answering - is asked once more
+    // after a moment and then shown as nothing stored, the link's address in
+    // the field: a spinner with no way out would hide Save and Use Tor too.
+    _storedSub ??= _addresses.watch().listen(
+      (stored) => add(ConnectionSettingsEvent.storedChanged(stored)),
+      onError: (Object _) => _readAgain(),
+    );
     _statusSub ??= getIt<ConnectionStatusService>().watchStatus().listen(
       (status) => add(ConnectionSettingsEvent.connectionStatusChanged(status)),
     );
   }
+
+  /// After a failed read: once more, then nothing stored - only while the
+  /// section has not shown anything yet.
+  Future<void> _readAgain() async {
+    await Future<void>.delayed(readAgainAfter);
+    if (isClosed || !state.loading) return;
+    final stored = await _addresses.read();
+    if (isClosed || !state.loading) return;
+    add(ConnectionSettingsEvent.storedChanged(stored.data ?? ServerAddresses.empty));
+  }
+
+  /// How long a failed first read waits before it is asked again.
+  @visibleForTesting
+  static Duration readAgainAfter = const Duration(seconds: 2);
 
   /// What is stored, into the fields. A field the person is in the middle of
   /// changing keeps what they typed; one they have not touched follows - a

@@ -194,6 +194,17 @@ void main() {
     });
   });
 
+  test('a store that does not answer is asked again, then shown as nothing stored - never a spinner with no way out', () async {
+    ConnectionSettingsBloc.readAgainAfter = Duration.zero;
+    addTearDown(() => ConnectionSettingsBloc.readAgainAfter = const Duration(seconds: 2));
+    getIt.registerSingleton<ServerAddressesRepository>(_Unreadable(addresses));
+
+    final bloc = await open();
+
+    expect(bloc.state.loading, isFalse);
+    expect(bloc.state.serverAddress, _link, reason: 'the link\'s address, as with nothing stored');
+  });
+
   group('Use Tor', () {
     test('applies the moment it is switched, and starts the channel again', () async {
       final bloc = await open();
@@ -388,4 +399,16 @@ class _Refusing implements ServerAddressesRepository {
 
   @override
   Future<RepositoryResult<bool>> clear() async => _refused;
+}
+
+/// A store that does not answer a read: the watch fails, and so does a read.
+class _Unreadable extends _Refusing {
+  _Unreadable(super._real);
+
+  @override
+  Future<RepositoryResult<ServerAddresses>> read() async =>
+      const RepositoryResult<ServerAddresses>.error(exception: RepositoryException.unknown);
+
+  @override
+  Stream<ServerAddresses> watch() => Stream<ServerAddresses>.error(StateError('the keychain is locked'));
 }

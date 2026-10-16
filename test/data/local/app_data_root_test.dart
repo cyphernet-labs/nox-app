@@ -95,6 +95,7 @@ void main() {
     test('their database in Documents and their attachments in the cache go; the data folder stays', () async {
       final folders = await separateFolders();
       final oldDatabase = File('${folders.documents.path}/app_dev.db')..writeAsStringSync('plain');
+      final oldCompaction = File('${folders.documents.path}/~app.db')..writeAsStringSync('plain');
       final oldAttachment = File('${folders.cache.path}/nox_attachments/f_1.png')
         ..createSync(recursive: true)
         ..writeAsStringSync('plain');
@@ -104,6 +105,7 @@ void main() {
       await AppDataRoot.sweepLegacy();
 
       expect(oldDatabase.existsSync(), isFalse);
+      expect(oldCompaction.existsSync(), isFalse, reason: 'a compaction cut short left it beside the database');
       expect(oldAttachment.existsSync(), isFalse);
       expect(current.existsSync(), isTrue);
       expect(somebodyElses.existsSync(), isTrue);

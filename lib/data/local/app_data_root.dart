@@ -109,7 +109,11 @@ abstract final class AppDataRoot {
         final documents = await getApplicationDocumentsDirectory();
         if (documents.path != root.path && _isOwnDocuments(documents.path)) {
           for (final name in databaseFiles) {
-            await _delete(File('${documents.path}${Platform.pathSeparator}$name'));
+            // With Sembast's compaction file beside it, as databasePaths
+            // counts one: a compaction cut short leaves it there.
+            for (final file in [name, '~$name']) {
+              await _delete(File('${documents.path}${Platform.pathSeparator}$file'));
+            }
           }
         }
       }

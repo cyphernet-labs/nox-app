@@ -126,6 +126,14 @@ class OutboxCopies {
       logRepository.error(target: this, error: error.runtimeType);
       return false;
     }
+    // A copy under its own name that a pass did not live to rename: the
+    // bytes are at the destination now, by this pass or that one.
+    try {
+      final stale = File('$destination.next');
+      if (stale.existsSync()) await stale.delete();
+    } on FileSystemException {
+      // Best effort, like every delete of a wipe.
+    }
     await drop(key);
     return true;
   }
