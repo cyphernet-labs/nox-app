@@ -1,26 +1,35 @@
 # NOX
 
-**NOX** — защищённый кроссплатформенный мессенджер на Flutter (Dart): сквозное
-шифрование обмена текстом и файлами, по образцу Signal. Клиент-бэкенд («личный
-сервер») принадлежит ровно одному человеку и обслуживает только его собственные
-устройства; общение между разными людьми пойдёт через relay, протокол которого
-ещё не спроектирован (ревизия владельца 2026-09-10). Прежняя модель «открытое
-общее пространство, видимое всем» **отменена**.
+**NOX** — защищённый кроссплатформенный мессенджер на Flutter (Dart); ориентир — Signal.
+У каждого человека свой клиентский сервер: он принадлежит ровно одному человеку и
+обслуживает только его устройства, а все чаты человека видны на всех его устройствах и
+больше нигде. Общение между разными людьми пойдёт через релей, протокол которого ещё не
+спроектирован (Q13); граница сквозного шифрования — открытый вопрос Q1. Оба вопроса — в
+реестре `docs/client-backend/open-questions.md`.
 
-Приложение доведено до полноценного продукта на моках (фичи 001–021): все 17 экранов
-собраны, бизнес-логика настоящая — реактивные списки, непрочитанное, оптимистичная
-отправка с офлайн-очередью, файловый пикер, превью изображений, l10n EN+UK,
-персистентные настройки и сессия; данные живут в реальной локальной Sembast-БД.
+## Из чего состоит
 
-Бэкенд выбран, первый этап работает: client-сервер на **Go** со встроенной SQLite
-(`client_backend/`, фичи 022–024), проводной **контракт v0**, транспорт — WebSocket
-поверх `wss` (TLS 1.3) с пиннингом по отпечатку ключа сервера из ссылки спаривания; порт приезжает ссылкой, а не фиксирован. Клиентский трек 025–028 закрыт: data-слой приложения уже
-говорит на языке контракта, но источники данных всё ещё мок-овые — транспорт
-подключается в фазе 027, подмена источников — в 028.
+- **Приложение** — `lib/`, один Dart-пакет `nox_app`, Clean Architecture по блюпринту
+  `docs/blueprints/mobile/`. Данные живут в локальной базе Sembast (сначала кэш, потом
+  сервер), исходящие сообщения и новые чаты ждут в очереди, которая переживает перезапуск.
+  Локальная база и файлы на устройстве зашифрованы ключом из системного сейфа и в системные
+  бэкапы не попадают.
+- **Rust-модуль канала** — `packages/nox_tor`: каждое соединение приложения с клиентским
+  сервером — TCP или поток Tor через встроенный клиент Arti, затем TLS 1.3 и проверка
+  `POST /auth` → `POST /auth2`. Через Tor приложение идёт, только если человек включил
+  `Use Tor`.
+- **RustSecureBox** — `packages/rust_secure_box`: ключи и подписи проверки, одна библиотека
+  у приложения и у сервера. Сейчас внутри заглушка — `packages/rust_secure_box/README.md`.
+- **Клиентский сервер** — `client_backend/` (`noxd`): Go со встроенной SQLite, один
+  статический бинарник; команды идут по `wss`, байты файлов — по `https`. База и вложения
+  сервера зашифрованы, и после каждого запуска сервер заперт до пароля владельца.
+  Onion-сервис публикует отдельная служба tor. Подробно — `client_backend/README.md`,
+  установка на машину — `deploy/README.md`.
+- **Контракт провода v0** — `docs/client-backend/protocol/contract-draft.md`: каждая команда,
+  событие, поле и код ошибки обеих сторон.
 
-Verification-only остаётся только срез `Item` (`AppShell`/`ItemListPage` из Feature-001,
-не смонтированы) — он лишь подтверждает, что слоистый вертикальный срез работает
-end-to-end.
+Срез `Item` (`AppShell`/`ItemListPage` из фичи 001) не смонтирован и служит только проверкой
+того, что слоистый вертикальный срез работает от экрана до данных.
 
 ## Целевые платформы
 
@@ -28,40 +37,62 @@ iOS · Android · macOS · Windows · Linux. **Web вне области при�
 
 ## Инструментарий
 
-- Flutter `3.44.1`, зафиксирован через [FVM](https://fvm.app) (`.fvmrc`) — запускайте каждую команду через `fvm`.
-- Один Dart-пакет: `nox_app`, единый app id `com.cyphernetlabs.noxapp` на всех пяти платформах
-  (флейвор — только compile-time define `--dart-define-from-file=config/<flavor>.json`;
-  отдельных нативных id и подписи пока нет).
-- Codegen в первую очередь: Freezed + json_serializable + injectable + flutter_gen (один прогон `build_runner`).
+- Flutter `3.44.1`, зафиксирован через [FVM](https://fvm.app) (`.fvmrc`) — запускайте каждую
+  команду через `fvm`.
+- Rust: сборочный хук `packages/nox_tor` собирает Rust-модуль при каждой сборке и при каждом
+  `flutter test`, на всех платформах. Нужен `rustup` с тулчейном из
+  `packages/nox_tor/rust/rust-toolchain.toml` (`1.93.1`, все цели); для Android — ещё и NDK.
+  На новой машине один раз выполните `rustup show active-toolchain` в
+  `packages/nox_tor/rust`: два первых запуска хука, скачивая тулчейн одновременно, мешают
+  друг другу.
+- Go той версии, что в `client_backend/go.mod`, — для клиентского сервера.
+- Один Dart-пакет `nox_app`, единый app id `com.cyphernetlabs.noxapp` на всех пяти платформах;
+  флейвор — только compile-time define `--dart-define-from-file=config/<flavor>.json`,
+  отдельных нативных id и подписи нет.
+- Codegen в первую очередь: Freezed + json_serializable + injectable + flutter_gen (один
+  прогон `build_runner`), локализация — `flutter gen-l10n`.
 
 ## Настройка
 
 ```bash
-fvm install                                                   # the pinned SDK
+fvm install           # the pinned SDK
 fvm flutter pub get
-fvm dart run build_runner build --delete-conflicting-outputs  # freezed / json / injectable / assets
+make generate         # build_runner, then gen-l10n
 ```
 
-## Code-gate
+## Гейт кода
 
 ```bash
-make gate            # generate → format → analyze → test
+make gate             # generate → format → analyze → test (without golden and live tests)
+make golden-verify    # goldens: locally, on Apple Silicon / macOS
+make tor-test         # RustSecureBox and the channel module: cargo tests, the server's copy check, Dart tests
 ```
 
 …или пошагово:
 
 ```bash
 fvm dart run build_runner build --delete-conflicting-outputs
-fvm dart format -l 140 lib test
-fvm flutter analyze   # zero-errors gate
-fvm flutter test
+fvm flutter gen-l10n
+fvm dart format -l 140 lib test packages/nox_tor/lib packages/nox_tor/test packages/nox_tor/hook
+fvm flutter analyze                                   # zero-errors gate
+fvm flutter test --exclude-tags "golden || live"
+```
+
+Клиентский сервер:
+
+```bash
+cd client_backend
+gofmt -l .            # must print nothing
+go vet ./...
+go test -race ./...
 ```
 
 ## Запуск / сборка
 
-Flavor'ы (`stage` / `prod`) задаются на этапе компиляции и инжектятся из
-`config/<flavor>.json` через `--dart-define-from-file` единообразно на всех пяти платформах
-(нативные mobile-флейворы отложены — у скелета нет per-flavor нативной разницы):
+Флейворы `stage` и `prod` задаются на этапе компиляции из `config/<flavor>.json` через
+`--dart-define-from-file`, одинаково на всех пяти платформах. На `stage` приложение работает
+с живым клиентским сервером: адрес и ключ сервера приходят ссылкой спаривания. На `prod` — с
+моками поверх локальной базы. Сборка без define получает `prod`.
 
 ```bash
 # mobile (iOS / Android)
@@ -73,8 +104,11 @@ fvm flutter run -d windows --dart-define-from-file=config/stage.json
 fvm flutter run -d linux   --dart-define-from-file=config/stage.json
 ```
 
+Отладочные сборки — `mise run build:<android|ios|macos|windows|linux>:<stage|prod>`.
+
 ## Дополнительно
 
-- Полная настройка и приёмочный walkthrough — `specs/001-flutter-project-init/quickstart.md`
-- Архитектурный blueprint — `docs/blueprints/mobile/` (индекс в его `README.md`)
-- Руководство для контрибьюторов и агентов — `CLAUDE.md`
+- Карта документации — `docs/README.md`
+- Архитектурный блюпринт приложения — `docs/blueprints/mobile/` (индекс в его `README.md`)
+- Модель безопасности — трекер `docs/client-backend/roadmap-security.md`
+- Руководство для контрибьюторов и агентов — `CLAUDE.md`, для сервера — `client_backend/CLAUDE.md`
