@@ -111,9 +111,17 @@ func passAuth(t *testing.T, conn *tls.Conn, br *bufio.Reader, d *device) secureb
 // the connection ends there, logged by kind and nothing else (contract §1).
 func TestAFailedCheckIsRefusedLoggedAndClosed(t *testing.T) {
 	buf := &syncBuffer{}
-	srv, addr := stackWith(t, slog.New(slog.NewTextHandler(buf, nil)))
+	srv, addr := stackWith(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	d, stranger := newDevice(t), newDevice(t)
 
+	// A request that is no step of the check - what any HTTPS scanner sends -
+	// is a Debug line; a step that fails is worth an Info one.
+	level := map[string]string{
+		"request before the check":  "DEBUG",
+		"method not allowed":        "DEBUG",
+		"signature does not verify": "INFO",
+		"steps out of order":        "INFO",
+	}
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -154,7 +162,7 @@ func TestAFailedCheckIsRefusedLoggedAndClosed(t *testing.T) {
 				t.Fatal("the connection went on after a refusal")
 			}
 			eventually(t, "the refusal is logged by its kind", func() bool {
-				return strings.Contains(buf.String(), "channel check refused") && strings.Contains(buf.String(), tc.reason)
+				return strings.Contains(buf.String(), "level="+level[tc.reason]+` msg="channel check refused" component=channel reason="`+tc.reason+`"`)
 			})
 		})
 	}
@@ -432,9 +440,29 @@ func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 	eventually(t, "the first cut is logged", func() bool { return len(shedLines(buf.String())) == 1 })
 
 	// A stranger at home goes on opening silent connections, each cutting the
-	// oldest of the source's, while a device dials from the same address. One
-	// every 25 ms gives the device 200 ms before eight newer ones could make it
-	// the oldest; it needs well under 10 ms, even under the race detector.
+	// oldest of the source's, while a device dials from the same address. The
+	// device has eight of the stranger's ticks before eight newer ones could
+	// make it the oldest, so a tick is a quarter of what one channel takes
+	// here, uncontended - twice the time the device needs - and never under
+	// 25 ms. The stub needs well under 10 ms even under the race detector; a
+	// real RustSecureBox there needs a few hundred.
+	key, dev := serverKeyOf(t, srv), newDevice(t)
+	began := time.Now()
+	probe := pipes.dial(t, "192.0.2.1")
+	probing := make(chan error, 1)
+	go func() {
+		_, err := channelOver(t.Context(), probe, key, dev.priv)
+		probing <- err
+	}()
+	probed := acceptWithin(t, l, 30*time.Second)
+	if err := <-probing; err != nil {
+		t.Fatalf("an uncontended channel: %v", err)
+	}
+	period := max(25*time.Millisecond, 2*time.Since(began)/maxPendingPerSource)
+	// The device's end first, as below.
+	_ = probe.Close()
+	_ = probed.Close()
+
 	stop := make(chan struct{})
 	stopped := make(chan struct{})
 	var flooded atomic.Int64
@@ -446,7 +474,7 @@ func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 			}
 			close(stopped)
 		}()
-		tick := time.NewTicker(25 * time.Millisecond)
+		tick := time.NewTicker(period)
 		defer tick.Stop()
 		for {
 			select {
@@ -470,7 +498,6 @@ func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 	}()
 	// A few of them first, so the device arrives into a flood under way.
 	eventually(t, "the stranger's flood is under way", func() bool { return flooded.Load() >= 3 })
-	key, dev := serverKeyOf(t, srv), newDevice(t)
 	conn := pipes.dial(t, home)
 	opened := make(chan error, 1)
 	go func() {

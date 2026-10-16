@@ -585,11 +585,12 @@ func (e *tlsStageError) Unwrap() error { return e.err }
 // refused logs a connection that did not pass, by how loud it deserves to be.
 //
 // A refused CHECK is somebody who completed TLS and then failed to prove a key
-// - a client of another protocol, a bug on the device - and is worth a line,
-// as is RustSecureBox failing. A connection that never finished TLS, or went
-// quiet, is what every port on a network collects; it stays out of the log
-// unless asked for. No line carries a key, a challenge, a signature or an
-// address: the error names the kind only.
+// - a NOX client with a bug, a key that does not sign - and is worth a line,
+// as is RustSecureBox failing. A request that is not a step of the check at
+// all - a GET of some path, another method - is what any HTTPS scanner sends,
+// as every port on a network collects connections that never finish TLS or go
+// quiet; those stay out of the log unless asked for. No line carries a key, a
+// challenge, a signature or an address: the error names the kind only.
 func (l *channelListener) refused(err error) {
 	var stage *tlsStageError
 	switch {
@@ -598,9 +599,9 @@ func (l *channelListener) refused(err error) {
 	case errors.Is(err, connauth.ErrOrder):
 		l.logger.Info("channel check refused", "reason", "steps out of order")
 	case errors.Is(err, connauth.ErrMethod):
-		l.logger.Info("channel check refused", "reason", "method not allowed")
+		l.logger.Debug("channel check refused", "reason", "method not allowed")
 	case errors.Is(err, connauth.ErrUnauthenticated):
-		l.logger.Info("channel check refused", "reason", "request before the check")
+		l.logger.Debug("channel check refused", "reason", "request before the check")
 	case errors.Is(err, connauth.ErrSignature):
 		l.logger.Info("channel check refused", "reason", "signature does not verify")
 	case errors.Is(err, securebox.ErrBox), errors.Is(err, securebox.ErrRandom), errors.Is(err, securebox.ErrInvalidArgument):
