@@ -9,10 +9,12 @@
 
 ## 1. RustSecureBox и его копия на сервере
 
+Из корня репозитория:
+
 ```sh
-cd packages/rust_secure_box && cargo test            # интерфейс и векторы
+(cd packages/rust_secure_box && cargo test)          # интерфейс и векторы
 make box-verify                                      # сгенерированный Go-код совпадает со сборкой крейта
-cd client_backend && go test -race ./internal/securebox/...
+(cd client_backend && go test -race ./internal/securebox/...)
 ```
 
 Ожидается:
@@ -30,7 +32,7 @@ cd client_backend && gofmt -l . && go vet ./... && go test -race ./...
 - `connauth` — все строки таблицы отказов `contracts/auth-exchange.md`;
 - `channel_test` — пределы входа охватывают `/auth`;
 - `serverkey_test` — перевыпуск;
-- `status_page_test` — строка о заглушке;
+- `run_test.go`, `TestTheStubIsAnnouncedInTheLogAndOnThePage` — строка о заглушке в журнале и на странице;
 - `logs_test` — нет ключей, челленджей и подписей.
 
 ## 3. Приложение
@@ -43,12 +45,14 @@ make golden-verify     # UI не менялся — все голдены зел
 
 ## 4. Сквозная проверка с живым сервером
 
-1. Собрать и запустить сервер:
+1. Собрать и запустить сервер (каталог данных сервер не создаёт сам):
    ```sh
    cd client_backend && go build -o noxd .
-   ./noxd -addr 127.0.0.1:8443 -db /tmp/nox050/nox.db
+   mkdir -p /tmp/nox050
+   ./noxd -addr 127.0.0.1:8443 -db /tmp/nox050/nox.db -status-addr 127.0.0.1:8081 &
+   ./noxd unlock -status-addr 127.0.0.1:8081
    ```
-   Затем `noxd unlock`. В журнале — предупреждение `RustSecureBox is a stub…`; на служебной странице — та же строка.
+   В журнале — предупреждение `RustSecureBox is a stub…`; на служебной странице — та же строка.
 2. Взять ссылку и прогнать smoke:
    ```sh
    ./noxd link
@@ -57,9 +61,9 @@ make golden-verify     # UI не менялся — все голдены зел
    Smoke спаривается, здоровается, создаёт чат и пишет сообщение через `/auth` и `/auth2`.
 3. Пробы приложения:
    ```sh
-   fvm flutter test test/live/channel_probe.dart --tags live
+   fvm flutter test test/live/channel_probe.dart --tags live --dart-define=link="$(cd client_backend && ./noxd link -status-addr 127.0.0.1:8081 | head -1)"
    ```
-   Окружение — по комментарию в начале файла. Канал открывается; для чужого ключа сервера — `wrongServer`.
+   Без `--dart-define=link=…` проба пропускается (SKIP) — это не прохождение. Канал открывается; для чужого ключа сервера — `wrongServer`.
 4. Приложение `stage` на macOS: спаривание ссылкой, сообщение, файл туда и обратно.
 
 ## 5. Переход (User Story 4)
@@ -71,17 +75,22 @@ make golden-verify     # UI не менялся — все голдены зел
 
 ## 6. Подмена реализации (SC-005)
 
-Проверка того, что настоящий RustSecureBox встанет без правок вокруг:
+Проверка того, что настоящий RustSecureBox встаёт без правок вокруг. Порядок — раздел «Как заменить заглушку» в `packages/rust_secure_box/README.md`.
 
-1. Во временной копии крейта заменить `stub.rs` реализацией на `ed25519-compact` (тот же код, что `ec25519` заказчика) — четыре функции с теми же сигнатурами.
-2. В копии репозитория пересобрать через `build-wasm.sh` и прогнать:
-   - `cargo test --test interface`;
-   - `go test ./internal/securebox -run Interface`;
-   - `go test ./internal/connauth ./internal/server -run Channel`;
-   - `make tor-test`.
-3. Ожидается:
-   - всё проходит, кроме векторов заглушки;
-   - `IsStub()` = `false`;
-   - в `git diff` — только крейт и `boxwasm/`.
+1. Во временной копии репозитория заменить `src/stub.rs` реализацией на `ed25519-compact` (тот же код, что `ec25519` заказчика) с `default-features = false`: четыре функции с теми же сигнатурами.
+2. Пройти шаги 2–4 README:
+   - `cargo test` в крейте и в `packages/nox_tor/rust` (новые зависимости попадают в оба `Cargo.lock`);
+   - `RSB_IMPLEMENTATION=ed25519-v1 cargo test --test vectors -- --ignored write_vectors` (пишет три копии векторов);
+   - `make box-wasm`.
+3. Прогнать шаг 5 README:
+   - `cargo test` в крейте;
+   - `make box-verify`;
+   - `cd client_backend && go build ./... && go test -race ./...`;
+   - `make tor-test`;
+   - `make gate`.
+4. Ожидается:
+   - всё проходит;
+   - `IsStub()` = `false`; строки о заглушке нет ни в журнале, ни на служебной странице;
+   - в `git diff` — только крейт, три копии векторов, два `Cargo.lock` и `boxwasm/`.
 
 Проба 2026-10-15 (research R1) прошла этот путь для перевода `wasm2go`.

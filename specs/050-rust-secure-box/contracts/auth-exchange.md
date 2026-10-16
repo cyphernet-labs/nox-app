@@ -20,7 +20,7 @@ TCP или поток Tor → TLS 1.3 (технический сертифика
 POST /auth HTTP/1.1
 Host: 192.168.1.61:8443
 Content-Type: application/json
-Content-Length: 119
+Content-Length: 110
 
 {"pk":"<base64url 32>","challenge":"<base64url 32>"}
 ```
@@ -31,7 +31,7 @@ Content-Length: 119
 HTTP/1.1 200 OK
 Content-Type: application/json
 Cache-Control: no-store
-Content-Length: 224
+Content-Length: 211
 
 {"pk":"<base64url 32>","challenge":"<base64url 32>","signature":"<base64url 64>"}
 ```
@@ -48,7 +48,7 @@ Content-Length: 224
 POST /auth2 HTTP/1.1
 Host: 192.168.1.61:8443
 Content-Type: application/json
-Content-Length: 107
+Content-Length: 102
 
 {"signature":"<base64url 64>"}
 ```

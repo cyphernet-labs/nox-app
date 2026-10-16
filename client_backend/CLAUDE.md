@@ -341,10 +341,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
   one of the event-less lifecycles of invariant 3
-- `internal/store/serverkey.go` — the machine's own Ed25519 key pair on the
-  single `server_identity` row. No owner: "can anybody reach this machine" is
-  `countDevices`, the one spelling of it, asked by the service page, the
-  startup line and the last device going away
+- `internal/store/serverkey.go` — the machine's own RustSecureBox key pair on
+  the single `server_identity` row. A pair another implementation made is
+  rekeyed at start (050): `ServerKey` keeps the private key, writes the public
+  key RustSecureBox gives for it and lets every device go. No owner: "can
+  anybody reach this machine" is `countDevices`, the one spelling of it,
+  asked by the service page, the startup line and the last device going away
 - `internal/store/pairing.go` — the two kinds of one-shot token and `Pair`:
   the machine link (at most one unspent - issuing one voids the others in the
   same transaction; minted by `noxd link`, by the page's buttons, and by the

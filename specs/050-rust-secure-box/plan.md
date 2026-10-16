@@ -109,8 +109,7 @@ specs/050-rust-secure-box/
 ```text
 packages/rust_secure_box/           # НОВОЕ: RustSecureBox (заглушка), один код для приложения и сервера
 ├── Cargo.toml / Cargo.lock / rust-toolchain.toml
-├── .cargo/config.toml              # размер стека для wasm32
-├── build-wasm.sh                   # cargo → .wasm → wasm2go → client_backend/internal/securebox/boxwasm
+├── build-wasm.sh                   # cargo → .wasm → wasm2go → client_backend/internal/securebox/boxwasm; задаёт флаги сборки: стек 64 КиБ, пути CARGO_HOME без домашнего каталога
 ├── src/lib.rs                      # интерфейс: четыре функции, Error, размеры
 ├── src/stub.rs                     # заглушка — место, куда встаёт настоящая реализация
 ├── src/random.rs                   # случайные байты: система (натив) / импорт env.rsb_random (wasm)

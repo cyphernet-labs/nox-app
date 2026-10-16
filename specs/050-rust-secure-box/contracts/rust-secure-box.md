@@ -81,7 +81,7 @@ int32_t rsb_random(uint8_t *ptr, uint32_t len); // 0 — буфер заполн
 
 Других импортов быть не должно. На сервере это проверяет компилятор: тип окружения в Go реализует сгенерированный интерфейс `Xenv` из одного метода `Xrsb_random`.
 
-Сборка: `cargo rustc --release --target wasm32-unknown-unknown --crate-type cdylib`, стек 64 КиБ (`.cargo/config.toml`), `panic = "abort"`. Перевод: `go run github.com/ncruces/wasm2go@v0.4.15 -embed -pkg boxwasm -o …/boxwasm/box.go`. Всё это делает `packages/rust_secure_box/build-wasm.sh`.
+Сборка: `cargo rustc --release --target wasm32-unknown-unknown --crate-type cdylib`, стек 64 КиБ и пути `CARGO_HOME`, переписанные в `/cargo` (флаги задаёт скрипт), `panic = "abort"`. Перевод: `go run github.com/ncruces/wasm2go@v0.4.15 -embed -pkg boxwasm -o …/boxwasm/box.go`. Всё это делает `packages/rust_secure_box/build-wasm.sh`.
 
 ## Проверки, которые проходит любая реализация
 
@@ -94,7 +94,7 @@ int32_t rsb_random(uint8_t *ptr, uint32_t len); // 0 — буфер заполн
 - Челленджи 1000 вызовов подряд различны.
 - 16 потоков одновременно получают те же ответы, что и по одному.
 
-Векторы `rsb-vectors.json` — только для заглушки (`"implementation": "stub-v1"`). У настоящей реализации — свои векторы, по тому же формату.
+Векторы `rsb-vectors.json` принадлежат реализации, которую называет поле `"implementation"` (у заглушки — `stub-v1`). Настоящая реализация пишет свои векторы в том же формате, все три копии сразу (`packages/rust_secure_box/README.md`, «Как заменить заглушку»).
 
 ## Пробный ключ (FR-022)
 
