@@ -14,7 +14,7 @@
 | iOS | Keychain, класс `first_unlock_this_device` (читается с первой разблокировки после перезапуска, в бэкап на другой телефон не переносится), сервис `com.cyphernetlabs.noxapp` |
 | macOS | Релизная сборка — Keychain с защитой данных (`usesDataProtectionKeychain: true`), тот же класс и сервис; требует `keychain-access-groups`, то есть подписи командой (§7a). Отладочная и profile-сборки — обычная связка ключей с тем же сервисом: они подписываются без команды, и их записи попадают в Time Machine |
 | Android | хранилище плагина: данные AES-GCM под ключом Android Keystore, который не покидает устройство; бэкап и перенос выключены в манифесте (раздел «Данные не уходят в бэкапы») |
-| Windows | DPAPI текущего пользователя; файл плагина — в `%LOCALAPPDATA%\NOX`, а не в перемещаемом профиле |
+| Windows | DPAPI текущего пользователя; файл плагина — в `%LOCALAPPDATA%\Cyphernet Labs\NOX\data`, а не в перемещаемом профиле |
 | Linux | libsecret (локальная связка ключей); работает, только если запущена служба ключей |
 
 Записи сборок до фазы 048 лежат под прежними опциями (сервис плагина по умолчанию и класс по умолчанию на iOS, legacy keychain на macOS). `sweepLegacyKeys()` на старте удаляет их целиком по старым опциям — на iOS запись старого класса иначе мешала бы записать новую под тем же именем, — и сессия спаривается заново. На Android, Windows и Linux опции не менялись, удалять там нечего: старый файл сейфа Windows из перемещаемого профиля удаляет `AppDataRoot.sweepLegacy()`.
@@ -30,7 +30,7 @@
 - **iOS** — папка данных при каждом запуске помечается `isExcludedFromBackup` (ни iCloud, ни бэкап на компьютер): `AppDataRoot.excludeFromBackup()` вызывает метод `exclude` канала `nox/backup`, который отвечает в `ios/Runner/AppDelegate.swift` (регистрируется в `didInitializeImplicitFlutterEngine`);
 - **macOS** — та же метка (Time Machine её соблюдает; `tmutil isexcluded <папка>` → `[Excluded]`), канал регистрирует `MainFlutterWindow.swift`, обработчик — в `macos/Runner/AppDelegate.swift`;
 - **Android** — `android:allowBackup="false"`, `android:fullBackupContent="false"` и `android:dataExtractionRules="@xml/data_extraction_rules"`: правила исключают все домены и из облачного бэкапа, и из переноса на новое устройство (Android 12+ переносит данные и при `allowBackup="false"`, если правила этого не запрещают);
-- **Windows** — папка данных `%LOCALAPPDATA%\NOX`: `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает ею на вопрос о папке поддержки приложения для всех, включая файл сейфа;
+- **Windows** — папка данных `%LOCALAPPDATA%\Cyphernet Labs\NOX\data`: `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает ею на вопрос о папке поддержки приложения для всех, включая файл сейфа;
 - **Linux** — `~/.local/share/<id приложения>` (XDG), которую не подхватывают синхронизации «Документов».
 
 Временные открытые копии (видео, «Открыть в…») живут в `<temp>/nox_open` и стираются при закрытии плеера, при каждом запуске и при выходе.

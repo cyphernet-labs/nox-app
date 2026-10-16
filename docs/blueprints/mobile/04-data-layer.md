@@ -86,7 +86,7 @@ lib/data/
 
 > **SKELETON vs полный блюпринт.** Из перечисленного выше `remote/request_builder/` и `BaseApiRepository` — единственная **TARGET-форма**: в коде их нет. Всё остальное построено: тонкий `ApiClient` с `initBase()` + `AuthInterceptor` (019/S5), `Mock*RemoteDataSource` за интерфейсом (016) и — с фазы 026 — `Real*RemoteDataSource` (`remote/datasource/real/`) поверх сокет-клиента конверта (`remote/socket/`), зарегистрированные в окружении `dev` (флейвор `stage`), тогда как чат/сообщенческие моки сужены до `[prod, test]`; network-only `ItemRepositoryImpl` верификационного среза, а кэш-first DAO-обвязка реализована для продуктовых фич (`local/chat/chat_dao.dart`, `message_dao.dart`, `local/chat/outbox_dao.dart`, `local/sync/sync_dao.dart`, фичи 013–027). Пометки SKELETON/TARGET по тексту показывают, что уже построено, а что — канон-к-построению; **`Item`-срез заморожен** как верификационный harness и не является продуктовым каноном.
 
-> `path_provider` — обязательная зависимость `pubspec.yaml`: файловый бэкенд Sembast (`databaseFactoryIo`) резолвит путь к базе через папку данных приложения — `AppDataRoot`, то есть `getApplicationSupportDirectory()` (на Windows — `%LOCALAPPDATA%\NOX`, §6г). «Документы» не используются: их забирают iCloud и синхронизации.
+> `path_provider` — обязательная зависимость `pubspec.yaml`: файловый бэкенд Sembast (`databaseFactoryIo`) резолвит путь к базе через папку данных приложения — `AppDataRoot`, то есть `getApplicationSupportDirectory()` (на Windows — `%LOCALAPPDATA%\Cyphernet Labs\NOX\data`, §6г). «Документы» не используются: их забирают iCloud и синхронизации.
 
 ---
 
@@ -653,7 +653,7 @@ Future<void> mutate({
 
 Всё, что приложение держит на диске, лежит в **папке данных приложения** и **запечатано ключом локальной базы**; ничего из этого не попадает в системные бэкапы (`09-build-and-secrets-infra.md`, «Данные не уходят в бэкапы»). Шифр — в модуле канала (`package:nox_tor/vault.dart`, `NoxVault`, контракт `specs/048-device-data-at-rest/contracts/ffi-vault.md`): ChaCha20-Poly1305 и HKDF-SHA256 на `ring`, вызовы синхронные.
 
-**Папка данных** — `AppDataRoot` (`local/app_data_root.dart`): `getApplicationSupportDirectory()`; на Windows `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает `%LOCALAPPDATA%\NOX` всем, кто спрашивает эту папку, включая файл сейфа. Раскладка:
+**Папка данных** — `AppDataRoot` (`local/app_data_root.dart`): `getApplicationSupportDirectory()`; на Windows `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` всем, кто спрашивает эту папку, включая файл сейфа. Раскладка:
 
 | Путь | Что | Запечатано |
 |---|---|---|

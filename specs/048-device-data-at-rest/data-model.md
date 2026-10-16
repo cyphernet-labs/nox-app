@@ -19,7 +19,7 @@
 | `<data>/tor/…` | состояние Tor | своё |
 | `<temp>/nox_open/…` | временные копии | нет; живут по правилам R6 |
 
-`<data>` — `getApplicationSupportDirectory()` (iOS, Android, macOS, Linux), `%LOCALAPPDATA%\NOX` (Windows); на iOS и macOS — метка «не в бэкап».
+`<data>` — `getApplicationSupportDirectory()` (iOS, Android, macOS, Linux), `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` (Windows); на iOS и macOS — метка «не в бэкап».
 
 ## Формат файла
 
