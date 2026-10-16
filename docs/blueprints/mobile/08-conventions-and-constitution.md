@@ -14,7 +14,7 @@
 
 Это несущие инварианты архитектуры клиентского приложения NOX. Всё остальное — стиль. Каждый принцип формулируется так, чтобы его можно было проверить ревью одной строкой. Принципы пронумерованы **арабскими** цифрами (1–9) и неизменны по нумерации (на них ссылаются по номеру из остальных документов блюпринта).
 
-> **Не путать с конституцией Spec Kit.** Этот свод (девять архитектурных принципов блюпринта, арабские 1–9) — **не** конституция проекта NOX. Реальная конституция живёт в `.specify/memory/constitution.md` (версия **v1.3.0**, **семь** принципов с **римской** нумерацией: I — приватность и E2EE; II — спецификации/дизайн-корпус как источник истины; III — архитектурный блюпринт обязателен; IV — верность дизайн-системе; V — языковая дисциплина; VI — паритет платформ mobile ↔ desktop; VII — контракт провода как закон (клиент ↔ сервер)) и управляет всем репозиторием через Constitution Check на этапе `plan`. Слово «конституция» в этом документе ранее означало именно локальный свод блюпринта; во избежание путаницы здесь он называется **«архитектурный свод блюпринта»**, а «конституция» (римские I–VII) — всегда документ Spec Kit.
+> **Не путать с конституцией Spec Kit.** Этот свод (девять архитектурных принципов блюпринта, арабские 1–9) — **не** конституция проекта NOX. Реальная конституция живёт в `.specify/memory/constitution.md` (версия **v1.5.1**, **семь** принципов с **римской** нумерацией: I — приватность и E2EE; II — спецификации/дизайн-корпус как источник истины; III — архитектурный блюпринт обязателен; IV — верность дизайн-системе; V — языковая дисциплина; VI — паритет платформ mobile ↔ desktop; VII — контракт провода как закон (клиент ↔ сервер)) и управляет всем репозиторием через Constitution Check на этапе `plan`. Во избежание путаницы локальный свод здесь называется **«архитектурный свод блюпринта»**, а «конституция» (римские I–VII) — всегда документ Spec Kit.
 
 > **Мост к конституции NOX (Принцип III).** Конституция NOX (Принцип III — «архитектурный блюпринт обязателен») делает этот блюпринт **обязательным** для любого клиентского/Flutter-кода на всех пяти целевых платформах (iOS, Android, Windows, Linux, macOS). Девять архитектурных принципов ниже — операционная развёртка этого мандата; в свою очередь Принцип I конституции (приватность/E2EE: аналитика строго opt-in, без PII/содержимого/идентификаторов, Logout стирает локальные данные) и Принцип IV (верность дизайн-системе) проецируются на Принципы 6/7/8 этого свода. Расхождение кода с блюпринтом устраняется в том же change-set (Принцип II конституции — спека/блюпринт как источник истины).
 
@@ -93,11 +93,13 @@ const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? err
 
 Для пользовательских наблюдаемых ресурсов репозитории — **cache-first и реактивные**: реактивный Sembast-DAO (`onSnapshots`, транзакции) + env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory) через провайдеры `@LazySingleton(as: AppDatabase, env: [...])`. Репозиторий подписывается на стрим DAO один раз и кормит один `BehaviorSubject<RepositoryResult<...>>`; экспонирует парные `watchXxx()` (Stream) + `fetchXxx()` (Future). Удалённый API гидратирует локальное хранилище; UI смотрит на локальные стримы (local-first).
 
-> **Карвут:** одноразовые команды (файловая цепочка §7) и **замороженный** verification-срез `Item` — **network-only**: без DAO и без `BehaviorSubject`. Пагинированность сама по себе под карвут **не** заводит: сегодня он живёт только в `ItemRepositoryImpl` (ни DAO, ни субъекта). Список чатов NOX под него **не** попадает: `ChatRepositoryImpl` — cache-first над Sembast, где `ChatRemoteDataSource` (команда `chats.list` контракта v0 §4: `{page, page_size, query?}` → `{chats, has_more}`) **однократно** засевает пустое хранилище, а дальше список, поиск и пагинация обслуживаются локально (см. [07-pagination.md](07-pagination.md)).
+> **Карвут:** одноразовые команды (файловая цепочка §7) и **замороженный** verification-срез `Item` — **network-only**: без DAO и без `BehaviorSubject`. Пагинированность сама по себе под карвут **не** заводит: сегодня он живёт только в `ItemRepositoryImpl` (ни DAO, ни субъекта). Список чатов NOX под него **не** попадает: `ChatRepositoryImpl` — cache-first над Sembast с read-through: первая страница экрана читается из кэша (`cachedOnly: true`) и показывается сразу, а `ChatRemoteDataSource` (команда `chats.list` контракта v0 §4: `{page, page_size, query?}` → `{chats, has_more}`) отвечает в фоне, и каждая страница сервера оседает в `ChatDao`; поиск уходит на сервер, при мёртвом канале срез отдаёт кэш (см. [07-pagination.md](07-pagination.md)).
+>
+> **Форма реактивного чтения в продуктовых репозиториях.** `ChatRepository.watchChats()` / `watchChat()` и `MessageRepository.watchMessages()` отдают «голую» проекцию DAO (`Stream<List<ChatModel>>`, `Stream<ChatModel?>`, `Stream<List<MessageModel>>`) без `BehaviorSubject` и без `RepositoryResult`: стрим служит сигналом изменения, а данные экран перечитывает через `getChats` / `getMessages`, которые возвращают `RepositoryResult` (см. [07-pagination.md](07-pagination.md), «Реактивный рефреш»). Ошибка такого стрима до `execute` не доходит и приходит в подписчика как ошибка стрима. `BehaviorSubject<RepositoryResult<…>>` держит `AppStateRepositoryImpl`.
 
 #### 7.1. Инициализация `AppDatabase` и потокобезопасность первого `watch`
 
-`AppDatabase` инициализируется **жадно при старте** — в `AppRootBloc` (на этапе бутстрапа приложения), а **не** лениво в конструкторе репозитория. Это GetIt-синглтон (`@LazySingleton(as: AppDatabase, env: [...])`, env-scoped: Dev/Prod = IO, Test = memory — см. [02-dependency-injection.md](02-dependency-injection.md) §«AppDatabase»), и `AppRootBloc` **дожидается** завершения его инициализации до того, как любой реактивный репозиторий откроет свой стрим. Это защищает от гонки на **первом** вызове `watchXxx()`: к моменту, когда репозиторий подписывается на DAO-стрим (`onSnapshots`) и кормит свой `BehaviorSubject<RepositoryResult<...>>`, нижележащая `Database` уже открыта, и первый снапшот не упирается в ещё не готовое хранилище. Без жадного открытия первый `watchXxx()` мог бы наткнуться на параллельно открывающуюся базу. Это уточнение полностью совместимо с cache-first-инвариантом выше (репозиторий по-прежнему подписывается на DAO-стрим один раз и экспонирует `watchXxx()`/`fetchXxx()`); меняется лишь то, **когда** база гарантированно открыта — на старте, а не по требованию.
+`AppDatabase` открывается **жадно при старте** — в `_start()` из `lib/main.dart` вызовом `authRepository.openLocalData()` (ключ локальных данных → открытие базы под ним, фича 048), а **не** лениво в конструкторе репозитория. Это GetIt-синглтон (`@LazySingleton(as: AppDatabase, env: [...])`, env-scoped: Dev/Prod = IO, Test = memory — см. [02-dependency-injection.md](02-dependency-injection.md) §«AppDatabase»), а первая навигация ждёт конец `_start()` (`appStateRepository.holdUntil(start)`, сплэш держится), так что база открыта до того, как любой реактивный репозиторий откроет свой стрим. Само открытие разделяемое: `AppDatabase.db` отдаёт один и тот же `Future` всем, кто спросил, пока оно идёт. Это защищает от гонки на **первом** вызове `watchXxx()`: к моменту, когда репозиторий подписывается на DAO-стрим (`onSnapshots`), нижележащая `Database` уже открыта, и первый снапшот не упирается в ещё не готовое хранилище. Ключ, который базу не открывает, на старте же решает судьбу локальных данных (стирание и повторное сопряжение — см. CLAUDE.md, «Device data at rest (048)»), а не первый экран.
 
 ### Принцип 8 — Только токены дизайна (light + dark), Semantics, единый файл фиче-флагов
 
@@ -105,7 +107,7 @@ const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? err
 
 ### Принцип 9 — Compile-time изоляция флейворов
 
-Флейвор резолвится на этапе компиляции: `AppFlavorType{prod, stage}` + `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `flavor → env`: `prod → Environment.prod`, `stage → Environment.dev`. Все флейвор-специфичные значения приходят через `--dart-define-from-file`; **никакого runtime-ветвления по флейвору**. Секреты — через SOPS + age + mise + флейворные Android/iOS-сборки. Версионирование — CalVer + сдвинутая эпоха (`YY.M.D+EPOCH`). `main.dart` оборачивает запуск в `runZonedGuarded`, ждёт `configureDependencies(env)`, затем `getIt.allReady()`. Отдельного BLoC-обсервера нет: логирование ошибок уже происходит на уровне репозиториев через обязательный `LogRepository` (`BaseRepositoryHelper.execute` всегда логирует), а ошибки BLoC-обработчиков оборачиваются `BaseBloc.executeLogic`. См. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md).
+Флейвор резолвится на этапе компиляции: `AppFlavorType{prod, stage}` + `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `flavor → env`: `prod → Environment.prod`, `stage → Environment.dev`. Все флейвор-специфичные значения приходят через `--dart-define-from-file`; **никакого runtime-ветвления по флейвору**. Секреты — через SOPS + age + mise (`.sops.yaml` и `.mise.toml` заведены, публичный ключ age в `.sops.yaml` — заглушка, каталога `secrets/` нет); нативных флейворов (отдельный id приложения или подпись на флейвор) нет — один id `com.cyphernetlabs.noxapp` на всех пяти платформах. Версионирование — CalVer + сдвинутая эпоха (`YY.M.D+EPOCH`). `main.dart` оборачивает запуск в `runZonedGuarded`, ждёт `configureDependencies(env)`, затем `getIt.allReady()`. Отдельного BLoC-обсервера нет: логирование ошибок уже происходит на уровне репозиториев через обязательный `LogRepository` (`BaseRepositoryHelper.execute` всегда логирует), а ошибки BLoC-обработчиков оборачиваются `BaseBloc.executeLogic`. См. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md).
 
 ---
 
@@ -124,7 +126,7 @@ const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? err
 9. **Codegen-first, генераты не редактируются руками.** Freezed + json_serializable + injectable; после правки любого аннотированного класса — прогон генератора. `*.g.dart`/`*.freezed.dart`/`*.config.dart`/`lib/design/gen/**` исключены из анализа и форматирования. (Операционное правило; Принцип 9 свода — компиляция-флейвор-изоляция — отражён отдельным инвариантом ниже.)
 10. **Пагинация — стандарт v5, две реальные дорожки контракта v0.** `infinite_scroll_pagination ^5.1.1`, stateless `PagingState`-в-блоке (никогда `PagingController`), переиспользуемое расширение `PagingStateExt.applyPage` — общее для обеих дорожек (конец списка = `!meta.hasMore`). Метаданные страницы — `PageMetadata({required bool hasMore, int? nextPage})`; **поля `total` не существует** (провод его не отдаёт). Дорожка **paged** (список чатов, §4): запрос `{page, page_size}`, ответ `{chats, has_more}`, `nextPage = hasMore ? page + 1 : null` считается на клиенте, рендер — `PagedListView`, индекс 1-based. Дорожка **seq-курсор** (история сообщений, §5): запрос `{before_seq?, limit}`, ответ `{messages, has_more}`, порция по возрастанию `seq`, сервер **молча** обрезает `limit` потолком 100; блок треда держит `oldestLoadedSeq` (не номера страниц), `nextPage` остаётся `null`, а рендер — `reverse: true` `ListView.builder` с префетчем от `ScrollController`, **без** `PagedListView`. Ошибки в обеих дорожках прокидываются в `pagingState.error`. (См. [07-pagination.md](07-pagination.md).)
 
-> **Дополнительный нерушимый инвариант:** `AlertDialogHelper` — **единственный** канал пользовательских ошибок (см. §8 ниже и [05-presentation-layer.md](05-presentation-layer.md)). Компиляция-флейвор-изоляция (Принцип 9 архитектурного свода блюпринта) и единый канал ошибок дополняют десятку золотых правил, но проверяются вместе с ними на каждом ревью.
+> **Дополнительный нерушимый инвариант:** `showAppSnackBar` / `showAppBanner` (`lib/presentation/helpers/app_feedback_helper.dart`) — **единственный** канал пользовательских уведомлений об ошибках (см. §8 ниже и [05-presentation-layer.md](05-presentation-layer.md)). Компиляция-флейвор-изоляция (Принцип 9 архитектурного свода блюпринта) и единый канал ошибок дополняют десятку золотых правил, но проверяются вместе с ними на каждом ревью.
 
 ---
 
@@ -155,7 +157,7 @@ const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? err
 | Mapper | `*Mapper` | `ItemMapper` | `lib/data/mapper/<feature>/` |
 | DAO | `*Dao` | `ItemDao` | `lib/data/local/<feature>/` |
 | API-клиент | `Get*Api` / `Post*Api` (файл `get_items_api.dart`) | `GetItemsApi` | `lib/data/remote/api/<feature>/` |
-| Request builder | `*ApiRequestBuilder` | `GetItemsApiRequestBuilder` | `lib/data/remote/request_builder/<feature>/` |
+| Request builder | `*ApiRequestBuilder` | `GetItemsApiRequestBuilder` | `lib/data/remote/request_builder/<feature>/` (в `lib/` пока ни одного) |
 | Страница | `*Page` | `ItemListPage` | `lib/presentation/pages/<page>_page/` |
 | BLoC | `*Bloc` | `ItemListBloc` | `lib/presentation/pages/<page>_page/bloc/` |
 | Файлы BLoC | `*_bloc.dart`, `*_event.dart`, `*_state.dart` | `item_list_bloc.dart` | та же папка `bloc/` |
@@ -278,9 +280,9 @@ git commit -s
 
 ### 5.5 База PR
 
-Рекомендуемая модель — GitFlow-вариант: фиче-ветки мёрджатся в `develop`, `develop` мёрджится в `master` на релизе (`master` держит только релизные коммиты). Для скелета приложения выбрать одну модель и задокументировать её в собственном `CONTRIBUTING.md`; правила «imperative-subject + atomic + sign-off» от ветвления не зависят.
+Модель NOX — GitFlow-вариант: фиче-ветки мёрджатся в `develop` с `--no-ff`, `develop` мёрджится в `master` на релизе (`master` держит только релизные коммиты). Правила «imperative-subject + atomic + sign-off» от ветвления не зависят.
 
-> **Согласование с репозиторием NOX:** коммиты и пуши в `develop`/`master` и merge PR **не** выполняются автономно. Изменения стейджатся, показывается дифф, предлагается точная команда коммита — и ожидается явное подтверждение владельца. Это не отменяет правила выше: они описывают форму коммита, а это — кто и когда его выполняет.
+> **Согласование с репозиторием NOX (конституция, «политика коммитов и пушей»):** коммиты в рабочую ветку и `--no-ff`-мёрджи фиче-веток в `develop` выполняются автономно; пуш в удалённый репозиторий и merge PR — **только** по явному запросу владельца. Пока автозапуск CI на паузе, перед каждым коммитом, затрагивающим Dart-код или ассеты, обязательны локальные `make gate` и `make golden-verify` (§6). Правила выше описывают форму коммита, а это — кто и когда его выполняет.
 
 ---
 
@@ -292,18 +294,18 @@ git commit -s
 fvm dart format -l 140 path/to/file_a.dart path/to/file_b.dart
 ```
 
-- **Никогда** не запускать форматирование всего репозитория (`dart format .` / `make format`) как шаг завершения задачи — это переформатирует всё и создаёт массивные несвязанные диффы, блокирующие коммит. В реальном `Makefile` сейчас есть единственная **мутирующая** цель `format` (`fvm dart format -l 140 lib test`) — она для разового ручного приведения дерева, не как шаг завершения задачи. Рекомендуемая конвенция — добавить **non-mutating** `format-check` (`--output=none --set-exit-if-changed`, ничего не пишет) как CI-гейт форматирования всего репо.
+- **Никогда** не запускать `dart format .` по всему репозиторию — это задевает и генераты, и чужие каталоги. Цель `make format` (`fvm dart format -l 140 lib test packages/nox_tor/lib packages/nox_tor/test packages/nox_tor/hook`) — массовый проход по коду приложения и пакета `nox_tor`; она входит в `make gate` (`generate → format → analyze → test`), который вместе с `make golden-verify` обязателен перед коммитом, пока автозапуск CI на паузе. Поскольку дерево держится отформатированным, массовый проход в гейте не порождает посторонних диффов; за пределами гейта форматируются только изменённые файлы. Проверка без записи живёт в CI (`ci.yml`): `dart format -l 140 --set-exit-if-changed $(git ls-files lib test | grep '\.dart$')`; отдельной цели `format-check` в `Makefile` нет.
 - **Никогда** не вычислять файлы для форматирования через `git diff` — это подтянет ветко-расходящийся шум.
 - **Никогда** не форматировать генераты (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`, `*.mocks.dart`).
 - **Длина строки — 140 символов** (`formatter: page_width: 140` в `analysis_options.yaml` — источник истины; команды также передают `-l 140` для явности).
 
-Скоуп форматирования — `lib/`, `test/`. Исключения — все генераты выше.
+Скоуп форматирования — `lib/`, `test/` и Dart-код `packages/nox_tor/`. Исключения — все генераты выше.
 
 ---
 
 ## 7. Локализация (стойка)
 
-**Локализация внедрена: ARB + `gen-l10n`, языки UI — английский и украинский.** Централизованного `lib/general/text_constants.dart` **больше нет** (файл удалён, ссылок на `TextConstants` в `lib/` ноль). Единственный источник пользовательских строк — ARB-файлы `lib/l10n/app_en.arb` (шаблон) и `lib/l10n/app_uk.arb`; сегодня в каждом **140 ключей с идентичными наборами** — новая строка обязана лечь в **оба** файла (шаблон `app_en.arb` задаёт API `AppLocalizations`, пропуск в `app_uk.arb` молча оставит украинский на английском фолбэке). Пакет `intl` остаётся **только** для форматирования (даты/числа) в `lib/general/formatters/`.
+**Локализация внедрена: ARB + `gen-l10n`, языки UI — английский и украинский.** Централизованного `lib/general/text_constants.dart` **больше нет** (файл удалён, ссылок на `TextConstants` в `lib/` ноль). Единственный источник пользовательских строк — ARB-файлы `lib/l10n/app_en.arb` (шаблон) и `lib/l10n/app_uk.arb`; в каждом **213 ключей с идентичными наборами** — новая строка обязана лечь в **оба** файла (шаблон `app_en.arb` задаёт API `AppLocalizations`, пропуск в `app_uk.arb` молча оставит украинский на английском фолбэке). Пакет `intl` остаётся **только** для форматирования (даты/числа) в `lib/general/formatters/`.
 
 Проводка (реальный код):
 
@@ -349,7 +351,7 @@ Text(context.l10n.systemChatCreated(username));
 
 ## 8. Пользовательские ошибки (единый канал)
 
-- `AlertDialogHelper.showErrorSnackBar(context, message)` — **единственный** канал пользовательских error-snackbar'ов; `AlertDialogHelper.showSnackBar` — для не-error info.
+- `showAppSnackBar(context, text: …, error: true)` — **единственный** канал пользовательских error-snackbar'ов; тот же `showAppSnackBar` без `error` — для не-error info, `showAppBanner(context, text: …)` — для постоянного баннера. Обе функции — top-level в `lib/presentation/helpers/app_feedback_helper.dart` (класса `AlertDialogHelper` в коде нет; в шаблонах [05](05-presentation-layer.md) и [16](16-file-upload.md) это имя читается как эти функции). Исключение, которое ещё в коде: сканер QR (`qr_scan_page.dart`) показывает `qrInvalidSnackbar` прямым `ScaffoldMessenger`.
 - **Никогда** не показывать сырые сообщения исключений. Транслировать `RepositoryException` → человекочитаемые строки в BLoC (см. `_translate(...)` в [05-presentation-layer.md](05-presentation-layer.md)), а саму копию брать из локализации (`context.l10n`, ключи `lib/l10n/app_en.arb` + `app_uk.arb`) — никаких строковых литералов в презентации.
 
 ---
@@ -373,12 +375,13 @@ abstract final class FeatureFlags {
 
 ## 10. Тестирование (стойка)
 
-- Тесты живут под `test/` и **глубоко зеркалят `lib/`** (фиче-папка к фиче-папке), а не плоско под слоем-папкой. Реальный test-tree скелета:
+- Тесты живут под `test/` и **глубоко зеркалят `lib/`** (фиче-папка к фиче-папке), а не плоско под слоем-папкой; BLoC-тесты продуктовых страниц лежат в подпапке `bloc/` страницы. Примеры из Item-среза:
   - `test/data/mapper/item/item_mapper_test.dart`
   - `test/data/local/item/item_dao_test.dart`
   - `test/presentation/pages/item_list_page/item_list_bloc_test.dart`
-- Бутстрап DI — **инлайн в каждом тест-файле**: `await configureDependencies(Environment.test)` в `setUp`/`setUpAll` + `await getIt.reset()` в `tearDown` (так устроены шипнутые тесты скелета). Сверх этого построен глобальный авто-хук `test/flutter_test_config.dart` (`flutter test` подхватывает его для всего сьюта): он ставит in-memory моки `SharedPreferences` и `FlutterSecureStorage`, чтобы сборка DI-графа не упиралась в платформенный канал, но сам DI-контейнер **не** строит — это по-прежнему делает каждый тест.
-- Мокинг — Mockito; bloc-тесты — `bloc_test`. Интеграционный слой на `integration_test` — **план, а не текущее состояние**: dev-зависимость объявлена в `pubspec.yaml`, каталога `integration_test/` в репозитории нет.
+- Бутстрап DI — **инлайн в каждом тест-файле**: `await configureDependencies(Environment.test)` в `setUp`/`setUpAll` + `await getIt.reset()` в `tearDown`; продуктовые BLoC-тесты сбрасывают состояние тройкой `SharedPreferences.setMockInitialValues({})` → `configureDependencies(Environment.test)` → `await getIt<AppDatabase>().clearEntireDatabase()` (тестовая база in-memory, но живёт между тестами одного изолята). Сверх этого построен глобальный авто-хук `test/flutter_test_config.dart` (`flutter test` подхватывает его для всего сьюта): он ставит in-memory моки `SharedPreferences` и `FlutterSecureStorage`, чтобы сборка DI-графа не упиралась в платформенный канал, но сам DI-контейнер **не** строит — это по-прежнему делает каждый тест.
+- Мокинг — только Mockito (`mocktail` запрещён); bloc-тесты — `bloc_test`. Каталог `integration_test/` держит две РУЧНЫЕ проверки Tor (`tor_pairing_test.dart`, `tor_relaunch_test.dart`) против живого `noxd` на симуляторе или эмуляторе; в гейт они не входят (см. `specs/045-tor-service-addresses/quickstart.md`).
+- `make test` исключает теги `golden` и `live`; голдены проверяются отдельно `make golden-verify`.
 - DI-окружение `Environment.test` подключает in-memory `AppDatabaseTest`.
 
 ```dart
@@ -484,7 +487,7 @@ fvm dart format -l 140 <changed files...>
 fvm flutter analyze
 ```
 
-(Или инвокнуть `/check-build` — см. [12-dev-commands.md](12-dev-commands.md).)
+(Перед коммитом — `make gate` + `make golden-verify`, см. §6 и [12-dev-commands.md](12-dev-commands.md); `make generate` дополнительно прогоняет `fvm flutter gen-l10n`.)
 
 ### 11.7 Запуск кодогенерации после правки аннотированных классов
 
@@ -509,14 +512,15 @@ fvm dart run build_runner build --delete-conflicting-outputs
 Flutter-приложение (iOS, Android, Windows, Linux, macOS; web вне scope) для NOX. ОДИН Dart-пакет `nox_app`.
 Слои — папки в `lib/`: data / domain / presentation + di / general / design / l10n / resource.
 Flutter 3.44.1 (FVM, `.fvmrc`). Dart sdk >=3.12.0 <4.0.0. Line length 140.
-Флейворы: stage, prod. applicationId/bundle: com.cyphernetlabs.noxapp (stage: com.cyphernetlabs.noxapp.stage).
+Флейворы: stage, prod (только Dart-define, нативных флейворов нет). applicationId/bundle: com.cyphernetlabs.noxapp — один на всех пяти платформах.
 Архитектурный референс: docs/blueprints/mobile/ (этот блюпринт — каноничный источник).
 
 ## Основные команды
 - Codegen:  fvm dart run build_runner build --delete-conflicting-outputs
-- Tests:    fvm flutter test
+- Gate:     make gate (generate → format → analyze → test) + make golden-verify — перед каждым коммитом
+- Tests:    make test (= fvm flutter test --exclude-tags "golden || live")
 - Analyze:  fvm flutter analyze
-- Format (ТОЛЬКО изменённые файлы, @140):  fvm dart format -l 140 <paths>
+- Format (изменённые файлы, @140):  fvm dart format -l 140 <paths>
 
 ## Архитектура (золотые правила — несущие инварианты)
 1. Один пакет, три слоя-папки; presentation → domain ← data; domain не импортирует ничего.
@@ -538,8 +542,8 @@ Flutter 3.44.1 (FVM, `.fvmrc`). Dart sdk >=3.12.0 <4.0.0. Line length 140.
     seq-курсор (сообщения: before_seq/limit → {messages, has_more}); ошибки → pagingState.error.
 
 ## Несущие правила
-- HARD RULE форматирования: только изменённые файлы, явные пути, @140; никакого whole-repo / git-diff.
-- AlertDialogHelper — единственный канал пользовательских ошибок; сырые exception-сообщения не показывать.
+- HARD RULE форматирования: изменённые файлы — явными путями, @140; массовый проход — только make format внутри make gate; никакого dart format . / git-diff.
+- showAppSnackBar / showAppBanner (presentation/helpers/app_feedback_helper.dart) — единственный канал пользовательских ошибок; сырые exception-сообщения не показывать.
 - Локализация: EN + UK через ARB (lib/l10n/app_en.arb + app_uk.arb, идентичные наборы ключей) + gen-l10n;
   доступ через context.l10n; text_constants.dart не существует; intl — только форматирование дат/чисел.
 - entity_converter.dart поддерживается вручную: новую entity регистрировать в EntityConverter (fromJson И toJson).
@@ -573,9 +577,9 @@ config get_items_config.dart.
 - [ ] Пагинация — `infinite_scroll_pagination ^5.1.1`, `PagingState`-в-блоке, `applyPage`; ошибки в `pagingState.error`.
 - [ ] Темизация — light + dark через `ThemeExtension<AppColors>`; в фиче-коде только токены, никаких хардкод-значений.
 - [ ] Логирование — только `LogRepository`; никаких `print`/`debugPrint` в `lib/`.
-- [ ] Пользовательские ошибки — только через `AlertDialogHelper`; сырые exception-сообщения не показываются.
+- [ ] Пользовательские ошибки — только через `showAppSnackBar` / `showAppBanner`; сырые exception-сообщения не показываются.
 - [ ] Каждая навигируемая `*Page` (`routeName`/`route()`) имеет собственный BLoC — даже logic-less (минимальный trio `Initializing`/`Initialized`/`Error` или value-BLoC а-ля `AppRootBloc`, Принцип 5.1); переиспользуемые виджеты BLoC не имеют.
 - [ ] Ни один `*.freezed.dart` / `*.g.dart` / `*.config.dart` не редактировался руками.
-- [ ] Конец задачи: codegen → format (только изменённые файлы, `-l 140`) → `fvm flutter analyze` — всё чисто.
+- [ ] Конец задачи: codegen → format (изменённые файлы, `-l 140`) → `fvm flutter analyze` — всё чисто; перед коммитом — `make gate` + `make golden-verify`.
 - [ ] Коммиты — imperative, ≤50-символьный сабджект с заглавной, атомарные, с `git commit -s` (с учётом репо-правил о подтверждении владельцем).
 - [ ] `CLAUDE.md` приложения создан из скелета §12 (обзор/команды, золотые правила, нейминг, HARD RULE форматирования, локализация, заметка про `entity_converter.dart`).

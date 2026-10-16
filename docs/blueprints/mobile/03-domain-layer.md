@@ -50,7 +50,7 @@ lib/domain/
         └── get_items_config.dart # get_item_config.dart появится с кэшируемой фичей (§5.3)
 ```
 
-> **О составе дерева.** Доменный слой кроме рабочего примера `Item` несёт три кросс-слойных контракта/модели, которые задают границу домена для остальных частей: `repository/log_repository.dart` — единственный канал логирования (FR-011: голый `print`/`debugPrint` в `lib/` запрещён, всё идёт через `LogRepository`; реализация `LoggerLogRepository` — в `lib/data`, см. `02-dependency-injection.md`); `model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig` несёт `flavor` + nullable `apiUrl`; WebSocket-конверт контракта v0 и DI-флип на реальные data source'ы пришли фазой 026, так что `apiUrl` больше не `null` в окружении `dev` (флейвор `stage`) — он несёт адрес локального `noxd` из `config/stage.json`; источник auth-токена ждёт stage-2-аутентификацию, она ещё не спроектирована; см. `02-dependency-injection.md` и `09-build-and-secrets-infra.md`); `repository/base/base.dart` — barrel-файл, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart` ради одной строки импорта на стороне потребителя. Само дерево выше — **скелетная** раскладка блюпринта, а не опись сегодняшнего кода: в реальном `lib/domain/` рядом с `item/` уже живут `model/{app,chat,file,qr}`, `model/app_config/server_limits.dart`, `repository/{app,chat,settings,sync}` и папка `service/` (`ConnectivityService`, `FilePickerService`, …) — форма та же, состав шире.
+> **О составе дерева.** Доменный слой кроме рабочего примера `Item` несёт три кросс-слойных контракта/модели, которые задают границу домена для остальных частей: `repository/log_repository.dart` — единственный канал логирования (FR-011: голый `print`/`debugPrint` в `lib/` запрещён, всё идёт через `LogRepository`; реализация `LoggerLogRepository` — в `lib/data`, см. `02-dependency-injection.md`); `model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig` несёт `flavor` + nullable `apiUrl`: флейвор `stage` несёт в нём адрес из `config/stage.json`, `prod` — `null`, а живой канал его не читает — адрес и ключ сервера приходят ссылкой спаривания; токена контракт v0 не несёт, соединение аутентифицирует канал, поэтому у источника токена `getUserAuthIdToken()` писателя нет; см. `02-dependency-injection.md` §7.3 и `09-build-and-secrets-infra.md`); `repository/base/base.dart` — barrel-файл, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart` ради одной строки импорта на стороне потребителя. Само дерево выше — **скелетная** раскладка блюпринта, а не опись кода: в реальном `lib/domain/` рядом с `item/` живут `model/{app,chat,connection,device,file,qr,session}`, `model/app_config/server_limits.dart`, `repository/{app,chat,connection,device,file,qr,settings,sync}`, `exception/pairing_exception.dart` и папка `service/` (`ConnectivityService`, `FilePickerService`, `LocalFilesService`, `TorService`, …) — форма та же, состав шире. Доменный слой не импортирует даже `lib/general/`: кроме своих файлов — только `freezed_annotation`, `dart:async`/`dart:typed_data` и единственное отступление с `ThemeMode` выше.
 
 > **Правило раскладки.** Доменный слой — **не** отдельный пакет: **один пакет, слои = папки**, направление зависимостей строго `data -> domain` (домен не знает про data); цикла `domain <-> data` быть не должно. В доменном слое **нет** `DataConverter` / `ExceptionConverter` / `JsonMappers` / кастомных `JsonConverter` / `fromJson` на доменных типах — всё это живёт в entity-слое (`04-data-layer.md`). Доменные конфиги — **по одному классу на вызов**, а не sealed-union на фичу.
 
@@ -60,7 +60,7 @@ lib/domain/
 
 Каждый метод репозитория возвращает `Future<RepositoryResult<T>>` или `Stream<RepositoryResult<T>>`. **Никогда** не голый `Future<T>`.
 
-`RepositoryResult<T>` — это `@freezed sealed`-класс (по мандату Freezed), но с **взаимоисключающими** вариантами: либо `RepositoryResultSuccess<T>` (несёт `data`), либо `RepositoryResultError<T>` (несёт `exception`), и ровно один из них в наличии. Взаимоисключаемость гарантируется двумя именованными фабриками `RepositoryResult.success(data: …)` / `RepositoryResult.error(exception: …)` — **именованные обязательные параметры**. Никакого «partial»-состояния (когда заполнены оба поля) больше нет.
+`RepositoryResult<T>` — это `@freezed sealed`-класс (по мандату Freezed), но с **взаимоисключающими** вариантами: либо `RepositoryResultSuccess<T>` (несёт `data`), либо `RepositoryResultError<T>` (несёт `exception`), и ровно один из них в наличии. Взаимоисключаемость гарантируется двумя именованными фабриками `RepositoryResult.success(data: …)` / `RepositoryResult.error(exception: …)` — **именованные обязательные параметры**. «Partial»-состояния (когда заполнены оба поля) нет.
 
 `lib/domain/repository/base/repository_result.dart`:
 ```dart
@@ -220,6 +220,9 @@ enum RepositoryException implements BaseRepositoryException {
         'unauthenticated' => unauthenticated,
         'unsupported_schema' => unsupportedSchema,
         'internal' => internal,
+        // Pairing (§8A): a spent link and an expired one lead somewhere different.
+        'invalid_token' => authentication,
+        'token_expired' => notFound,
         _ => internal,
       };
 }
@@ -233,10 +236,10 @@ Data-слой маппит необработанные ошибки прямо 
 |---|---|
 | `unknown` | Обобщённая / немаппнутая ошибка (а также fallback по умолчанию). |
 | `internal` | Невосстановимое внутреннее состояние или серверная ошибка (5xx); сюда же деградирует незнакомый код с провода. |
-| `authentication` | Неверные учётные данные / провал аутентификации (неправильный логин/пароль). |
+| `authentication` | Ссылка спаривания уже потрачена или не годится — `invalid_token` (контракт §8A); `403` на HTTP-пути. |
 | `connection` | Сетевой/I-O сбой, таймаут, недостижимый сервер. |
 | `unauthenticated` | Ключ устройства не среди спаренных — `unauthenticated` / `401`. Принудительный выход вызывает только `unauthenticated` в ответ на `session.hello` (так выглядит и отзыв устройства); `401` от `/files` — неудавшаяся передача, не выход. |
-| `notFound` | Запрошенный ресурс не существует — 404 / `not_found`. |
+| `notFound` | Запрошенный ресурс не существует — 404 / `not_found`; истёкшая ссылка спаривания — `token_expired`. |
 | `invalidRequest` | Запрос не прошёл валидацию сервера — `invalid_request`. |
 | `nameTaken` | Имя чата уже занято на этом сервере — `name_taken`. Имя человека на уникальность не проверяется. |
 | `payloadTooLarge` | Payload больше объявленных сервером лимитов — `payload_too_large`. |
@@ -258,6 +261,8 @@ enum PaymentsRepositoryException implements BaseRepositoryException {
 ```
 
 > Предпочтение: для общих режимов отказа расширяйте `RepositoryException`; отдельный enum заводите только когда фиче нужен **семантически свой** сигнал, которого нет в общем наборе (как `providerNotConnected` выше). Оба варианта одинаково проходят через `match()`, т.к. оба — `BaseRepositoryException`.
+>
+> Живой пример в коде — `PairingException` (`lib/domain/exception/pairing_exception.dart`, фаза 046): `declined` (устройство, выпустившее приглашение, ответило Deny) и `cancelled` (человек сам отозвал запрос кнопкой `Cancel`). Это ответы, а не отказы общего вида, и экран 2.4 ведёт себя по каждому по-своему.
 
 ---
 
@@ -333,7 +338,7 @@ abstract class ItemRepository {
 >   Future<void> clean();
 > }
 > ```
-> Полный CRUD и cache-first `watchItem`/`fetchItem` (с `ItemDao` + `BehaviorSubject`) — это эталон-цель блюпринта. Кэширование в приложение уже пришло (013), но легло в `ChatRepository`/`MessageRepository`, а срез `Item` сознательно **заморожен** как verification-harness и остаётся list-only: он не product canon, а живой пример network-only-формы. Соответственно `get_item_config.dart` (см. §5.3) в коде сегодня **отсутствует** — импорт в примере выше forward-looking.
+> Полный CRUD и cache-first `watchItem`/`fetchItem` (с `ItemDao` + `BehaviorSubject`) — это эталон-цель блюпринта. Кэширование в приложение уже пришло (013), но легло в `ChatRepository`/`MessageRepository`, а срез `Item` сознательно **заморожен** как verification-harness и остаётся list-only: он не product canon, а живой пример network-only-формы. Соответственно `get_item_config.dart` (см. §5.3) в коде **отсутствует** — импорт в примере выше forward-looking.
 
 ### 4.3 Пустой скелет
 
@@ -564,7 +569,7 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
 После применения этого документа должно существовать и проходить анализ:
 
 - [ ] `lib/domain/exception/base_repository_exception.dart` — однострочный маркер `abstract class BaseRepositoryException {}` (без JSON-методов).
-- [ ] `lib/domain/exception/repository_exception.dart` — enum `RepositoryException` (`unknown`, `internal`, `authentication`, `connection`, `unauthenticated`, `notFound` + коды контракта v0 §2.1: `invalidRequest`, `nameTaken`, `payloadTooLarge`, `attachmentGone`, `rateLimited`, `unsupportedSchema`), реализующий маркер, плюс статический `fromWireCode(String)` (незнакомый код → `internal`).
+- [ ] `lib/domain/exception/repository_exception.dart` — enum `RepositoryException` (`unknown`, `internal`, `authentication`, `connection`, `unauthenticated`, `notFound` + коды контракта v0 §2.1: `invalidRequest`, `nameTaken`, `payloadTooLarge`, `attachmentGone`, `rateLimited`, `unsupportedSchema`), реализующий маркер, плюс статический `fromWireCode(String)` (коды спаривания `invalid_token` → `authentication`, `token_expired` → `notFound`; незнакомый код → `internal`).
 - [ ] `lib/domain/repository/base/repository_result.dart` — `@freezed sealed class RepositoryResult<T>` с публичными вариантами `RepositoryResultSuccess<T>` / `RepositoryResultError<T>`, **взаимоисключающими** именованными фабриками `success({required data})` / `error({required exception})`, геттером `hasData`, **только `.freezed.dart`** (нет `.g.dart`, нет `fromJson`).
 - [ ] `lib/domain/repository/base/repository_result_handling.dart` — `extension RepositoryResultMatch` с тримнутым `match<R>({onData, onError})` через `switch` по публичным вариантам (без `onPartial`/`onEmpty`).
 - [ ] `lib/domain/repository/base/repository_config.dart` — маркер `abstract class RepositoryConfig {}`.
@@ -574,7 +579,7 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
 - [ ] `lib/domain/repository/base/page_metadata.dart` — `@freezed PageMetadata{ required bool hasMore, int? nextPage }`, **без** `total` (`hasMore` — с провода `has_more`; `nextPage` — 1-based, считается на клиенте и заполняется только на paged-пути, `null` на последней странице и на seq-курсорном пути истории); полный контракт — `07-pagination.md`.
 - [ ] `lib/domain/repository/base/base.dart` — barrel, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart`.
 - [ ] `lib/domain/repository/log_repository.dart` — абстрактный `LogRepository` (`debug({Object? target, required String message})` / `error({Object? target, required Object error, StackTrace? stackTrace})`), единственный канал логирования (FR-011; реализация — `lib/data`, см. `02-dependency-injection.md`).
-- [ ] `lib/domain/model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `lib/domain/repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig({ required AppFlavorType flavor, String? apiUrl })`, `enum AppFlavorType { prod, stage }`; `apiUrl` заполнен с фазы 026 (транспорт + DI-флип; флейвор `stage`, который поднимает окружение `dev`, несёт адрес локального `noxd` из `config/stage.json`, прод — `null`), источник auth-токена ждёт stage-2-аутентификацию; см. `02`/`09`).
+- [ ] `lib/domain/model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `lib/domain/repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig({ required AppFlavorType flavor, String? apiUrl })`, `enum AppFlavorType { prod, stage }`; `apiUrl` заполнен во флейворе `stage` из `config/stage.json`, в `prod` — `null`, и адресом соединения не служит: адрес и ключ сервера приходят ссылкой спаривания; у источника auth-токена писателя нет — соединение аутентифицирует канал; см. `02`/`09`).
 - [ ] Хотя бы одна `@freezed`-модель (`ItemModel`) с одной `part '*.freezed.dart'`-директивой, **без** `fromJson`/`.g.dart`; производная логика — во внешнем `extension <Model>ModelExt` (для `ItemModel` — `isArchived` / `displayName`); мелкие enum'ы — в отдельном `*_status.dart` рядом.
 - [ ] Доменный слой **ничего** не импортирует из `lib/data` / `lib/presentation`; импорты — полные `package:nox_app/...`, без относительных `../` (кроме `part`).
 - [ ] `fvm dart run build_runner build --delete-conflicting-outputs` (или `make generate`) перегенерирует все `*.freezed.dart` без ошибок; `fvm flutter analyze` по доменному слою чист.

@@ -364,7 +364,7 @@ abstract class ItemRepository {
 - Пагинированный список возвращает `RepositoryResult<(List<T>, PageMetadata)>` — кортеж со срезом страницы и метаданными `PageMetadata{hasMore, nextPage}` (см. §6c и `07-pagination.md`); та же форма обслуживает и seq-cursor-путь истории сообщений, где `nextPage` остаётся `null`.
 - Возвраты **всегда** обёрнуты в `RepositoryResult<T>` — никогда голый `Future<T>` (кроме `clean()`, который возвращает `Future<void>`).
 
-> **Сверка со скелетом.** Контракт выше — **полная** референс-форма. Реальный `lib/domain/repository/item/item_repository.dart` в скелете Feature-001 урезан до network-only-среза (паттерн «первая реальная фича / список чатов»): только `getItems({required GetItemsConfig config})` + `clean()`. Cache-first `watchItem`/`fetchItem` и CRUD (`createItem`/`updateItem`/`deleteItem`) — это полный пример блюпринта; они прибывают с фичей, которой нужен кэш.
+> **Сверка со скелетом.** Контракт выше — **полная** референс-форма. Реальный `lib/domain/repository/item/item_repository.dart` в скелете Feature-001 урезан до network-only-среза (замороженная верификационная форма; продуктовый список чатов — cache-first с read-through, `07-pagination.md`): только `getItems({required GetItemsConfig config})` + `clean()`. Cache-first `watchItem`/`fetchItem` и CRUD (`createItem`/`updateItem`/`deleteItem`) — это полный пример блюпринта; они прибывают с фичей, которой нужен кэш.
 
 ---
 
@@ -400,7 +400,7 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
 
 > `defaultPage` — **1** (1-based). Никогда `GetItemsConfig(page: 0, pageSize: 50)`; никаких магических чисел страницы в BLoC — первая страница выражается только фабрикой `Get<Name>sConfig.firstPage()`. `pageSize` — статическая константа (20), не поле конфига; `page` — единственное обязательное поле, `search` опционален.
 
-> Продуктовый аналог этой формы — `GetChatsConfig` (`page` + `search?`, те же `pageSize` / `defaultPage`, PAGED-путь контракта v0 §4). Второй реальный путь конфигом отличается: `GetMessagesConfig{chatId, int? beforeSeq, limit}` (seq-cursor, §5) с фабриками `tail()` / `olderThan(beforeSeq:)` вместо `firstPage()` / `nextPage()` — номеров страниц у истории сообщений нет.
+> Продуктовый аналог этой формы — `GetChatsConfig` (`page` + `search?` + `@Default(false) bool cachedOnly`, те же `pageSize` / `defaultPage`, PAGED-путь контракта v0 §4). Второй реальный путь конфигом отличается: `GetMessagesConfig{chatId, int? beforeSeq, limit, cachedOnly}` (seq-cursor, §5) с фабриками `tail()` / `olderThan(beforeSeq:)` вместо `firstPage()` / `nextPage()` — номеров страниц у истории сообщений нет. `cachedOnly: true` в обоих — «отдать срез из кэша, не трогая сервер» (первое чтение экрана и реактивный тик, `07-pagination.md`).
 
 ### 5b. Одиночный конфиг — `GetItemConfig`
 
@@ -421,7 +421,7 @@ abstract class GetItemConfig with _$GetItemConfig implements RepositoryConfig {
 }
 ```
 
-Семантика `cacheOnly` (единая по кодовой базе):
+Семантика `cacheOnly` шаблона (у продуктовых списочных конфигов флаг называется `cachedOnly` и означает только «не трогать сервер», §5a):
 - `true` → читать только кэш; вернуть `notFound`, если пусто (сеть не трогается).
 - `null` или `false` → cache-first: вернуть кэш, если есть, иначе сходить в сеть.
 
@@ -617,7 +617,7 @@ class EntityConverter<E> implements JsonConverter<E?, dynamic> {
 
 > **Правило сопровождения:** любой новый entity, используемый через `ResponseEntity<T>`, добавляется в **обе** цепочки в `entity_converter.dart`. Реестр поддерживается руками, не кодогенерируется.
 
-> **Сверка с кодом.** Реестр давно не пустой: с феатуры 018/S4 в `entity_converter.dart` зарегистрированы обе цепочки для `ItemEntity` / `ItemsEntity` (референс-харня) **и** для продуктовых wire-обёрток контракта v0 — `ChatWireEntity` / `ChatsWireEntity` / `MessageWireEntity` / `MessagesWireEntity`. Моки собирают конверт напрямую (не через `fromJson`); пришедший с феатурой 026 транспорт делает то же — `Real*RemoteDataSource` строят `ResponseEntity` явными парсерами (`ChatsWireEntity.fromJson` и т. п. передаются аргументом в хелперы `toEnvelope` / `toWrappedEnvelope` из `socket_envelope.dart`; сами вызовы — в `lib/data/remote/datasource/real/real_chat_remote_data_source.dart` и `real_message_remote_data_source.dart`), — поэтому диспетчер `EntityConverter.fromJson` по-прежнему прогоняют только round-trip-тесты. Незарегистрированный `T` по-прежнему бросает `ArgumentError` — «нет конвертера» остаётся явной ошибкой.
+> **Сверка с кодом.** В `entity_converter.dart` зарегистрированы обе цепочки для `bool`, для `ItemEntity` / `ItemsEntity` (референс-харня) **и** для продуктовых wire-обёрток контракта v0 — `ChatWireEntity` / `ChatsWireEntity` / `MessageWireEntity` / `MessagesWireEntity` / `UploadTicketWireEntity` / `DownloadTicketWireEntity`. Моки собирают конверт напрямую (не через `fromJson`); транспорт делает то же — `Real*RemoteDataSource` строят `ResponseEntity` явными парсерами (`ChatsWireEntity.fromJson` и т. п. передаются аргументом в хелперы `toEnvelope` / `toWrappedEnvelope` из `lib/data/remote/datasource/real/socket_envelope.dart`; вызовы — в `real_chat_remote_data_source.dart`, `real_message_remote_data_source.dart` и `real_file_remote_data_source.dart` той же папки), — поэтому диспетчер `EntityConverter.fromJson` прогоняют только round-trip-тесты. Незарегистрированный `T` по-прежнему бросает `ArgumentError` — «нет конвертера» остаётся явной ошибкой.
 
 ---
 
@@ -1417,7 +1417,7 @@ class GetItemsApiRequestBuilder extends RequestBuilder<GetItemsConfig> {
 
 > Путь эндпоинта (`v1/items`) и имена query-параметров (`page` / `page_size` / `search`) принадлежат **замороженному** верификационному слайсу `Item` — это не продуктовый REST NOX. Реальные команды (в т. ч. список чатов и история сообщений) ходят WS-конвертом контракта v0 (феатура 026), а REST остаётся только под загрузку/скачивание блобов. Переиспользуется здесь именно паттерн: request builder + обёртка ответа в `ResponseEntity`.
 
-> **Сверка со скелетом.** Шаблон выше (`GetItemsApi extends BaseApiRepository with RequestBuilderHelper` + отдельный `GetItemsApiRequestBuilder`) — целевая форма реальной сетевой фичи. В коде `lib/data/remote/api/item/get_items_api.dart` — самодостаточный `@lazySingleton`-**мок** (без `BaseApiRepository`, без `RequestBuilderHelper`, без `buildPath`): он синтезирует страницы `ItemEntity` (всего 47 записей) и возвращает `ResponseEntity<ItemsEntity>(success: true, data: ...)`; репозиторий добирается до него через `MockItemRemoteDataSource` (seam 016). Дерева `lib/data/remote/request_builder/` и `base_api_repository.dart` в коде **нет** — не потому, что бэкенд не выбран (он выбран), а потому что продуктовые команды ходят WS-конвертом (феатура 026), и REST-обвязка понадобится только под блобовые upload/download-эндпоинты.
+> **Сверка со скелетом.** Шаблон выше (`GetItemsApi extends BaseApiRepository with RequestBuilderHelper` + отдельный `GetItemsApiRequestBuilder`) — целевая форма реальной сетевой фичи. В коде `lib/data/remote/api/item/get_items_api.dart` — самодостаточный `@lazySingleton`-**мок** (без `BaseApiRepository`, без `RequestBuilderHelper`, без `buildPath`): он синтезирует страницы `ItemEntity` (всего 47 записей) и возвращает `ResponseEntity<ItemsEntity>(success: true, data: ...)`; репозиторий добирается до него через `MockItemRemoteDataSource` (seam 016). Дерева `lib/data/remote/request_builder/` и `base_api_repository.dart` в коде **нет**: продуктовые команды ходят WS-конвертом (феатура 026), а единственный REST — байты вложений — `RealFileRemoteDataSource` шлёт прямо через `ApiClient.dio` (`PUT`/`GET` по `/files/<token>`, фазы 028 и 043), без `BaseApiRepository` и `RequestBuilder`.
 
 ---
 
@@ -1881,7 +1881,7 @@ class _ItemListPageState extends BaseStatePage<ItemListPage> {
 - Рендер — `switch (state)` по Freezed-вариантам (`Initializing` / `Error` / `Initialized`).
 - Список — `PagedListView<String, T>.separated` (v5 stateless, `K = String = item id`: `state: pagingState`, `fetchNextPage` диспетчит событие, не фетчит). Pull-to-refresh — `AppRefreshIndicatorWidget`, разрешающий completer.
 
-> **Сверка со скелетом.** Шаблон выше — целевая форма навигируемой страницы (`routeName` + `route()` + собственный `Scaffold` + pull-to-refresh + навигация по тапу; Принцип 5.1 / инвариант 3a). Реальный `lib/presentation/pages/item_list_page/item_list_page.dart` в скелете Feature-001 — verification-харня на мок-данных, отрендеренная как тело таба Chats **внутри** `AppShell` (свой `Scaffold` не заводит, `routeName`/`route()` нет, без pull-to-refresh/навигации). Это допустимое упрощение скелета (placeholder-страницы пока stateless, у `AppShell` нет своего BLoC) до прихода реальных фич; целевая форма — шаблон выше.
+> **Сверка с кодом.** Шаблон выше — целевая форма навигируемой страницы (`routeName` + `route()` + собственный `Scaffold` + pull-to-refresh + навигация по тапу; Принцип 5.1). Реальный `lib/presentation/pages/item_list_page/item_list_page.dart` — verification-харня Feature-001 на мок-данных, рассчитанная на тело таба внутри скелетного `AppShell` (свой `Scaffold` не заводит, `routeName`/`route()` нет, без pull-to-refresh/навигации); ни она, ни `AppShell` в приложении не смонтированы — живая оболочка `TabBarShell` хостит продуктовые `ChatsListPage` и `SettingsRootPage`. Продуктовый список (`ChatsListPage`) оборачивает `PagedListView` стоковым `RefreshIndicator`; виджета `AppRefreshIndicatorWidget` (§15d) в `lib/` нет.
 
 ### 15c. Страница с параметром — `ItemDetailsPage`
 
@@ -2073,6 +2073,8 @@ LogRepository get logRepository => getIt<LogRepository>();
 ItemRepository get itemRepository => getIt<ItemRepository>();
 ```
 
+> **Сверка с кодом.** Реальный `global_aliases.dart` держит ещё `settingsRepository`, `chatRepository`, `appStateRepository`, `authRepository`, `sessionRepository`, `cameraPermissionService`, `notificationPermissionService` и `qrImageDecodeService`. BLoC-и обычно резолвят свои зависимости полями `getIt<X>()`, а не через алиасы; конструкторной инъекции нет ни там, ни там.
+
 ### 17d. `feature_flags.dart`
 
 **Целевой путь:** `lib/general/feature_flags.dart`
@@ -2174,18 +2176,19 @@ abstract final class AppTextStyleTokens {
 ```dart
 import 'package:flutter/services.dart';
 
-/// System UI overlay (status/nav bar) styles per brightness.
+/// System UI overlay (status bar) styles per brightness. Nav-bar fields are
+/// intentionally omitted (Android-only; NOX targets five platforms).
 abstract final class AppOverlayStyleTokens {
   const AppOverlayStyleTokens._();
 
   static const SystemUiOverlayStyle light = SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
+    statusBarColor: Color(0x00000000),
     statusBarIconBrightness: Brightness.dark,
     statusBarBrightness: Brightness.light,
   );
 
   static const SystemUiOverlayStyle dark = SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
+    statusBarColor: Color(0x00000000),
     statusBarIconBrightness: Brightness.light,
     statusBarBrightness: Brightness.dark,
   );
@@ -2204,7 +2207,7 @@ abstract final class NoxIcons {
 
   static SvgGenImage get forum => Assets.svg.icons.forum; // Chats tab — outlined
   static SvgGenImage get forumFill => Assets.svg.icons.forumFill; // Chats tab — filled
-  // … 41 getters total — see lib/design/nox_icons.dart
+  // … 58 getters total — see lib/design/nox_icons.dart
 }
 ```
 
@@ -2253,6 +2256,7 @@ void main() {
 }
 ```
 
+> **Сверка с кодом.** Шаблон — минимальная форма. Реальный `lib/main.dart` держит порядок, который несёт нагрузку: `AppDataRoot.useLocalFolderOnWindows()` (до любого вопроса о папке) → `configureDependencies(env)` → `getIt.allReady()` → `AppConfigRepository.initialize(flavorType:)` → `sessionRepository.sweepLegacyKeys()` → `runApp(const AppRoot())` с `appStateRepository.holdUntil(_start())`. `_start()` идёт под сплэшем: метка «вне бэкапов» → удаление открытых данных прошлых сборок → временные копии → `authRepository.openLocalData()` (база под ключом локальной базы, фича 048) → `retireLegacySession()` → копии выбора файлов, которых не держит очередь → `LiveSessionStarter.start()` → `OutboxService.start()`. Первая навигация ждёт конец `_start()`.
 > `AppFlavor.getFlavor()` читает `String.fromEnvironment('app.flavor')`; маппинг `AppFlavorType.prod → Environment.prod`, `AppFlavorType.stage → Environment.dev` — в `09-build-and-secrets-infra.md`.
 > `setPreferredOrientations([portraitUp])` — лок ориентации для iOS/Android; десктоп (Windows / macOS / Linux) этот вызов игнорирует (одно окно, ориентацией не управляет). На все пять платформ значения flavor приходят через `--dart-define-from-file` (см. `09-build-and-secrets-infra.md`).
 > Отдельного BLoC-обозревателя нет: логирование ошибок уже происходит на уровне репозиториев через обязательный `LogRepository` (`BaseRepositoryHelper.execute` всегда логирует), а ошибки BLoC-обработчиков оборачиваются `BaseBloc.executeLogic` — поэтому отдельный `Bloc.observer` не нужен.
@@ -2273,7 +2277,7 @@ void main() {
 - [ ] `BaseMapper<E, M, AdResult, AdParam>` + mapper `@lazySingleton`, вся коэрция enum/DateTime внутри него.
 - [ ] Env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory) + реактивный DAO (`watch`/`onSnapshots`/`transaction`/`mutate`); **без типизированного `DaoException`** — сырой throw при сбое хранилища, `null`/no-op при отсутствии записи.
 - [ ] Слой данных **без** типизированной иерархии исключений: нет `ApiException`, нет `DaoException`, нет `BaseDomainExceptionHelper` — единственный механизм — `BaseRepositoryHelper.execute` (`BaseRepositoryException` — насквозь, `DioException` — через `_mapDioException`, прочее → `unknown`).
-- [ ] `BaseRepositoryHelper.execute<TD>(Function executionFunction)` (`with BaseRepositoryHelper` только, без `on`-ограничения; четыре catch-ветки — доменная насквозь, `SocketUnavailableException` → `connection`, `DioException` по типу/статусу, прочее → `unknown`; callback возвращает уже-обёрнутый `RepositoryResult`) + `unwrapEnvelope<TD>(response, what)` с `RepositoryException.fromWireCode`, с **обязательным** `LogRepository.error` (никакого `print`) + impl `@LazySingleton(as: Interface, env:[dev,prod,test])` с DAO-stream-subscribed `BehaviorSubject` и `@disposeMethod`; пагинированный список — network-only.
+- [ ] `BaseRepositoryHelper.execute<TD>(Function executionFunction)` (`with BaseRepositoryHelper` только, без `on`-ограничения; четыре catch-ветки — доменная насквозь, `SocketUnavailableException` → `connection`, `DioException` по типу/статусу, прочее → `unknown`; callback возвращает уже-обёрнутый `RepositoryResult`) + `unwrapEnvelope<TD>(response, what)` с `RepositoryException.fromWireCode`, с **обязательным** `LogRepository.error` (никакого `print`) + impl `@LazySingleton(as: Interface, env:[dev,prod,test])` с DAO-stream-subscribed `BehaviorSubject` и `@disposeMethod`; network-only — только замороженный список `Item`-харни (продуктовые списки — read-through через DAO, `07-pagination.md`).
 - [ ] Dio `ApiClient` + `RequestBuilder<T>` + `RequestBuilderHelper` + `GetItemsApi` (обёртка в `ResponseEntity`).
 - [ ] Freezed BLoC-трио: `<Feature>ListEvent` (`@freezed sealed`: `Initialize`/`LoadItems`/`RefreshRequested`/`UpdateSearchQuery`/`ShowItemDetails`), `<Feature>ListState` (`@freezed sealed`: `Initializing`/`Initialized{pagingState,items,nextPage,isLastPage,…}` — без поля `total`/`Error`), `<Feature>ListBloc extends BaseBloc` с `applyPage`, `PublishSubject` side-effects, restartable-поиском. Никакого ручного `Equatable`.
 - [ ] `PagingStateExt.applyPage` (v5 stateless, generic over `K = String = item id`, возвращает запись `(updatedList, pagingState, nextPage)`, принимает `(List<T>, PageMetadata)`; конец списка — `!meta.hasMore`, один helper на оба пути контракта v0); ошибки идут в `pagingState.error`.

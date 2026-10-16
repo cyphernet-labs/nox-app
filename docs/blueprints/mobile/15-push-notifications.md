@@ -2,7 +2,7 @@
 
 > **Назначение:** зафиксировать единый механизм push-уведомлений в `nox_app` поверх Firebase Cloud Messaging — подключение `firebase_messaging`, получение и ротация device-токена, его регистрация/разрегистрация на бэкенде NOX (`POST`/`DELETE /api/v1/user/push_notification/` — импортированный REST-пример: бэкенд у NOX выбран — Go-сервер `noxd` (`client_backend/`, встроенный SQLite) и контракт v0, — но **регистрация push-токена в нём открыта**: `push.register` — этап 2, §8.2 контракта, заблокирован Q2/Q13, поэтому §6 подлежит замене на реальный контракт по закрытии Q2), три режима приёма сообщений (foreground / background / terminated), разрешения (iOS APNs, Android 13+ `POST_NOTIFICATIONS`) и навигацию по тапу. Слои — по канону блюпринта: `PushTokenRepository` (интерфейс в `lib/domain/repository/`, impl `with BaseRepositoryHelper`, методы возвращают `RepositoryResult<T>`), DI-регистрация `@LazySingleton(as: …)`, подключение в `main.dart` + `AppRoot`-observer.
 > **Когда читать:** перед поднятием папки push-уведомлений (`lib/{domain,data}/.../push/`), перед добавлением `firebase_messaging` в `pubspec.yaml`, при реализации регистрации device-токена на бэкенде, при разводке навигации «пользователь тапнул по уведомлению», а также при добавлении нового типа push-payload'а от серверной стороны.
-> **Связанные документы:** [13-deep-links.md](13-deep-links.md) (навигация по тапу — общий механизм маршрутизации `AppRootBloc`, `GlobalKey<NavigatorState>`, dispatch-table; push-tap переиспользует его), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой вызов register/unregister — HMAC + access/refresh JWT, security-заголовки — **не переизобретать**; push-endpoint'ы идут через полный security-pipeline; конкретная модель подписи/токенов — пример: этап 1 контракта v0 работает **без авторизации**, а модель аутентификации/пейринга этапа 2 ещё не финализирована), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper.execute`, мапперы, REST-слой `RequestBuilder`/`ResponseEntity`), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot`/`AppRootBloc`, `BaseBloc.executeLogic`, потребление `RepositoryResult` через `match`), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозитория), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозитория, bootstrap `main.dart`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии `firebase_core`/`firebase_messaging`/`permission_handler`).
+> **Связанные документы:** [13-deep-links.md](13-deep-links.md) (навигация по тапу — общий механизм маршрутизации `AppRootBloc`, `GlobalKey<NavigatorState>`, dispatch-table; push-tap переиспользует его), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой вызов register/unregister — HMAC + access/refresh JWT, security-заголовки — **не переизобретать**; push-endpoint'ы идут через полный security-pipeline; конкретная модель подписи/токенов — пример: в контракте v0 аутентифицируется само соединение — TLS 1.3 и проверка `POST /auth` → `POST /auth2` с RustSecureBox, — а доступ устройство получает спариванием; токенов и подписи запросов контракт не несёт), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper.execute`, мапперы, REST-слой `RequestBuilder`/`ResponseEntity`), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot`/`AppRootBloc`, `BaseBloc.executeLogic`, потребление `RepositoryResult` через `match`), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозитория), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозитория, bootstrap `main.dart`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии `firebase_core`/`firebase_messaging`/`permission_handler`).
 
 ---
 
@@ -19,7 +19,7 @@
 
 > **Зона ответственности бэкенда NOX в этом документе — только регистрация/разрегистрация токена.** Сама эмиссия push-**событий** (что и когда отправлять) — отдельный серверный контракт, **не** покрываемый этим документом; на стороне мобильного клиента — только `POST`/`DELETE /api/v1/user/push_notification/` (импортированный REST-пример; контракт v0 держит для этого одну команду `push.register` (§8.2), и она открыта по Q2/Q13). Контракт payload'ов доставляемых уведомлений (§9) — на серверной стороне; мобильный handler читает их `data`-поля, но источник правды по их форме — серверная спека.
 
-> **NOX-нюанс приватности (предварительно).** Push приходят только по «своим» чатам — тем, что пользователь создал, где писал или которые открывал; включается единым toggle'ом. Точные правила охвата уточняются при закрытии Q2 — контракт v0 push-событий пока не описывает.
+> **NOX-нюанс приватности (предварительно).** Клиентский сервер принадлежит одному человеку, и все чаты на нём — его собственные, так что отбора «своих» чатов нет; push включается единым toggle'ом (настройка `Notifications`). Что именно будит push и что видит push-релей — решается при закрытии Q2; контракт v0 push-событий не описывает.
 
 **Стадии пайплайна:**
 
@@ -543,7 +543,7 @@ class _AppRootState extends State<AppRoot> {
 }
 ```
 
-> **`AppRootBloc` дёргает `initialize()`/`register()` после login, а не в `initState`.** Регистрация требует access-JWT (§1) — поэтому она привязана к появлению токен-пары (после login), а не к старту виджета. Конкретный триггер — событие `AppRootBloc` по выходу app-state из `init` (тот же паттерн, что `_onInitializeDeepLinks` в [13-deep-links.md](13-deep-links.md), который включается `BlocListener`'ом после ухода из init-состояния).
+> **`AppRootBloc` дёргает `initialize()`/`register()` после login, а не в `initState`.** Регистрация требует аутентифицированной сессии (§1): в примере §6 — появления токен-пары, у NOX — спаренного устройства, чьё соединение прошло проверку канала, — поэтому она привязана к входу, а не к старту виджета. Конкретный триггер — событие `AppRootBloc` по выходу app-state из `init` (тот же паттерн, что `_onInitializeDeepLinks` в [13-deep-links.md](13-deep-links.md), который включается `BlocListener`'ом после ухода из init-состояния).
 
 ---
 
@@ -572,9 +572,6 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
         if (chatId != null) {
           nav.push(ChatDetailsPage.route(chatId: chatId)); // worked example, заменить на свою фичу
         }
-        break;
-      case 'chat_invite':
-        // увести на экран приглашения в чат / список чатов
         break;
       default:
         // Способ 2 — если есть готовая ссылка, отдать в deep-link-парсер:
@@ -605,7 +602,7 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 
 | Поле `data` | Смысл | Использование на клиенте |
 |---|---|---|
-| `type` | тип события (`new_message` / `chat_invite` / …) | ветка dispatch-table (§8) |
+| `type` | тип события (`new_message` / …; приглашений в чат нет — всё, что между разными людьми, ждёт протокола релея, Q13) | ветка dispatch-table (§8) |
 | `chat_id` | id чата | навигация на экран чата |
 | `message_id` | id сообщения (опц.) | подсветка конкретного сообщения |
 | `deep_link` (опц.) | готовая ссылка | передать в `DeepLinkRepository.handleLink` (§8, способ 2) |
@@ -637,7 +634,7 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 - [ ] Mapper `RemoteMessage → PushMessageModel` `@lazySingleton`, one-way (`toEntity → UnimplementedError`); `data` нормализуется в `Map<String, String>` (§7.3).
 - [ ] Бэкенд-контракт (§6 — импортированный REST-пример; реальная команда контракта v0 `push.register` (§8.2) открыта по Q2/Q13): тело **ровно 2 ключа** (`push_notification_provider`/`push_notification_token`); `register` после login + на каждый `onTokenRefresh`; `unregister` на logout **до** очистки токен-пары; идемпотентность DELETE; rate-limit `pushTokenWrite` 20/60s (общий bucket). Сетевой вызов — через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 (HMAC/Bearer ставит interceptor, не репозиторий).
 - [ ] Load-bearing (§6.4): `x-device-id` (из security-interceptor) — **единственная** клиентская ручка различения устройств (composite-UNIQUE `(user, device_id)` — пример, ключ финализируется вместе с `push.register` / Q2); `platform`/`app_version`/… сервер не берёт из body — не слать.
-- [ ] Presentation (§7.5): `AppRoot` подписан на `watchMessageOpened()`/`watchTokenRefresh()` рано (в `initState`); `AppRootBloc` дёргает `initialize()`/`register()` **после login** (сессия аутентифицирована; access-JWT — деталь примера §6, в контракте v0 аутентификация одноразовая при установлении соединения), `unregister()`/`dispose()` на logout.
+- [ ] Presentation (§7.5): `AppRoot` подписан на `watchMessageOpened()`/`watchTokenRefresh()` рано (в `initState`); `AppRootBloc` дёргает `initialize()`/`register()` **после login** (сессия аутентифицирована; access-JWT — деталь примера §6, в контракте v0 аутентифицируется каждое соединение — проверкой канала при его установлении), `unregister()`/`dispose()` на logout.
 - [ ] Навигация по тапу (§8): **переиспользовать** маршрутизатор deep-link ([13-deep-links.md](13-deep-links.md)) — `AppRootBloc._onPushOpened` по `message.data['type']` (или `data['deep_link']` → `DeepLinkRepository.handleLink`); `executeLogic` с **позиционным** первым аргументом, `onError` опционален для фоновой навигации.
 - [ ] **TBD (§9):** набор `data`-полей push-payload'а — источник правды серверная сторона; push-часть протокола открыта (Q2/Q13, контракт v0 её не содержит) — сверить с реальным контрактом перед реализацией навигационных веток, в коде — `TODO(backend-tbd)`.
 - [ ] Desktop (§10): на Windows/Linux/macOS push = no-op (на Windows/Linux реализации плагина нет, на macOS — решение Q2: доставка резидентным сокетом) — `firebase_*` как platform-conditional (mobile-only) deps; desktop-env регистрирует no-op `PushTokenRepository` в том же change-set'е, чтобы `getIt<PushTokenRepository>()` резолвился на всех 5 платформах; сегодня в `lib/` push не поднят вообще.
@@ -647,7 +644,7 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 ## Связанные документы
 
 - [13-deep-links.md](13-deep-links.md) — навигация по тапу переиспользует общий маршрутизатор входящих ссылок (`AppRootBloc._onOnDeepLink`, `GlobalKey<NavigatorState>`, dispatch-table, `DeepLinkRepository.handleLink`); push-tap — ещё один источник того же навигационного триггера.
-- [14-networking-and-auth.md](14-networking-and-auth.md) — сетевой вызов register/unregister идёт через подписанный слой (HMAC-SHA256 + security-заголовки + access/refresh JWT + `x-device-id` — конкретная модель подписи/токенов пример: этап 1 контракта v0 идёт без авторизации, модель этапа 2 ещё не финализирована); push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor — **не переизобретать**.
+- [14-networking-and-auth.md](14-networking-and-auth.md) — сетевой вызов register/unregister идёт через подписанный слой (HMAC-SHA256 + security-заголовки + access/refresh JWT + `x-device-id` — конкретная модель подписи/токенов пример: в контракте v0 соединение аутентифицирует канал — TLS 1.3 и проверка `POST /auth` → `POST /auth2`, — а подписи запросов и токенов нет); push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor — **не переизобретать**.
 - [04-data-layer.md](04-data-layer.md) — `BaseRepositoryHelper.execute`, `BaseMapper`, REST-слой (`RequestBuilder`/`ResponseEntity<T>`/`EntityConverter`), отсутствие `ApiException`/`DaoException` (четыре catch-ветки `execute`: `BaseRepositoryException` насквозь → `SocketUnavailableException` → `connection` → маппинг `DioException` по типу/статусу → catch-all `unknown`; коды ошибок конверта — через `unwrapEnvelope` → `RepositoryException.fromWireCode`).
 - [05-presentation-layer.md](05-presentation-layer.md) — `AppRoot`/`AppRootBloc` (app-shell, observer, `GlobalKey<NavigatorState>`), `BaseBloc.executeLogic` (позиционный первый аргумент), потребление `RepositoryResult<T>` через `match`/`hasData`, bootstrap `main.dart`.
 - [03-domain-layer.md](03-domain-layer.md) — `RepositoryResult<T>` (data-XOR-exception + `match`), `RepositoryException` (`internal`/`unknown`/`notFound`/`connection`/`unauthenticated`/`authentication` + проводные коды контракта v0 `invalidRequest`/`nameTaken`/`payloadTooLarge`/`attachmentGone`/`rateLimited`/`unsupportedSchema` и `RepositoryException.fromWireCode`), контракт репозитория.
