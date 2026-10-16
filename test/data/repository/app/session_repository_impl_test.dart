@@ -238,6 +238,17 @@ void main() {
     });
   });
 
+  group('a session that outlived its install', () {
+    test('an identifier whose preferences are gone - a keychain an app was deleted from - outlived it', () async {
+      expect((await repository.outlivedItsInstall()).data, isFalse, reason: 'no session at all');
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      expect((await repository.outlivedItsInstall()).data, isFalse, reason: 'a session written as it is written');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      expect((await repository.outlivedItsInstall()).data, isTrue);
+    });
+  });
+
   group('a session whose device key another check made (phase 050, FR-019)', () {
     const storage = FlutterSecureStorage();
 

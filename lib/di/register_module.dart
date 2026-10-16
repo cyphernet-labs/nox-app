@@ -11,8 +11,11 @@ abstract class RegisterModule {
   /// The secure store, for this device only (phase 048): the options and why
   /// are [SecureStoreOptions].
   @lazySingleton
-  FlutterSecureStorage get secureStorage =>
-      const FlutterSecureStorage(iOptions: SecureStoreOptions.ios, mOptions: SecureStoreOptions.macOs);
+  FlutterSecureStorage get secureStorage => const FlutterSecureStorage(
+    iOptions: SecureStoreOptions.ios,
+    mOptions: SecureStoreOptions.macOs,
+    aOptions: SecureStoreOptions.android,
+  );
 
   @preResolve
   Future<SharedPreferences> get sharedPreferences => SharedPreferences.getInstance();

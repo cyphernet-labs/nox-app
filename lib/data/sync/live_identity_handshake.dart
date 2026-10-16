@@ -450,10 +450,9 @@ class LiveIdentityHandshake {
   Future<IdentityHandshake> greet({Duration within = timeout}) async {
     // Captured BEFORE anything is torn down. The phase stream replays its
     // current value to a new listener, so on an already-connected socket the
-    // first event carries the PREVIOUS connection's identity — including the
-    // anonymous greeting the app makes at boot, whose `created` is always
-    // true. Answering from that would route every returning person into
-    // onboarding without the server having been asked about them at all.
+    // first event carries the PREVIOUS connection's state - the unpaired
+    // connection the pairing went over among them. Answering from that would
+    // take an answer the server gave before this session existed.
     final generation = _socket.greetingGeneration;
     final pending = Completer<IdentityHandshake>();
     // The timer can fire while restart() is still bringing a slow path up -

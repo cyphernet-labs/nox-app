@@ -171,6 +171,12 @@ void main() {
       expect(find.byType(ConnectPage), findsOneWidget);
       expect(find.text(l10nEn.connectWaitingApproval), findsOneWidget);
       verify(auth.signIn(identifier: link, connection: settings)).called(1);
+      // Back or Cancel on 2.4 return to 2.1 with the link in its field, as for
+      // a link pasted there: the stored wait is gone once its attempt ends.
+      final field = tester.widget<TextField>(
+        find.descendant(of: find.byType(LoginPage, skipOffstage: false), matching: find.byType(TextField, skipOffstage: false)).first,
+      );
+      expect(field.controller?.text, link);
     });
   }
 }

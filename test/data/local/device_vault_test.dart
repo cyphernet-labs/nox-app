@@ -22,13 +22,18 @@ class _KeyStore extends FakeSessionRepository {
   int writes = 0;
   int deletes = 0;
 
+  /// Reads the key when asked and answers a turn later - as a platform
+  /// channel served in arrival order answers a read queued before a delete.
+  bool readsBeforeAnswering = false;
+
   @override
   Future<RepositoryResult<String?>> storageKey() async {
     if (unreadable) return const RepositoryResult<String?>.error(exception: RepositoryException.unknown);
+    final asked = key;
     // A turn of the event loop, as a platform channel takes: two openings at
     // once then really overlap.
     await Future<void>.delayed(Duration.zero);
-    return RepositoryResult<String?>.success(data: key);
+    return RepositoryResult<String?>.success(data: readsBeforeAnswering ? asked : key);
   }
 
   @override
@@ -186,6 +191,24 @@ void main() {
     await leaveDatabase();
     final lost = DeviceVault(_KeyStore());
     await expectLater(lost.ensureOpen(), throwsA(isA<VaultException>()));
+  });
+
+  test('an opening that read the key before forget reached the store does not hand it back', () async {
+    // A logout's forget, and a screen's refresh opening the database at the
+    // same moment: its read of the store is answered with the key just being
+    // deleted. Handed to the module, it would seal the next sign-in's data
+    // under a key no store holds, and the next launch would wipe it all.
+    store
+      ..key = base64.encode(List<int>.generate(32, (i) => i + 1))
+      ..readsBeforeAnswering = true;
+    final opening = vault.open();
+    await vault.forget();
+
+    expect(await opening, LocalDataOpening.unreadable);
+    expect(vault.isOpen, isFalse);
+    expect(moduleHasKey(), isFalse);
+    expect(store.key, isNull);
+    expect(await vault.open(), LocalDataOpening.created, reason: 'the next opening starts afresh');
   });
 
   test('forget drops the key from the module and from the store; the next opening makes a new one', () async {

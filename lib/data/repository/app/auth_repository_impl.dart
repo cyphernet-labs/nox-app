@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -594,6 +595,20 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
 
   static Duration _defaultUnreadablePause(int attempt) => Duration(seconds: min(30, 2 << min(attempt - 1, 4)));
 
+  /// How many times in a row a start-up may find the secure store not
+  /// answering before it gives the local data up as lost, or null for never.
+  ///
+  /// Only Android has a limit. There the store reports a Keystore that
+  /// cannot decrypt its key (`SecureStoreOptions.android` keeps the plugin
+  /// from deleting the store over it), which a retry outlasts within moments
+  /// or never - a lock screen removed, a Keystore reset - and waiting forever
+  /// would leave the person on the splash with no way back but clearing the
+  /// app's data. Five attempts are half a minute. On Apple platforms the
+  /// error is a keychain locked until the first unlock after a restart, which
+  /// only waits for the person; on Linux, a keyring not unlocked yet.
+  @visibleForTesting
+  int? unreadableLimit = Platform.isAndroid ? 5 : null;
+
   @override
   Future<RepositoryResult<bool>> openLocalData() async {
     final vault = getIt<DeviceVault>();
@@ -611,8 +626,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         case LocalDataOpening.lost:
           return _retireLocalData();
         case LocalDataOpening.unreadable:
-          // Never a wipe (FR-011): the splash stays, and the store is asked
-          // again.
+          // A wait, never a wipe (FR-011): the splash stays, and the store is
+          // asked again - up to a limit only where an error that lasts is a
+          // key gone for good (unreadableLimit).
+          final limit = unreadableLimit;
+          if (limit != null && attempt >= limit) {
+            logRepository.debug(target: this, message: 'bootstrap: the secure store kept failing to give the local-data key');
+            return _retireLocalData();
+          }
           logRepository.debug(target: this, message: 'bootstrap: the secure store did not give the local-data key, asking again');
           await Future<void>.delayed(unreadablePause(attempt));
       }
@@ -681,12 +702,33 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     // A build with no live channel (the mock flavors) never makes a device
     // key, so the second question is only asked where a session carries one:
     // there, no key at all would retire every session at every launch.
+    await _dropUnlandedSignIn();
     final predates = await _sessionRepository.predatesServerKey();
     final otherBox = predates.data == true || liveIdentityHandshake == null ? predates : await _sessionRepository.predatesSecureBox();
-    if (predates.data != true && otherBox.data != true) return const RepositoryResult<bool>.success(data: false);
+    final reinstalled = predates.data == true || otherBox.data == true ? predates : await _sessionRepository.outlivedItsInstall();
+    if (predates.data != true && otherBox.data != true && reinstalled.data != true) {
+      return const RepositoryResult<bool>.success(data: false);
+    }
     logRepository.debug(target: this, message: 'bootstrap: a session the check of this build cannot carry, pairing again');
     final out = await logout(forced: true);
     return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
+  }
+
+  /// A sign-in the process did not survive - killed after the server was
+  /// stored and before the identifier was, with no wait for approval on
+  /// record - is rolled back here, before the channel starts: left alone,
+  /// every launch would dial that machine as a stranger, through Tor too when
+  /// the person had ticked it, for an attempt nobody is making any more. A
+  /// storage read error decides nothing.
+  Future<void> _dropUnlandedSignIn() async {
+    final session = await _sessionRepository.readSession();
+    if (!session.hasData || session.data != null) return;
+    final server = await _sessionRepository.serverAddress();
+    if (!server.hasData || server.data == null) return;
+    final waiting = await _sessionRepository.readPendingPairing();
+    if (!waiting.hasData || waiting.data != null) return;
+    logRepository.debug(target: this, message: 'bootstrap: a sign-in that never landed, rolled back');
+    await _sessionRepository.discardSignIn();
   }
 
   /// The single home of the "mutate the source of truth → re-derive app state"

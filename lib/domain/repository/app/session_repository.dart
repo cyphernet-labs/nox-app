@@ -87,6 +87,15 @@ abstract class SessionRepository {
   /// error, never a `true`.
   Future<RepositoryResult<bool>> predatesSecureBox();
 
+  /// Whether the secure store holds a session the app's preferences know
+  /// nothing of: the identifier is there, its onboarding flag - written
+  /// before it, always - is not. On iOS the keychain outlives the app, and a
+  /// reinstall finds the old pairing with the preferences gone: a device the
+  /// person deleted the app from would reconnect as the old device and open
+  /// on the naming screen. Such a session is retired at launch. A storage
+  /// read error is an error, never a `true`.
+  Future<RepositoryResult<bool>> outlivedItsInstall();
+
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption
   /// path, so a device sitting on the naming screen leaves it as soon as the

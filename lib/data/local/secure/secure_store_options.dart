@@ -16,7 +16,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 ///   which a developer's own Mac accepts and a release never does.
 /// - **Android** - the plugin's store, under a key of the Android Keystore that
 ///   never leaves the device; the manifest keeps the store out of backups and
-///   device-to-device transfer.
+///   device-to-device transfer. A store the Keystore cannot decrypt is an
+///   error, not an empty store the plugin made by deleting it ([android]).
+/// - **Windows** - the plugin deletes its file when DPAPI cannot decrypt it,
+///   and there is no option against that: a lasting DPAPI failure costs the
+///   local data and a pairing there, like a key that is gone.
 /// - **Windows** - DPAPI for the current user; the plugin's file lives in the
 ///   local application data, which a roaming profile does not carry
 ///   (`AppDataRoot.useLocalFolderOnWindows`).
@@ -49,4 +53,12 @@ abstract final class SecureStoreOptions {
   );
 
   static const MacOsOptions macOs = kReleaseMode ? macOsRelease : macOsLocal;
+
+  /// Android: a read the Keystore fails is an error that reaches the app. By
+  /// default the plugin answers it by deleting the record - or the whole
+  /// store - and reading nothing, so a Keystore failing for a moment after an
+  /// update read as a key that is gone, and the start wiped the local data
+  /// and the pairing (048, FR-011). The app decides instead
+  /// (`AuthRepositoryImpl.unreadableLimit`).
+  static const AndroidOptions android = AndroidOptions(resetOnError: false);
 }

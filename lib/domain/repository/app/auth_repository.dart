@@ -64,7 +64,11 @@ abstract class AuthRepository {
   /// key (FR-025): one forced logout through [logout], the full wipe, and the
   /// pairing screen. Nothing it holds could check a connection, and the
   /// server it paired with is gone with its old database. Once: the wipe
-  /// leaves no identifier behind.
+  /// leaves no identifier behind. So, too, a session whose device key another
+  /// RustSecureBox made (050), and one that outlived its install - the
+  /// keychain of an app deleted and installed again. A sign-in that never
+  /// landed - the server stored, no identifier, no wait for approval - is
+  /// rolled back without a word.
   ///
   /// A storage READ error retires nothing - a keychain still locked after a
   /// reboot is not proof of anything. Called at bootstrap; `true` when it

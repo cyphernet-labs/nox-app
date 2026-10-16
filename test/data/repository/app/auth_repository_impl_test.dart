@@ -18,6 +18,7 @@ import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
@@ -62,6 +63,7 @@ void main() {
   provideDummy<RepositoryResult<String?>>(const RepositoryResult<String?>.success(data: null));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
   provideDummy<RepositoryResult<PendingPairing?>>(const RepositoryResult<PendingPairing?>.success(data: null));
+  provideDummy<RepositoryResult<SessionModel?>>(const RepositoryResult<SessionModel?>.success(data: null));
   provideDummy<RepositoryResult<DeviceKeyPair>>(
     const RepositoryResult<DeviceKeyPair>.success(
       data: DeviceKeyPair(privateKey: '', publicKey: ''),
@@ -109,6 +111,9 @@ void main() {
     ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.discardSignIn()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.readPendingPairing()).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.success(data: null));
+    when(session.outlivedItsInstall()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+    when(session.readSession()).thenAnswer((_) async => const RepositoryResult<SessionModel?>.success(data: kTestSession));
+    when(session.serverAddress()).thenAnswer((_) async => const RepositoryResult<String?>.success(data: '10.0.0.5:9000'));
     when(session.savePendingPairing(any)).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.clearPendingPairing()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(
@@ -479,6 +484,49 @@ void main() {
     });
   });
 
+  group('a session the start cannot carry for other reasons', () {
+    setUp(() {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+    });
+
+    test('a session that outlived its install - a keychain the app was deleted from - is retired', () async {
+      when(session.outlivedItsInstall()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isTrue);
+      verify(session.clear()).called(1);
+    });
+
+    test('a sign-in that never landed - a server, no identifier, no wait - is rolled back without a word', () async {
+      when(session.readSession()).thenAnswer((_) async => const RepositoryResult<SessionModel?>.success(data: null));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verify(session.discardSignIn()).called(1);
+      verifyNever(session.clear());
+      verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+    });
+
+    test('a wait for approval on record, or a store that does not answer, rolls nothing back', () async {
+      when(session.readSession()).thenAnswer((_) async => const RepositoryResult<SessionModel?>.success(data: null));
+      when(session.readPendingPairing()).thenAnswer(
+        (_) async => RepositoryResult<PendingPairing?>.success(
+          data: PendingPairing(link: 'nox://pair/x', waitUntil: DateTime.utc(2030)),
+        ),
+      );
+      await repository.retireLegacySession();
+      when(
+        session.readPendingPairing(),
+      ).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.error(exception: RepositoryException.unknown));
+      await repository.retireLegacySession();
+
+      verifyNever(session.discardSignIn());
+    });
+  });
+
   group('a session whose device key another check made (phase 050, FR-019)', () {
     setUp(() {
       when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
@@ -576,6 +624,28 @@ void main() {
       verifyNever(session.clear());
       verifyNever(files.clean());
       expect(vault.forgets, 0);
+    });
+
+    test('where a lasting failure is a key gone for good, it costs the data after the limit, and not before', () async {
+      repository.unreadableLimit = 3;
+      useVault([LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isTrue);
+      expect(vault.asked, 3, reason: 'asked as often as the limit, then given up');
+      verify(session.clear()).called(1);
+    });
+
+    test('with no limit, a store that keeps failing is asked again and again', () async {
+      repository.unreadableLimit = null;
+      useVault([for (var i = 0; i < 8; i++) LocalDataOpening.unreadable, LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      expect(vault.asked, 9);
+      verifyNever(session.clear());
     });
 
     test('the pause before asking again grows, and stays short', () {

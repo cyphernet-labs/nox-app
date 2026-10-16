@@ -160,9 +160,16 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         Navigator.of(context).push(ConnectPage.route(link: state.id.trim()));
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navResume:
-        // Back to the wait, over the same path it was set up for.
+        // Back to the wait, over the same path it was set up for. The link
+        // goes into the field first, as it is there for a link pasted here:
+        // Back or Cancel on 2.4 return to it, and the stored wait is gone
+        // once its attempt ends (connect.md).
         final resume = state.resume;
-        if (resume != null) Navigator.of(context).push(ConnectPage.route(link: resume.link, resume: true, settings: resume.connection));
+        if (resume != null) {
+          _controller.text = resume.link;
+          _bloc.add(LoginEvent.idChanged(resume.link));
+          Navigator.of(context).push(ConnectPage.route(link: resume.link, resume: true, settings: resume.connection));
+        }
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navNewId:
         Navigator.of(context).push(SetUsernamePage.route());

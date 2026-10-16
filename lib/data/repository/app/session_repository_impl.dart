@@ -348,6 +348,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     });
   }
 
+  @override
+  Future<RepositoryResult<bool>> outlivedItsInstall() {
+    return execute<bool>(() async {
+      if (!await _hasIdentifier()) return const RepositoryResult<bool>.success(data: false);
+      return RepositoryResult<bool>.success(data: !_prefs.containsKey(_kOnboardingComplete));
+    });
+  }
+
   /// Whether a session is stored - which is what anything paired hangs on.
   Future<bool> _hasIdentifier() async {
     final identifier = await _secureStorage.read(key: _kIdentifier);

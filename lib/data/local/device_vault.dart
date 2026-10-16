@@ -51,6 +51,11 @@ class DeviceVault {
   /// The opening under way: two callers must not each make a key of their own.
   Future<LocalDataOpening>? _opening;
 
+  /// Raised by every [forget]: an opening that began before it must not hand
+  /// the module back the key being forgotten - read from the store before the
+  /// delete reached it - nor store a new one over the forgetting.
+  int _generation = 0;
+
   /// Hands the module the key the secure store holds - or a new one, when the
   /// store has none and there is nothing on the disk a key would have to open.
   Future<LocalDataOpening> open() {
@@ -59,16 +64,23 @@ class DeviceVault {
   }
 
   Future<LocalDataOpening> _openOnce() async {
+    final generation = _generation;
     final read = await _session.storageKey();
     if (!read.hasData) return LocalDataOpening.unreadable;
     final stored = read.data;
     final key = stored == null ? null : _decode(stored);
+    if (generation != _generation) {
+      // Forgotten meanwhile: whatever was read is the key going away.
+      key?.fillRange(0, key.length, 0);
+      return LocalDataOpening.unreadable;
+    }
     if (key != null) {
       _hand(key);
       return LocalDataOpening.open;
     }
     // A key that does not decode is no key at all: what it sealed is as lost.
     if (await hasLocalData()) return LocalDataOpening.lost;
+    if (generation != _generation) return LocalDataOpening.unreadable;
     final fresh = _mint();
     final saved = await _session.saveStorageKey(key: base64.encode(fresh));
     if (!saved.hasData) {
@@ -93,6 +105,9 @@ class DeviceVault {
   /// must sign out; a store that keeps a key with nothing left to open costs
   /// nothing, and the next launch replaces it.
   Future<void> forget() async {
+    _generation++;
+    // An opening under way ends unopened; the next caller starts afresh.
+    _opening = null;
     NoxVault.clear();
     _open = false;
     final dropped = await _session.forgetStorageKey();
