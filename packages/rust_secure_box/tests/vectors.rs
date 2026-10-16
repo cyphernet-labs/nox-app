@@ -38,13 +38,16 @@ fn unhex<const N: usize>(text: &str) -> [u8; N] {
     out
 }
 
-/// Fixed private keys: the probe, the edges, and a few that look random.
+/// Fixed private keys: the probe, the edges, and a few that look random -
+/// every one a key any Ed25519 library takes. Not the all-zero seed: Ed25519
+/// libraries refuse it, some by panicking, and the vectors are written by the
+/// real implementation too.
 fn private_keys() -> Vec<PrivateKey> {
     let mut counting = [0u8; 32];
     for (i, b) in counting.iter_mut().enumerate() {
         *b = u8::try_from(i).unwrap();
     }
-    let mut keys = vec![PROBE_PRIVATE_KEY, [0x00; 32], [0xff; 32], counting];
+    let mut keys = vec![PROBE_PRIVATE_KEY, [0x80; 32], [0xff; 32], counting];
     let mut state = 0x9e37_79b9_7f4a_7c15u64;
     for _ in 0..4 {
         let mut key = [0u8; 32];

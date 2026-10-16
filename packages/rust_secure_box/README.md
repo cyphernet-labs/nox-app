@@ -33,7 +33,9 @@
 1. **Реализация.** Положить её на место `src/stub.rs`: четыре функции с теми же сигнатурами. `src/lib.rs`, `src/random.rs` и `src/wasm.rs` остаются как есть. Их можно переписать, если C ABI WebAssembly (`rsb_io`, `rsb_*`) и импорт `env.rsb_random` не меняются.
    - Случайные байты брать только через `crate::random::fill`.
    - Библиотеку Ed25519 подключать без функций по умолчанию (`default-features = false`): без `rand`, `getrandom` и `OsRng`. Иначе у WebAssembly появятся лишние импорты (например, `__wbindgen_*` от `getrandom` с `wasm_js`), и сервер не соберётся.
-2. **Файлы зависимостей.** Один раз выполнить `cargo test` в `packages/rust_secure_box`, потом в `packages/nox_tor/rust`: так новые зависимости попадут в оба `Cargo.lock`. Оба файла коммитятся вместе с реализацией, потому что копия сервера собирается с `--locked`.
+   - Ключ, который библиотека не принимает, — ошибка `Error::InvalidArgument`, не паника.
+   - Поправить описание в `src/lib.rs` (абзац с ⚠️ о заглушке) и `description` в `Cargo.toml`: после замены они говорят о том, чего больше нет. Файл `src/stub.rs` можно оставить под этим именем.
+2. **Файлы зависимостей.** Выполнить `cargo metadata --format-version 1 >/dev/null` в `packages/rust_secure_box`, потом в `packages/nox_tor/rust`: новые зависимости попадут в оба `Cargo.lock` без сборки. Оба файла коммитятся вместе с реализацией, потому что копия сервера собирается с `--locked`. Тесты крейта до шага 3 не запускать: векторы ещё заглушки, и тесты векторов упадут.
 3. **Векторы.** Выполнить `RSB_IMPLEMENTATION=<имя> cargo test --test vectors -- --ignored write_vectors`. Имя любое, кроме `stub-v1`, например `ed25519-v1`. Команда пишет все три копии векторов:
    - `tests/data/rsb-vectors.json`;
    - `specs/050-rust-secure-box/contracts/rsb-vectors.json`;
@@ -44,7 +46,7 @@
 5. **Проверка:**
    - `cargo test` в крейте — свойства любой реализации и векторы;
    - `make box-verify` — копия сервера соответствует крейту;
-   - `cd client_backend && go build ./... && go test -race ./...`. `go vet` проверяет сгенерированный код тоже. Если он ругается только на `boxwasm` (например, на недостижимый код), запустите `go vet $(go list ./... | grep -v /boxwasm)`;
+   - `cd client_backend && go build ./... && go test -race -timeout 30m ./...`. Под `-race` настоящая библиотека в переводе `wasm2go` в десятки раз медленнее заглушки: пакет `internal/server` идёт минуты, отсюда запас по времени. `go vet` проверяет сгенерированный код тоже. Если он ругается только на `boxwasm` (например, на недостижимый код), запустите `go vet $(go list ./... | grep -v /boxwasm)`;
    - `make tor-test`;
    - `make gate`.
 

@@ -45,23 +45,23 @@ make golden-verify     # UI не менялся — все голдены зел
 
 ## 4. Сквозная проверка с живым сервером
 
-1. Собрать и запустить сервер (каталог данных сервер не создаёт сам):
+1. Собрать и запустить сервер (каталог данных сервер не создаёт сам). Все команды раздела — из корня репозитория:
    ```sh
-   cd client_backend && go build -o noxd .
+   (cd client_backend && go build -o noxd .)
    mkdir -p /tmp/nox050
-   ./noxd -addr 127.0.0.1:8443 -db /tmp/nox050/nox.db -status-addr 127.0.0.1:8081 &
-   ./noxd unlock -status-addr 127.0.0.1:8081
+   client_backend/noxd -addr 127.0.0.1:8443 -db /tmp/nox050/nox.db -status-addr 127.0.0.1:8081 &
+   client_backend/noxd unlock -status-addr 127.0.0.1:8081
    ```
    В журнале — предупреждение `RustSecureBox is a stub…`; на служебной странице — та же строка.
 2. Взять ссылку и прогнать smoke:
    ```sh
-   ./noxd link
-   go run ./cmd/smoke '<ссылка>'
+   client_backend/noxd link
+   (cd client_backend && go run ./cmd/smoke '<ссылка>')
    ```
    Smoke спаривается, здоровается, создаёт чат и пишет сообщение через `/auth` и `/auth2`.
 3. Пробы приложения:
    ```sh
-   fvm flutter test test/live/channel_probe.dart --tags live --dart-define=link="$(cd client_backend && ./noxd link -status-addr 127.0.0.1:8081 | head -1)"
+   fvm flutter test test/live/channel_probe.dart --tags live --dart-define=link="$(client_backend/noxd link -status-addr 127.0.0.1:8081 | head -1)"
    ```
    Без `--dart-define=link=…` проба пропускается (SKIP) — это не прохождение. Канал открывается; для чужого ключа сервера — `wrongServer`.
 4. Приложение `stage` на macOS: спаривание ссылкой, сообщение, файл туда и обратно.
@@ -79,13 +79,13 @@ make golden-verify     # UI не менялся — все голдены зел
 
 1. Во временной копии репозитория заменить `src/stub.rs` реализацией на `ed25519-compact` (тот же код, что `ec25519` заказчика) с `default-features = false`: четыре функции с теми же сигнатурами.
 2. Пройти шаги 2–4 README:
-   - `cargo test` в крейте и в `packages/nox_tor/rust` (новые зависимости попадают в оба `Cargo.lock`);
+   - `cargo metadata --format-version 1 >/dev/null` в крейте и в `packages/nox_tor/rust` (новые зависимости попадают в оба `Cargo.lock`);
    - `RSB_IMPLEMENTATION=ed25519-v1 cargo test --test vectors -- --ignored write_vectors` (пишет три копии векторов);
    - `make box-wasm`.
 3. Прогнать шаг 5 README:
    - `cargo test` в крейте;
    - `make box-verify`;
-   - `cd client_backend && go build ./... && go test -race ./...`;
+   - `cd client_backend && go build ./... && go test -race -timeout 30m ./...`;
    - `make tor-test`;
    - `make gate`.
 4. Ожидается:
