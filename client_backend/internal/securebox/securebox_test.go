@@ -232,7 +232,14 @@ func TestNoRandomBytesIsErrRandom(t *testing.T) {
 	if _, err := box.GenerateKeys(); !errors.Is(err, ErrRandom) {
 		t.Fatalf("GenerateKeys: %v", err)
 	}
-	if _, _, err := box.GetChallenge(PrivateKey{}); !errors.Is(err, ErrRandom) {
+	// A key every implementation takes - the probe, not the all-zero seed
+	// Ed25519 refuses - so the random source is the only thing that can fail,
+	// whichever the implementation looks at first.
+	var key PrivateKey
+	for i := range key {
+		key[i] = probeByte
+	}
+	if _, _, err := box.GetChallenge(key); !errors.Is(err, ErrRandom) {
 		t.Fatalf("GetChallenge: %v", err)
 	}
 	failing = false

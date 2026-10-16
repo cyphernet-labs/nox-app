@@ -114,36 +114,32 @@ func TestAFailedCheckIsRefusedLoggedAndClosed(t *testing.T) {
 	srv, addr := stackWith(t, slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	d, stranger := newDevice(t), newDevice(t)
 
-	// A request that is no step of the check - what any HTTPS scanner sends -
-	// is a Debug line; a step that fails is worth an Info one.
-	level := map[string]string{
-		"request before the check":  "DEBUG",
-		"method not allowed":        "DEBUG",
-		"signature does not verify": "INFO",
-		"steps out of order":        "INFO",
-	}
+	// A first request that is no step of the check - what any HTTPS scanner
+	// sends - is a Debug line; after a good /auth, or a step that fails, it is
+	// worth an Info one.
 	for _, tc := range []struct {
 		name   string
 		status int
+		level  string
 		reason string
 		run    func(*tls.Conn, *bufio.Reader) *http.Response
 	}{
-		{"the socket before the check", http.StatusUnauthorized, "request before the check", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+		{"the socket before the check", http.StatusUnauthorized, "DEBUG", "request before the check", func(c *tls.Conn, br *bufio.Reader) *http.Response {
 			return checkRequest(t, c, br, "GET /ws HTTP/1.1\r\nHost: h\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 		}},
-		{"the socket between /auth and /auth2", http.StatusUnauthorized, "request before the check", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+		{"the socket between /auth and /auth2", http.StatusUnauthorized, "INFO", "request before the check", func(c *tls.Conn, br *bufio.Reader) *http.Response {
 			passAuth(t, c, br, d)
 			return checkRequest(t, c, br, "GET /ws HTTP/1.1\r\nHost: h\r\n\r\n")
 		}},
-		{"another key's signature in /auth2", http.StatusUnauthorized, "signature does not verify", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+		{"another key's signature in /auth2", http.StatusUnauthorized, "INFO", "signature does not verify", func(c *tls.Conn, br *bufio.Reader) *http.Response {
 			passAuth(t, c, br, d)
 			sig, _ := testBox.SignChallenge(stranger.priv, securebox.Challenge{1})
 			return checkRequest(t, c, br, rawPost("/auth2", `{"signature":"`+base64.RawURLEncoding.EncodeToString(sig[:])+`"}`))
 		}},
-		{"/auth2 first", http.StatusBadRequest, "steps out of order", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+		{"/auth2 first", http.StatusBadRequest, "INFO", "steps out of order", func(c *tls.Conn, br *bufio.Reader) *http.Response {
 			return checkRequest(t, c, br, rawPost("/auth2", `{"signature":"x"}`))
 		}},
-		{"GET on /auth", http.StatusMethodNotAllowed, "method not allowed", func(c *tls.Conn, br *bufio.Reader) *http.Response {
+		{"GET on /auth", http.StatusMethodNotAllowed, "DEBUG", "method not allowed", func(c *tls.Conn, br *bufio.Reader) *http.Response {
 			return checkRequest(t, c, br, "GET /auth HTTP/1.1\r\nHost: h\r\n\r\n")
 		}},
 	} {
@@ -162,7 +158,7 @@ func TestAFailedCheckIsRefusedLoggedAndClosed(t *testing.T) {
 				t.Fatal("the connection went on after a refusal")
 			}
 			eventually(t, "the refusal is logged by its kind", func() bool {
-				return strings.Contains(buf.String(), "level="+level[tc.reason]+` msg="channel check refused" component=channel reason="`+tc.reason+`"`)
+				return strings.Contains(buf.String(), "level="+tc.level+` msg="channel check refused" component=channel reason="`+tc.reason+`"`)
 			})
 		})
 	}
@@ -441,14 +437,16 @@ func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 
 	// A stranger at home goes on opening silent connections, each cutting the
 	// oldest of the source's, while a device dials from the same address. The
-	// device has eight of the stranger's ticks before eight newer ones could
-	// make it the oldest, so a tick is a quarter of what one channel takes
-	// here, uncontended - twice the time the device needs - and never under
-	// 25 ms. The stub needs well under 10 ms even under the race detector; a
-	// real RustSecureBox there needs a few hundred.
+	// device lasts seven to eight of the stranger's ticks before newer ones
+	// make it the oldest, so a tick is half of what one channel takes here,
+	// uncontended - 3.5 to 4 times what the device needs, room for a load that
+	// rises after the measure - and never under 25 ms. The stub needs well
+	// under 10 ms even under the race detector; a real RustSecureBox there
+	// needs a few hundred. The measure dials from another network, the way
+	// the device does, not from this machine.
 	key, dev := serverKeyOf(t, srv), newDevice(t)
 	began := time.Now()
-	probe := pipes.dial(t, "192.0.2.1")
+	probe := pipes.dial(t, "198.51.100.77")
 	probing := make(chan error, 1)
 	go func() {
 		_, err := channelOver(t.Context(), probe, key, dev.priv)
@@ -458,7 +456,7 @@ func TestASourceAtItsShareCutsItsOldestHandshakeForANewcomer(t *testing.T) {
 	if err := <-probing; err != nil {
 		t.Fatalf("an uncontended channel: %v", err)
 	}
-	period := max(25*time.Millisecond, 2*time.Since(began)/maxPendingPerSource)
+	period := max(25*time.Millisecond, 4*time.Since(began)/maxPendingPerSource)
 	// The device's end first, as below.
 	_ = probe.Close()
 	_ = probed.Close()

@@ -67,6 +67,10 @@ var (
 	ErrMethod = errors.New("connauth: method not allowed")
 	// ErrUnauthenticated is any other path before the check passed: 401.
 	ErrUnauthenticated = errors.New("connauth: request before the check")
+	// ErrAfterAuth marks a refusal of the second request, after a /auth that
+	// passed: whoever sent it speaks this protocol - a scanner does not get a
+	// well-formed /auth right. It wraps the refusal's own kind.
+	ErrAfterAuth = errors.New("connauth: after /auth")
 	// ErrSignature is a signature that does not verify: 401 from the server;
 	// on the device's side, the server's signature over its challenge.
 	ErrSignature = errors.New("connauth: the signature does not verify")
@@ -156,7 +160,7 @@ func respond(conn net.Conn, box *securebox.Box, serverKey securebox.PrivateKey) 
 	// Step 2: /auth2, over the server's challenge, by the key of step 1.
 	body, err = readStep(conn, br, Auth2Path)
 	if err != nil {
-		return none, nil, err
+		return none, nil, fmt.Errorf("%w: %w", ErrAfterAuth, err)
 	}
 	var req2 auth2Request
 	var theirSignature securebox.Signature
