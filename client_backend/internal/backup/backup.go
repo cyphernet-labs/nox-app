@@ -12,8 +12,10 @@
 //
 // A restore needs the same password, an empty place and nothing else: no
 // server running, no network. The restored server keeps its own key - the
-// devices know it and go on without pairing - and gets a new journal id, so
-// each device drops what it cached and reads the conversation again. Its list
+// devices know it and go on without pairing; only a key another RustSecureBox
+// made is rekeyed, as the first start would, and its devices let go - and
+// gets a new journal id, so each device drops what it cached and reads the
+// conversation again. Its list
 // of devices is the backup's too: a device revoked after the backup was made
 // is let in again, and the restore names every device it lets in so that one
 // can be revoked again.

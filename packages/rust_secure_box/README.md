@@ -34,9 +34,9 @@
    - Случайные байты брать только через `crate::random::fill`.
    - Библиотеку Ed25519 подключать без функций по умолчанию (`default-features = false`): без `rand`, `getrandom` и `OsRng`. Иначе у WebAssembly появятся лишние импорты (например, `__wbindgen_*` от `getrandom` с `wasm_js`), и сервер не соберётся.
    - Ключ, который библиотека не принимает, — ошибка `Error::InvalidArgument`, не паника.
-   - Поправить тексты о заглушке: абзац с ⚠️ в `src/lib.rs`, `description` в `Cargo.toml` и строку «Сейчас внутри заглушка» в начале этого README. Файл `src/stub.rs` можно оставить под этим именем.
+   - Поправить тексты о заглушке: абзац с ⚠️ в `src/lib.rs`, `description` и комментарий над `sha2` в `Cargo.toml` (саму зависимость убрать, если реализации она не нужна) и строку «Сейчас внутри заглушка» в начале этого README. Файл `src/stub.rs` можно оставить под этим именем.
 2. **Файлы зависимостей.** Выполнить `cargo metadata --format-version 1 >/dev/null` в `packages/rust_secure_box`, потом в `packages/nox_tor/rust`: новые зависимости попадут в оба `Cargo.lock` без сборки. Оба файла коммитятся вместе с реализацией, потому что копия сервера собирается с `--locked`. Тесты крейта до шага 3 не запускать: векторы ещё заглушки, и тесты векторов упадут.
-3. **Векторы.** Выполнить `RSB_IMPLEMENTATION=<имя> cargo test --test vectors -- --ignored write_vectors`. Имя любое, кроме `stub-v1`, например `ed25519-v1`. Команда пишет все три копии векторов:
+3. **Векторы.** В `packages/rust_secure_box` выполнить `RSB_IMPLEMENTATION=<имя> cargo test --test vectors -- --ignored write_vectors`. Имя любое, кроме `stub-v1`, например `ed25519-v1`. Команда пишет все три копии векторов:
    - `tests/data/rsb-vectors.json`;
    - `specs/050-rust-secure-box/contracts/rsb-vectors.json`;
    - `client_backend/internal/securebox/testdata/rsb-vectors.json`.
@@ -50,7 +50,7 @@
    - `make tor-test`;
    - `make gate`.
 
-Меняются только крейт, его векторы, два `Cargo.lock` и копия на сервере (`client_backend/internal/securebox/boxwasm`). Остальной код приложения и сервера, включая тесты, остаётся прежним. Документы команды, где RustSecureBox назван заглушкой (`CLAUDE.md`, `client_backend/CLAUDE.md`, `docs/blueprints/client-backend/README.md`), команда правит после замены.
+Меняются только крейт, его векторы, два `Cargo.lock` и копия на сервере (`client_backend/internal/securebox/boxwasm`). Остальной код приложения и сервера, включая тесты, остаётся прежним. Документы команды, где RustSecureBox назван заглушкой, команда правит после замены; найти их: `git grep -n -i -e 'заглушк' -e 'stub' -- '*.md' ':!specs'`. Отчёт о поправках в начале `.specify/memory/constitution.md` — история, его не трогают.
 
 `stubProbePublicKey` в `client_backend/internal/securebox/securebox.go` не менять никогда. Это ответ заглушки на пробный ключ, а у настоящей реализации ответ другой, и тесты это проверяют. Подогнанная под новые векторы константа объявит настоящую библиотеку заглушкой.
 

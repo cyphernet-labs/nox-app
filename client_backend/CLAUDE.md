@@ -602,9 +602,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the sealed key and the finished attachments, never over an existing file and
   never as anything but `<file>.partial` until it is whole. `noxd restore <file>
   -db <path>` puts it onto an empty place with the same password, gives the
-  journal a new id - every device re-reads the history, none pairs again - and
-  names the devices the restored server lets in, with the moment the backup
-  was made. Never copy a live DB; local filesystem only (WAL breaks on network
+  journal a new id - every device re-reads the history, none pairs again, unless
+  another RustSecureBox made the backup's key (050: the restore rekeys it and
+  every device pairs again) - and names the devices the restored server lets
+  in, with the moment the backup was made. Never copy a live DB; local filesystem only (WAL breaks on network
   mounts). tor's `HiddenServiceDir` is not in a backup: a server restored
   elsewhere without it gets a new onion address.
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.

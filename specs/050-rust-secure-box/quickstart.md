@@ -81,7 +81,7 @@ make golden-verify     # UI не менялся — все голдены зел
 1. Во временной копии репозитория заменить `src/stub.rs` реализацией на `ed25519-compact` (тот же код, что `ec25519` заказчика) с `default-features = false`: четыре функции с теми же сигнатурами.
 2. Пройти шаги 2–4 README:
    - `cargo metadata --format-version 1 >/dev/null` в крейте и в `packages/nox_tor/rust` (новые зависимости попадают в оба `Cargo.lock`);
-   - `RSB_IMPLEMENTATION=ed25519-v1 cargo test --test vectors -- --ignored write_vectors` (пишет три копии векторов);
+   - в `packages/rust_secure_box`: `RSB_IMPLEMENTATION=ed25519-v1 cargo test --test vectors -- --ignored write_vectors` (пишет три копии векторов);
    - `make box-wasm`.
 3. Прогнать шаг 5 README:
    - `cargo test` в крейте;
