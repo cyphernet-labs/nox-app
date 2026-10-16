@@ -41,7 +41,7 @@ pub type DeviceKey = Box<Zeroizing<rsb::PrivateKey>>;
 
 /// The longest status line and headers an answer may have.
 const MAX_HEAD: usize = 8 * 1024;
-/// The longest body an answer may have: the server's is 224 bytes.
+/// The longest body an answer may have: the server's is 211 bytes.
 const MAX_BODY: usize = 1024;
 /// The most headers an answer may have.
 const MAX_HEADERS: usize = 32;
@@ -63,7 +63,7 @@ where
     let answer = read_answer(stream).await?;
     let (server_public, theirs, signature) = parse_auth_answer(&answer)?;
 
-    if !guarded(|| rsb::check_signature(&server_public, &ours, &signature))? {
+    if !verified(&server_public, &ours, &signature)? {
         return Err(code::PROTOCOL);
     }
     if server_public != *server_key {
@@ -87,6 +87,17 @@ where
 fn guarded<T>(call: impl FnOnce() -> Result<T, rsb::Error>) -> Result<T, i32> {
     match catch_unwind(AssertUnwindSafe(call)) {
         Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) | Err(_) => Err(code::INTERNAL),
+    }
+}
+
+/// RustSecureBox's verdict on the server's signature over our challenge. A
+/// public key the library refuses outright came from the other side: to the
+/// check it is a key whose signature does not hold, not a failure of ours.
+fn verified(public: &rsb::PublicKey, challenge: &rsb::Challenge, signature: &rsb::Signature) -> Result<bool, i32> {
+    match catch_unwind(AssertUnwindSafe(|| rsb::check_signature(public, challenge, signature))) {
+        Ok(Ok(valid)) => Ok(valid),
+        Ok(Err(rsb::Error::InvalidArgument)) => Ok(false),
         Ok(Err(_)) | Err(_) => Err(code::INTERNAL),
     }
 }
@@ -345,7 +356,7 @@ mod tests {
         let (server, device) = (pair(), pair());
         let expect = server.public_key;
         let (mut app, mut io) = duplex(64 * 1024);
-        tokio::spawn(async move {
+        let serving = tokio::spawn(async move {
             let (_, body) = read_request(&mut io).await;
             io.write_all(&answer_bytes(&server, &body)).await.unwrap();
             // And then nothing: a server that answered something else has
@@ -353,9 +364,15 @@ mod tests {
             io.shutdown().await.unwrap();
             let mut rest = Vec::new();
             let _ = io.read_to_end(&mut rest).await;
-            assert!(rest.is_empty(), "the device went on after a bad answer");
+            rest
         });
-        handshake(&mut app, device_key(&device), &expect, "h:1").await
+        let got = handshake(&mut app, device_key(&device), &expect, "h:1").await;
+        // The device's end goes, so the server's read ends: whatever the
+        // device sent after the bad answer is in hand, and asserted here.
+        drop(app);
+        let rest = serving.await.unwrap();
+        assert!(rest.is_empty(), "the device went on after a bad answer: {:?}", String::from_utf8_lossy(&rest));
+        got
     }
 
     #[tokio::test]
@@ -368,6 +385,15 @@ mod tests {
     async fn another_keys_signature_under_the_expected_key_is_protocol() {
         let signer = pair();
         let got = after_auth(move |server, body| auth_answer(server, &signer, body, None).0).await;
+        assert_eq!(got, Err(code::PROTOCOL));
+    }
+
+    #[tokio::test]
+    async fn the_signature_is_checked_before_the_key() {
+        // Another key AND a signature that does not hold: the key never gets
+        // looked at, so this is a broken answer, not another server.
+        let other = pair();
+        let got = after_auth(move |_, body| auth_answer(&other, &other, body, Some([7u8; 32])).0).await;
         assert_eq!(got, Err(code::PROTOCOL));
     }
 

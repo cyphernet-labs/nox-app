@@ -31,7 +31,9 @@ abstract class SessionRepository {
   /// secure storage for this device only. The public half is what the server
   /// knows as `device_key`; the private half goes to the channel and nowhere
   /// else. It names the DEVICE, never the person: a logout wipes it with
-  /// everything else, a failed sign-in keeps it.
+  /// everything else, a failed sign-in keeps it. With no session stored, a
+  /// kept pair another RustSecureBox made is replaced by a new one - nothing
+  /// is paired with it, and the server would not know it.
   Future<RepositoryResult<DeviceKeyPair>> deviceKey();
 
   /// The local-data key (phase 048): base64 of 32 bytes, kept for this device
@@ -75,12 +77,14 @@ abstract class SessionRepository {
   /// implementation of the check than this build's RustSecureBox (phase 050,
   /// FR-019): an identifier with no device key pair - a session of the
   /// Eidolon check - or a pair whose public key is not the one RustSecureBox
-  /// gives for its private key - a session of the stub after the real library
-  /// came, or the other way round. The server has rekeyed by then, and no key
-  /// of such a session passes the check any more: it is wiped once, at launch.
+  /// gives for its private key, or that RustSecureBox refuses outright - a
+  /// session of the stub after the real library came, or the other way round.
+  /// The server has rekeyed by then, and no key of such a session passes the
+  /// check any more: it is wiped once, at launch. Only a build with a live
+  /// channel asks: the mock flavors pair without a device key.
   ///
-  /// A storage read error, or RustSecureBox failing, is an error, never a
-  /// `true`.
+  /// A storage read error, or RustSecureBox failing in any other way, is an
+  /// error, never a `true`.
   Future<RepositoryResult<bool>> predatesSecureBox();
 
   /// Advances the onboarding flag when the server says the person is already

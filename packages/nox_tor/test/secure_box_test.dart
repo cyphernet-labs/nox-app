@@ -46,7 +46,7 @@ void main() {
     expect(() => box.checkSignature(pair.publicKey, Uint8List(32), Uint8List(63)), throwsArgumentError);
   });
 
-  test('the module gives the shared vectors of the stub', () {
+  test('the module gives the shared vectors of the implementation they name', () {
     final file = File('../../specs/050-rust-secure-box/contracts/rsb-vectors.json');
     final vectors = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
     final probe = vectors['probe'] as Map<String, dynamic>;

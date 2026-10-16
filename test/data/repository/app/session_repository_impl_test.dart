@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,9 +10,11 @@ import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:nox_tor/secure_box.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -259,6 +262,47 @@ void main() {
       await repository.deviceKey();
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
       expect((await repository.predatesSecureBox()).data, isFalse);
+    });
+
+    test('a kept pair another RustSecureBox made is replaced while nothing is paired with it', () async {
+      // An attempt under the stub that never paired (an expired link, Deny),
+      // then the real library: the old pair would pair a key the app does
+      // not know as its own, and be retired at the next launch.
+      final pair = (await repository.deviceKey()).data!;
+      final foreign = base64.encode(List<int>.filled(32, 9));
+      await storage.write(key: 'session.device_key', value: jsonEncode({'private': pair.privateKey, 'public': foreign}));
+
+      final next = (await repository.deviceKey()).data!;
+
+      expect(next.publicKey, isNot(foreign));
+      expect(DeviceKeys.isOwn(next), isTrue);
+      expect((await repository.deviceKey()).data, next, reason: 'stored, then read');
+    });
+
+    test('a session holding such a pair keeps it: the launch retires the session, nothing else replaces its key', () async {
+      final pair = (await repository.deviceKey()).data!;
+      final foreign = DeviceKeyPair(privateKey: pair.privateKey, publicKey: base64.encode(List<int>.filled(32, 9)));
+      await storage.write(key: 'session.device_key', value: jsonEncode({'private': foreign.privateKey, 'public': foreign.publicKey}));
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+
+      expect((await repository.deviceKey()).data, foreign);
+      expect((await repository.predatesSecureBox()).data, isTrue);
+    });
+
+    test('a private key RustSecureBox refuses predates it; any other failure of the box is an error', () async {
+      final pair = (await repository.deviceKey()).data!;
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      addTearDown(() => DeviceKeys.box = const NativeSecureBoxApi());
+
+      DeviceKeys.box = const _FailingBox(SecureBoxCode.invalidArgument);
+      expect((await repository.predatesSecureBox()).data, isTrue);
+      expect(DeviceKeys.isOwn(pair), isFalse);
+
+      DeviceKeys.box = const _FailingBox(SecureBoxCode.random);
+      expect((await repository.predatesSecureBox()).hasData, isFalse, reason: 'an error, which wipes nothing');
     });
 
     test('a keychain that cannot be read says so, and never claims the key is another\'s', () async {
@@ -753,4 +797,23 @@ class _RecordingWrites extends FlutterSecureStorage {
     writes.add((key: key, ios: iOptions, macOs: mOptions));
     return super.write(key: key, value: value);
   }
+}
+
+/// RustSecureBox answering every key question with [code].
+class _FailingBox implements SecureBoxApi {
+  const _FailingBox(this.code);
+
+  final SecureBoxCode code;
+
+  @override
+  SecureBoxKeyPair generateKeys() => const NativeSecureBoxApi().generateKeys();
+
+  @override
+  ({Uint8List challenge, Uint8List publicKey}) getChallenge(Uint8List privateKey) => throw SecureBoxException(code);
+
+  @override
+  Uint8List signChallenge(Uint8List privateKey, Uint8List challenge) => throw SecureBoxException(code);
+
+  @override
+  bool checkSignature(Uint8List publicKey, Uint8List challenge, Uint8List signature) => throw SecureBoxException(code);
 }

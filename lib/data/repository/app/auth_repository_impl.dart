@@ -678,8 +678,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     // Eidolon check's, or the stub's once the real RustSecureBox came. An
     // error from either question is a keychain that cannot be read right now
     // - a valid session as likely as an old one - and never a reason to wipe.
+    // A build with no live channel (the mock flavors) never makes a device
+    // key, so the second question is only asked where a session carries one:
+    // there, no key at all would retire every session at every launch.
     final predates = await _sessionRepository.predatesServerKey();
-    final otherBox = predates.data == true ? predates : await _sessionRepository.predatesSecureBox();
+    final otherBox = predates.data == true || liveIdentityHandshake == null ? predates : await _sessionRepository.predatesSecureBox();
     if (predates.data != true && otherBox.data != true) return const RepositoryResult<bool>.success(data: false);
     logRepository.debug(target: this, message: 'bootstrap: a session the check of this build cannot carry, pairing again');
     final out = await logout(forced: true);

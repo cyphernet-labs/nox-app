@@ -40,4 +40,17 @@ abstract final class DeviceKeys {
       private.fillRange(0, private.length, 0);
     }
   }
+
+  /// Whether this build's RustSecureBox makes [pair]: its public key is the
+  /// one the box gives for its private one. A private key the box refuses
+  /// outright is not one either. Any other failure of the box is thrown - it
+  /// says nothing about the pair.
+  static bool isOwn(DeviceKeyPair pair) {
+    try {
+      return publicKeyOf(pair.privateKey) == pair.publicKey;
+    } on SecureBoxException catch (error) {
+      if (error.code == SecureBoxCode.invalidArgument) return false;
+      rethrow;
+    }
+  }
 }

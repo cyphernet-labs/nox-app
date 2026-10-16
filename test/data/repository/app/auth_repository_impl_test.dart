@@ -482,6 +482,23 @@ void main() {
   group('a session whose device key another check made (phase 050, FR-019)', () {
     setUp(() {
       when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      // A build with a live channel: only there does a session carry a device key.
+      getIt
+        ..allowReassignment = true
+        ..registerSingleton<LiveIdentityHandshake>(MockLiveIdentityHandshake());
+    });
+
+    test('a build with no live channel never asks: its sessions carry no device key', () async {
+      // The mock flavors pair without a key, so "no key" there is every
+      // session - retiring it would log the person out at every launch.
+      await getIt.unregister<LiveIdentityHandshake>();
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.predatesSecureBox());
+      verifyNever(session.clear());
     });
 
     test('is retired once, through the forced logout: the full wipe and the pairing screen', () async {

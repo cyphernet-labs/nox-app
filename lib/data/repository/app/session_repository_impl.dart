@@ -248,12 +248,15 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<DeviceKeyPair>> deviceKey() {
     return execute<DeviceKeyPair>(() async {
       final stored = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
-      if (stored != null) return RepositoryResult<DeviceKeyPair>.success(data: stored);
+      if (stored != null && (DeviceKeys.isOwn(stored) || await _hasIdentifier())) {
+        return RepositoryResult<DeviceKeyPair>.success(data: stored);
+      }
       // Made once, on the way into the first pairing. A new pair is a device
       // the server no longer knows, which reads as a revocation - so a record
-      // that does not read is replaced only here, where there is nothing paired
-      // with it yet: a session holding one is retired at launch first
-      // (predatesSecureBox).
+      // that does not read, or a pair another RustSecureBox made (an attempt
+      // that never paired, kept by discardSignIn), is replaced only here,
+      // where there is nothing paired with it yet: a session holding one is
+      // retired at launch first (predatesSecureBox).
       final minted = DeviceKeys.generate();
       await _secureStorage.write(key: _kDeviceKey, value: jsonEncode({'private': minted.privateKey, 'public': minted.publicKey}));
       return RepositoryResult<DeviceKeyPair>.success(data: minted);
@@ -338,12 +341,17 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     // Inside `execute`: a read that throws - or RustSecureBox failing - comes
     // back as an error, and the caller wipes nothing on an error.
     return execute<bool>(() async {
-      final identifier = await _secureStorage.read(key: _kIdentifier);
-      if (identifier == null || identifier.isEmpty) return const RepositoryResult<bool>.success(data: false);
+      if (!await _hasIdentifier()) return const RepositoryResult<bool>.success(data: false);
       final pair = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
       if (pair == null) return const RepositoryResult<bool>.success(data: true);
-      return RepositoryResult<bool>.success(data: DeviceKeys.publicKeyOf(pair.privateKey) != pair.publicKey);
+      return RepositoryResult<bool>.success(data: !DeviceKeys.isOwn(pair));
     });
+  }
+
+  /// Whether a session is stored - which is what anything paired hangs on.
+  Future<bool> _hasIdentifier() async {
+    final identifier = await _secureStorage.read(key: _kIdentifier);
+    return identifier != null && identifier.isNotEmpty;
   }
 
   @override
