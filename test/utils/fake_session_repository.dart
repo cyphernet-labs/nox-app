@@ -114,14 +114,7 @@ class FakeSessionRepository implements SessionRepository {
   bool labelDirty = false;
 
   @override
-  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) async =>
-      const RepositoryResult<bool>.success(data: false);
-
-  @override
   Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);
-
-  @override
-  void noteOnboardingStartedHere() {}
 
   /// Nothing waits for approval here: a paired session is what this fake
   /// stands for.

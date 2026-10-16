@@ -104,13 +104,6 @@ abstract class SessionRepository {
   /// read error is an error, never a `true`.
   Future<RepositoryResult<bool>> outlivedItsInstall();
 
-  /// Advances the onboarding flag when the server says the person is already
-  /// known, and never the other way round. Called from the greeting-adoption
-  /// path, so a device sitting on the naming screen leaves it as soon as the
-  /// server reports that this person exists - which is what closes the
-  /// "named from another device meanwhile" hole.
-  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created});
-
   /// Records the identity the server declared at greeting time (contract §3):
   /// its author id and the label it considers current. Both are the server's to
   /// decide — the label may have been changed from another device.
@@ -126,13 +119,6 @@ abstract class SessionRepository {
   /// world: an id from the old one would mark strangers' messages as this
   /// user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();
-
-  /// Records that this process created the person and is now naming them.
-  ///
-  /// Until onboarding finishes, a greeting may not declare it done: every
-  /// greeting after the first says `created == false`, so a mere reconnect
-  /// would otherwise swap the root route out from under someone mid-name.
-  void noteOnboardingStartedHere();
 
   /// Remembers a pairing that waits for approval on the device that issued
   /// the invite (phase 046), so a restart within its time goes on waiting for

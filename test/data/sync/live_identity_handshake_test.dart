@@ -6,6 +6,7 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_tor/channel.dart' show ChannelFailure;
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
@@ -492,6 +493,35 @@ void main() {
 
       expect((await wait.result).authorId, 'u_anna');
     });
+
+    test(
+      'Cancel with no channel waits for one: the request is withdrawn on the next connection, never left open',
+      () async {
+        final wait = await waiting();
+        Object? ended;
+        unawaited(wait.result.then((v) => ended = v, onError: (Object e) => ended = e));
+        factory.refuseEvery = ChannelFailure.network;
+        await wait.socket.drop();
+
+        // Five seconds with no channel to say it over.
+        await handshake.cancelPairing();
+        expect(ended, isNull, reason: 'not cancelled until the server has it');
+
+        factory.refuseEvery = null;
+        await client.reconnect();
+        final next = factory.latest;
+        next.pushGreeting();
+        await waitUntil(() => next.commandNamed('pair.cancel') != null, reason: 'the withdrawal goes out again');
+        for (final frame in next.sent.where((f) => f['cmd'] == 'pair.cancel')) {
+          next.reply(next.sent.indexOf(frame), data: const {});
+        }
+        await waitUntil(() => next.commandNamed('pair') != null, reason: 'what it ended as is read');
+        next.reply(last(next, 'pair'), data: const {'status': 'cancelled', 'request_id': 'r_5b0c2e7a91d4f3a6', 'expires_at': 1790000600});
+
+        await expectLater(wait.result, throwsA(isA<PairingCancelled>()));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
 
     test('Cancel with nothing waiting does nothing', () async {
       await handshake.cancelPairing();

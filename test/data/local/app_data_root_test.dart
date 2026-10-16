@@ -86,7 +86,8 @@ void main() {
 
     final path = await LocalAppDataPathProvider(localAppData: () async => local.path).getApplicationSupportPath();
 
-    expect(path, '${local.path}${Platform.pathSeparator}NOX');
+    final sep = Platform.pathSeparator;
+    expect(path, '${local.path}${sep}Cyphernet Labs${sep}NOX${sep}data', reason: 'under the company and the product, apart from the cache');
     expect(Directory(path!).existsSync(), isTrue);
     expect(LocalAppDataPathProvider.localAppDataFolder, '{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}', reason: 'FOLDERID_LocalAppData');
   });

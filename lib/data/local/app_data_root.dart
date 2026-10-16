@@ -48,17 +48,23 @@ abstract final class AppDataRoot {
     for (final name in databaseFiles) ...<String>[await pathOf(name), await pathOf('~$name')],
   ];
 
-  /// The folder under `%LOCALAPPDATA%` on Windows.
-  static const String windowsFolder = 'NOX';
+  /// The folder under `%LOCALAPPDATA%` on Windows: under the company and the
+  /// product, as path_provider names its other folders there (the exe's
+  /// `CompanyName` and `ProductName`), and apart from the cache folder those
+  /// two make. A bare `NOX` is anybody's - another product's `Nox` is the
+  /// same folder to NTFS.
+  static const List<String> windowsFolder = <String>['Cyphernet Labs', 'NOX', 'data'];
 
   /// The data folder: path_provider's application support folder - on Windows
-  /// once [useLocalFolderOnWindows] has pointed it at `%LOCALAPPDATA%\NOX`.
+  /// once [useLocalFolderOnWindows] has pointed it at
+  /// `%LOCALAPPDATA%\Cyphernet Labs\NOX\data`.
   static Future<Directory> directory() => getApplicationSupportDirectory();
 
   /// [name] inside the data folder.
   static Future<String> pathOf(String name) async => '${(await directory()).path}${Platform.pathSeparator}$name';
 
-  /// Points the application support folder at `%LOCALAPPDATA%\NOX` on Windows,
+  /// Points the application support folder at
+  /// `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` on Windows,
   /// for every caller of path_provider - the secure store's own file among them.
   ///
   /// path_provider answers that question on Windows with the ROAMING
@@ -153,7 +159,8 @@ abstract final class AppDataRoot {
 }
 
 /// path_provider on Windows with the application support folder moved to
-/// `%LOCALAPPDATA%\NOX` (phase 048). Every other folder is the plugin's own.
+/// `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` (phase 048). Every other folder
+/// is the plugin's own.
 class LocalAppDataPathProvider extends PathProviderWindows {
   LocalAppDataPathProvider({@visibleForTesting this._localAppData});
 
@@ -167,7 +174,7 @@ class LocalAppDataPathProvider extends PathProviderWindows {
   Future<String?> getApplicationSupportPath() async {
     final local = await (_localAppData?.call() ?? getPath(localAppDataFolder));
     if (local == null || local.isEmpty) return null;
-    final dir = Directory('$local${Platform.pathSeparator}${AppDataRoot.windowsFolder}');
+    final dir = Directory('$local${Platform.pathSeparator}${AppDataRoot.windowsFolder.join(Platform.pathSeparator)}');
     if (!dir.existsSync()) await dir.create(recursive: true);
     return dir.path;
   }

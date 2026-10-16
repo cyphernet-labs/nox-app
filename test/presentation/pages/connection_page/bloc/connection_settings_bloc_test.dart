@@ -205,6 +205,26 @@ void main() {
     expect(bloc.state.serverAddress, _link, reason: 'the link\'s address, as with nothing stored');
   });
 
+  test('a save after that fallback reads again first, and keeps the field the person did not touch', () async {
+    ConnectionSettingsBloc.readAgainAfter = Duration.zero;
+    addTearDown(() => ConnectionSettingsBloc.readAgainAfter = const Duration(seconds: 2));
+    await addresses.saveManual(manualAddress: null, manualOnion: '${'a' * 56}.onion:443');
+    final store = _UnreadableAtFirst(addresses);
+    getIt.registerSingleton<ServerAddressesRepository>(store);
+    final bloc = await open();
+    expect(bloc.state.onionAddress, isEmpty, reason: 'the fallback shows nothing stored');
+
+    store.answers = true;
+    bloc
+      ..add(const ConnectionSettingsEvent.serverAddressChanged('10.8.0.2:8443'))
+      ..add(const ConnectionSettingsEvent.saveRequested());
+    await settle();
+
+    final stored = (await addresses.read()).data!;
+    expect(stored.manualAddress, '10.8.0.2:8443');
+    expect(stored.manualOnion, '${'a' * 56}.onion:443', reason: 'the onion field was never touched');
+  });
+
   group('Use Tor', () {
     test('applies the moment it is switched, and starts the channel again', () async {
       final bloc = await open();
@@ -408,6 +428,20 @@ class _Unreadable extends _Refusing {
   @override
   Future<RepositoryResult<ServerAddresses>> read() async =>
       const RepositoryResult<ServerAddresses>.error(exception: RepositoryException.unknown);
+
+  @override
+  Stream<ServerAddresses> watch() => Stream<ServerAddresses>.error(StateError('the keychain is locked'));
+}
+
+/// A store that does not answer a read until told to; writes go through.
+class _UnreadableAtFirst extends _Watched {
+  _UnreadableAtFirst(super._real);
+
+  bool answers = false;
+
+  @override
+  Future<RepositoryResult<ServerAddresses>> read() async =>
+      answers ? super.read() : const RepositoryResult<ServerAddresses>.error(exception: RepositoryException.unknown);
 
   @override
   Stream<ServerAddresses> watch() => Stream<ServerAddresses>.error(StateError('the keychain is locked'));

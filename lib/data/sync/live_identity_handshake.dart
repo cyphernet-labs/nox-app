@@ -220,14 +220,23 @@ class LiveIdentityHandshake {
   /// pairing that already happened would leave a key paired that nothing on
   /// this device knows.
   ///
-  /// Best effort on a channel that is down: the person still leaves, and the
-  /// request ends at its own deadline. Nothing to do when nothing waits.
+  /// With no channel to say it over, the wait does not end as cancelled: the
+  /// request would stay open on the server, and an Allow pressed later would
+  /// pair a key nothing here knows any more. The withdrawal goes out again on
+  /// the next connection, and the screen stays in Cancelling until the server
+  /// confirms it - or this device's own deadline, when the server has let
+  /// the request go too. Nothing to do when nothing waits.
   Future<void> cancelPairing() async {
     final approval = _approval;
     if (approval == null || approval.settled || approval.cancelling) return;
     approval.cancelling = true;
     logRepository.debug(target: this, message: 'pairing: withdrawing the request');
     final last = await _withdraw(approval);
+    if (last == null) {
+      approval.withdrawPending = true;
+      logRepository.debug(target: this, message: 'pairing: no channel to withdraw over, again on the next connection');
+      return;
+    }
     approval.settle(last is _Paired ? last : const _Closed(PairingCancelled()));
   }
 
@@ -291,8 +300,22 @@ class LiveIdentityHandshake {
   /// null to go on waiting.
   Future<_Answer?> _consider(_Approval approval, _Nudge nudge) async {
     // A withdrawal under way owns the outcome: it reads it itself, Allow
-    // included, and acting here as well would only answer twice.
-    if (approval.cancelling) return null;
+    // included, and acting here as well would only answer twice. One that
+    // found no channel goes out again from here.
+    if (approval.cancelling) {
+      if (!approval.withdrawPending) return null;
+      switch (nudge) {
+        case _Connection() || _Resolved():
+          final last = await _withdraw(approval);
+          if (last == null) return null;
+          approval.withdrawPending = false;
+          return last is _Paired ? last : const _Closed(PairingCancelled());
+        case _Deadline() || _Terminal():
+          // Past this device's deadline the server has let the request go
+          // too; a channel refused for good carries no withdrawal either.
+          return const _Closed(PairingCancelled());
+      }
+    }
     switch (nudge) {
       case _Terminal():
         return const _Closed(IdentityHandshakeTimeout());
@@ -515,6 +538,9 @@ class _Approval {
   /// Set by a withdrawal under way. It reads the outcome itself, so nothing
   /// else acts on what it learns from then on.
   bool cancelling = false;
+
+  /// A withdrawal that found no channel: the next connection sends it again.
+  bool withdrawPending = false;
 
   bool get settled => result.isCompleted;
 

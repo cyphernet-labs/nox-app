@@ -703,9 +703,6 @@ void main() {
 
       expect(result.data, isTrue);
       verifyNever(session.setOnboardingComplete());
-      // Without this mark a reconnect during naming reports the person's own
-      // brand-new row back as "already known" and ends onboarding mid-typing.
-      verify(session.noteOnboardingStartedHere()).called(1);
     });
 
     test('a device added to an existing person skips onboarding entirely', () async {
@@ -715,7 +712,6 @@ void main() {
 
       expect(result.data, isTrue);
       verify(session.setOnboardingComplete()).called(1);
-      verifyNever(session.noteOnboardingStartedHere());
     });
 
     test('every address of the link is stored in order, the onion one kept for later (FR-019)', () async {

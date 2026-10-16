@@ -44,8 +44,12 @@ class ChannelDirectProber implements DirectProber {
 
   final NoxChannelApi _api;
 
-  /// One address may take this long, transport, TLS and the check together.
-  static const Duration attemptTimeout = Duration(milliseconds: 2500);
+  /// One address may take this long, transport, TLS and the check together:
+  /// a name to resolve, TCP, TLS 1.3, then `/auth` and `/auth2` one after
+  /// the other - five round trips, so a path of up to about 900 ms answers.
+  /// The rest of the round starts after [stagger], so the last attempt still
+  /// ends within [budget].
+  static const Duration attemptTimeout = Duration(milliseconds: 4500);
 
   /// The first candidate goes alone for this long - the one that answered last
   /// time usually answers again - and then the rest go together.

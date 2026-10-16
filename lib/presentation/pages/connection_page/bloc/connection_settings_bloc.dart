@@ -73,10 +73,10 @@ class ConnectionSettingsBloc extends BaseBloc<ConnectionSettingsEvent, Connectio
     // A read that fails - a secure store not answering - is asked once more
     // after a moment and then shown as nothing stored, the link's address in
     // the field: a spinner with no way out would hide Save and Use Tor too.
-    _storedSub ??= _addresses.watch().listen(
-      (stored) => add(ConnectionSettingsEvent.storedChanged(stored)),
-      onError: (Object _) => _readAgain(),
-    );
+    _storedSub ??= _addresses.watch().listen((stored) {
+      _storedUnknown = false;
+      add(ConnectionSettingsEvent.storedChanged(stored));
+    }, onError: (Object _) => _readAgain());
     _statusSub ??= getIt<ConnectionStatusService>().watchStatus().listen(
       (status) => add(ConnectionSettingsEvent.connectionStatusChanged(status)),
     );
@@ -89,8 +89,15 @@ class ConnectionSettingsBloc extends BaseBloc<ConnectionSettingsEvent, Connectio
     if (isClosed || !state.loading) return;
     final stored = await _addresses.read();
     if (isClosed || !state.loading) return;
+    _storedUnknown = stored.data == null;
     add(ConnectionSettingsEvent.storedChanged(stored.data ?? ServerAddresses.empty));
   }
+
+  /// Whether the fields show "nothing stored" because the store did not
+  /// answer, not because nothing is stored: a save then reads again first, or
+  /// the field the person did not touch would overwrite what is stored with
+  /// the fallback it shows.
+  bool _storedUnknown = false;
 
   /// How long a failed first read waits before it is asked again.
   @visibleForTesting
@@ -134,6 +141,19 @@ class ConnectionSettingsBloc extends BaseBloc<ConnectionSettingsEvent, Connectio
 
   Future<void> _onSaveRequested(ConnectionSettingsSaveRequested event, Emitter<ConnectionSettingsState> emit) async {
     if (!state.canSave) return;
+    if (_storedUnknown) {
+      final stored = await _addresses.read();
+      if (isClosed) return;
+      if (!stored.hasData) {
+        emit(state.copyWith(saveFailed: true));
+        return;
+      }
+      // What is really stored, into the fields first: an edited field keeps
+      // its edit, one the person did not touch takes the stored value.
+      _storedUnknown = false;
+      _onStoredChanged(ConnectionSettingsEvent.storedChanged(stored.data!) as ConnectionSettingsStoredChanged, emit);
+      if (!state.canSave) return;
+    }
     final server = state.serverAddress.trim();
     final onion = _onionFor(state.onionAddress, state);
     if (!_serverValid(server, state) || onion == null) return;

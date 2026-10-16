@@ -203,7 +203,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
             logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
           }
         }
-        if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         // Re-greet. The connection `pair` ran on was never greeted - its key
         // was nobody's when it opened - so it carries no session; the restart
         // greets on a fresh one as the person just paired. Storing the session
@@ -582,8 +581,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     } catch (error, stackTrace) {
       logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
     }
-    // And the plain copies a player or another app had (FR-007, FR-012).
+    // And the plain copies a player or another app had (FR-007, FR-012), and
+    // those the platform's picker left of the files the person attached.
     await getIt<LocalFilesService>().clearCopies();
+    await getIt<LocalFilesService>().clearPicked();
   }
 
   /// How long a start-up waits before it asks the secure store for the key

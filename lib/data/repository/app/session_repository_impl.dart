@@ -115,18 +115,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// JSON value. Secure storage, because the link carries the token.
   static const String _kPendingPairing = 'session.pending_pairing';
 
-  /// True while THIS process is the one that brought the person into being and
-  /// has not finished naming them.
-  ///
-  /// In memory on purpose. Its only job is to tell "the server made this person
-  /// a moment ago, on this device, and someone is typing a name right now"
-  /// apart from "this person existed before this install ever greeted" — and
-  /// the two are indistinguishable on the wire, because every greeting after
-  /// the first reports `created == false` either way. It must NOT survive a
-  /// restart: after one, the naming screen is exactly where a greeting SHOULD
-  /// rescue a device from.
-  bool _onboardingStartedHere = false;
-
   @override
   Future<RepositoryResult<bool>> sweepLegacyKeys() {
     // Inside `execute`, which logs and never throws, so bootstrap needs no
@@ -200,9 +188,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) {
     return execute<bool>(() async {
-      // Named (or skipped): this process is no longer the one mid-onboarding,
-      // so a later greeting may act on what the server says again.
-      _onboardingStartedHere = false;
       await _prefs.setBool(_kOnboardingComplete, true);
       if (label != null) {
         await _prefs.setString(_kLabel, label);
@@ -406,38 +391,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) {
-    return execute<bool>(() async {
-      // Forward only. A reconnect that happens BEFORE the person has named
-      // themselves legitimately reports created == false, because the row was
-      // already made by the first greeting - so "re-derive from every
-      // greeting" would silently declare them onboarded under the
-      // server-assigned name. Advancing but never retreating is safe in both
-      // directions.
-      if (created) return const RepositoryResult<bool>.success(data: false);
-      // A reconnect while the person is still typing their name reports
-      // created == false, because the first greeting already made the row.
-      // Advancing on it would swap the root route out from under them and
-      // discard what they had typed, under the server-assigned name.
-      if (_onboardingStartedHere) return const RepositoryResult<bool>.success(data: false);
-      if (_prefs.getBool(_kOnboardingComplete) ?? false) {
-        return const RepositoryResult<bool>.success(data: false);
-      }
-      await _prefs.setBool(_kOnboardingComplete, true);
-      return const RepositoryResult<bool>.success(data: true);
-    });
-  }
-
-  @override
   Future<RepositoryResult<bool>> forgetAuthorId() {
     return execute<bool>(() async {
       await _prefs.remove(_kAuthorId);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
-
-  @override
-  void noteOnboardingStartedHere() => _onboardingStartedHere = true;
 
   @override
   Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing) {
@@ -507,7 +466,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // the person, so an attempt that never reached the server must not
       // rotate it - doing so would make one install look like two devices to
       // the server the moment the next attempt succeeds.
-      _onboardingStartedHere = false;
       await _secureStorage.deleteIfPresent(key: _kIdentifier);
       // The server the failed attempt pointed at goes with it. Leaving it would
       // aim the next connection at a machine this install never paired with,
@@ -543,7 +501,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
-      _onboardingStartedHere = false;
       // Every key BY NAME, and only then the sweep. `deleteAll` alone is not a
       // wipe: it is one query against the platform store, and a key written
       // under options that query does not match survives it - silently, with no
