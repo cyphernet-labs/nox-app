@@ -14,6 +14,7 @@ App bar (back + Notifications). Grouped switch row “Enable notifications” wi
 ## Behavior
 - Single switch with supporting text “For new messages in your chats”.
 - If the OS permission is denied, an InfoBanner appears (“Notifications are blocked” + Open settings) and the switch reads off and is disabled.
+- The app never raises the OS permission prompt while push delivery is not settled (Q2 of the open-questions register): it only reads the permission status, and Open settings is the way to change it.
 
 ## Navigation
 - Back → Settings (7.1).

@@ -343,7 +343,10 @@ Create a repository: contract, configs union, implementation, and DI registratio
 
 1. **Domain contract** — `lib/domain/repository/<snake_name>/<snake_name>_repository.dart`:
    - `abstract class <Name>Repository`
-   - Methods return `RepositoryResult<T>` (one-shot) or `Stream<RepositoryResult<T>>` (watch).
+   - Reads and commands return `Future<RepositoryResult<T>>`. `watch*` returns a BARE stream
+     (`Stream<<Name>Model?>` / `Stream<List<<Name>Model>>`): a change signal projected straight from
+     the DAO — no `RepositoryResult`, no subject. Blocs never read its value; on each tick they
+     re-read through `get*`/`fetch*`. A storage error reaches the subscriber as a stream error.
    - For server-owned paginated lists the LIST method is `get<Name>s` returning
      `Future<RepositoryResult<(List<<Name>Model>, PageMetadata)>>`.
      `PageMetadata{required bool hasMore, int? nextPage}` lives at
@@ -358,7 +361,7 @@ Create a repository: contract, configs union, implementation, and DI registratio
      read-through (every server page lands in the DAO; a `cachedOnly` read is served from it).
      See step 3 and `04-data-layer.md` §8.
    - Canonical method set (per the method-prefix table — `get*` = parametrized/list,
-     `fetch*` = one-shot single, `watch*` = stream): `watch<Name>`, `fetch<Name>`, `get<Name>s`,
+     `fetch*` = one-shot single, `watch*` = change signal): `watch<Name>`, `fetch<Name>`, `get<Name>s`,
      `create<Name>`, `update<Name>`, `delete<Name>`, `clean`.
      NO `save<Name>` (use `create<Name>`/`update<Name>`); NEVER `fetch<Name>s` for the list.
 
@@ -391,12 +394,13 @@ Create a repository: contract, configs union, implementation, and DI registratio
      it returns `response.data`, or throws `RepositoryException.fromWireCode(error.code)` for a
      contract v0 §2.1 `{code, message}` error (a code unknown to this build degrades to `internal`),
      or a StateError that the catch-all maps to `unknown`
-   - Cache-first reactive watch*(): one BehaviorSubject fed by a single subscription to the DAO stream
+   - Cache-first watch*(): a bare projection of the DAO stream (`_dao.watch().map(...)`) — no subject,
+     no RepositoryResult, no network, NOT wrapped in `execute`
    - Paginated `get<Name>s`: cache-first by DEFAULT, read-through like `ChatRepositoryImpl` /
      `MessageRepositoryImpl`: a `cachedOnly` read is served from the DAO (the screen's first read and
      the live refresh tick), any other read asks the data source for exactly that window, writes it
      to the DAO and falls back to the DAO on `SocketUnavailableException`. Network-only (no
-     DAO/subject) is the exception you justify — one-shot commands with no local projection, and the
+     DAO) is the exception you justify — one-shot commands with no local projection, and the
      frozen `Item` slice. On BOTH branches
      the data source returns `ResponseEntity<<Name>sWireEntity>` whose contract v0 page wrapper is
      `{<name>s, has_more}` (cf. `ChatsWireEntity{chats, hasMore}`) — there is NO `total` on the wire.
@@ -492,14 +496,21 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
        );
        emit(state.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage));
        ```
-   - Repositories via `getIt<<Name>Repository>()`; store subscriptions in fields, cancel in `close()`
+   - Repositories and services via `getIt<...>()` — DOMAIN interfaces only (`<Name>Repository`,
+     `OutboxService`, ...); presentation never imports `lib/data/`. Store subscriptions in fields, cancel in `close()`
+   - Side effects (navigation, snackbar, dialog) are a STATUS in the state, caught by the page's
+     `BlocListener`/`BlocConsumer` with `listenWhen` and reset by an event (`navigationHandled()`);
+     no PublishSubject effect streams. Search and name checks: `transformer: debounceRestartable()`
+     (`lib/presentation/base/bloc_transformers.dart`)
 
 5. **Page** — `lib/presentation/pages/<snake_name>_page/<snake_name>_page.dart`:
-   - `class <Name>Page extends StatefulWidget` with `static const routeName` + `static Route route()` factory
+   - `class <Name>Page extends StatefulWidget` with a `static Route<T> route()` factory; the route name is
+     written straight into `RouteSettings(name: '/...')` — there is no `routeName` constant
    - Its State MUST `extends BaseStatePage<<Name>Page>` (NOT a bare `State<<Name>Page>`) — the canonical
      page-State base from `05-presentation-layer.md` §4
    - Create the BLoC in `initState()` with `..add(const <Name>Event.initialize())`; close in `dispose()`
-   - `build()` = `BlocProvider` + `BlocBuilder` + a Dart 3 exhaustive `switch (state)` over the Freezed
+   - `build()` = `BlocProvider` + `BlocBuilder` (`BlocConsumer`/`BlocListener` with `listenWhen` when the page
+     reacts to status effects) + a Dart 3 exhaustive `switch (state)` over the Freezed
      variants (`Initializing()` / `Initialized()` / `Error()`) — that is what every shipped page does;
      the generated `state.when(initializing:, initialized:, error:)` still exists and is allowed, but
      its `initialized` callback takes the substate's fields POSITIONALLY, so prefer `switch`
@@ -509,7 +520,10 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
      That is the PAGED path; a seq-cursor screen (the chat thread) instead renders a `reverse: true`
      `ListView.builder` with a `ScrollController` prefetch and keeps `oldestLoadedSeq` in state — it still
      folds every batch through `applyPage` to maintain `hasNextPage`
-   - Navigation single-window: `routeName` + `route()` + `Navigator.push`
+   - Navigation single-window: `route()` + `Navigator.push`
+   - Pull-to-refresh on a LIST page: the stock `RefreshIndicator` around the `PagedListView`; `onRefresh`
+     adds `loadItems(reset: true)` and awaits the bloc's own stream (first `Error`, or `Initialized` with
+     `!loadingInProgress`, 5 s timeout) — no Completer in the event, no custom indicator widget
 
 6. fvm dart run build_runner build --delete-conflicting-outputs   # REQUIRED — Freezed BLoC needs codegen
 7. fvm dart format -l 140 <changed files>

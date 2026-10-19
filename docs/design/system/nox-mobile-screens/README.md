@@ -4,6 +4,10 @@ Per-screen export of the **mobile** app (iOS / Android, Material 3) for implemen
 has a **detailed behavior spec** and a **live design** rendered from the shared design system — not
 screenshots, and not a copy: `index.html` mounts the real components from `_src/`.
 
+> **Language.** Like everything under `docs/design/system/`, this corpus stays in English as the design tool
+> exported it - `index.html`, `specs.js` and the JSX in `_src/` refer to it - an exception to the rule that
+> the team's documentation prose is Russian.
+
 ## Open `index.html`
 A screen browser:
 - **Left** — every screen, grouped (Onboarding · Shell & Chats · Settings).

@@ -5,6 +5,10 @@ Per-screen export of the **desktop** app (Windows / Linux / macOS, Material 3, c
 rendered from the shared design system — not screenshots, not a copy: `index.html` mounts the real
 components from `_src/`.
 
+> **Language.** Like everything under `docs/design/system/`, this corpus stays in English as the design tool
+> exported it - `index.html`, `specs.js` and the JSX in `_src/` refer to it - an exception to the rule that
+> the team's documentation prose is Russian.
+
 ## Open `index.html`
 A screen browser:
 - **Left** — every screen, grouped (01 Chats · 02 Settings · 03 Onboarding · 04 Flows & dialogs · 05 States).

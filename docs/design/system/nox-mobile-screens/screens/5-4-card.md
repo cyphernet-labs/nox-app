@@ -41,10 +41,11 @@ App bar (back + chat name). Header: avatar (56) + name (headlineSmall) + the `Re
 - Empty: No files yet / Files sent in this chat will appear here.
 - Offline strip: No connection, or its cause when known (as 5.1) · Try again
 - Wrong-server strip: This onion address belongs to a different server. · Try again
+- Load error: Something went wrong · Try again (the shared strings; the card has no error sentence of its own)
 
 ## Design-system components
 - AppBar (title)
-- Avatar (56)
+- Avatar (56; 72 in the desktop drawer, the rest of the header the same)
 - Segmented
 - FileGlyph
 - EmptyState

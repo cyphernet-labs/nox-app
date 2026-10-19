@@ -7,7 +7,7 @@
 ## Anatomy
 A Material 3 AlertDialog centred over whatever screen is up, with the modal scrim (`NoxOpacity.scrim`). Top to bottom: the `devices` glyph in `secondary`; the question “New device: {platform}. Allow it to join?” (bodyLarge, `onSurface`, centred); when an answer did not get through, “Couldn't send your answer. Try again.” under it (bodyMedium, `error`, centred, a live region); actions at the end: “Deny”, then “Allow”, both text buttons.
 
-`{platform}` is the new device's OS family in the app's own words — “iPhone or iPad” · “Android” · “Mac” · “Windows” · “Linux”, and “Unknown system” for anything else. No text from the wire ever reaches the dialog: a leaked invite must not be able to call itself whatever it likes in the question that asks to let it in. No hardware model is sent at all.
+`{platform}` is the new device's OS family in the app's own words — “iPhone or iPad” · “Android” · “Mac” · “Windows” · “Linux”, and “Unknown system” for anything else - the same words the rows of Devices (7.8) use. No text from the wire ever reaches the dialog: a leaked invite must not be able to call itself whatever it likes in the question that asks to let it in. No hardware model is sent at all.
 
 ## States
 - `asking` — The question, both buttons enabled.

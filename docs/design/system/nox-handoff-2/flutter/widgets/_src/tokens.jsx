@@ -120,7 +120,7 @@ const EASING = {
 const MOTION = {
   splashIn:    { ms: 400, easing: 'emphasizedDecelerate', flutter: 'Easing.emphasizedDecelerate', use: 'Splash reveal' },
   push:        { ms: 300, easing: 'emphasized',           flutter: 'Easing.emphasized',           use: 'Screen push / pop' },
-  tabFade:     { ms: 150, easing: 'standard',             flutter: 'Easing.standard',              use: 'Tab switch (IndexedStack fade)' },
+  tabFade:     { ms: 150, easing: 'standard',             flutter: 'Easing.standard',              use: 'Tab switch (fade; both tabs stay mounted in a Stack)' },
   snackbarIn:  { ms: 150, easing: 'standard',             flutter: 'Easing.standard',              use: 'Snackbar in' },
   snackbarOut: { ms: 75,  easing: 'standard',             flutter: 'Easing.standard',              use: 'Snackbar out' },
   sheet:       { ms: 300, easing: 'emphasizedDecelerate', flutter: 'Easing.emphasizedDecelerate', use: 'Bottom sheet expand' },

@@ -10,7 +10,7 @@
 |---|---|---|
 | **Go** | **1.27** (вышел 2026-08-19; поддерживаются 1.27 и 1.26) | `encoding/json/v2` достиг GA; Green Tea GC по умолчанию с 1.26 |
 | **WebSocket** | `github.com/coder/websocket` (бывш. nhooyr) | Единственная библиотека с живым релизным циклом (v1.8.15, июнь 2026); context-first API; внутренняя сериализация записей. gorilla после ревайва 2023 фактически заморожен (релиз июнь 2024); `x/net/websocket` сам отправляет к coder |
-| **SQLite** | `github.com/ncruces/go-sqlite3` (v0.35.6) с VFS `adiantum` | SQLite, собранный в WebAssembly и исполняемый в процессе (wazero): чистый Go, `CGO_ENABLED=0` и кросс-сборка сохраняются. Единственная SQLite для Go, которая шифрует базу по страницам без CGO: VFS `adiantum` шифрует каждую страницу базы и её WAL ключом данных |
+| **SQLite** | `github.com/ncruces/go-sqlite3` (v0.35.6) с VFS `adiantum` | SQLite, собранный в WebAssembly и переведённый в Go-код (`wasm2go`): чистый Go, `CGO_ENABLED=0` и кросс-сборка сохраняются. Единственная SQLite для Go, которая шифрует базу по страницам без CGO: VFS `adiantum` шифрует каждую страницу базы и её WAL ключом данных |
 | **Криптография** | `golang.org/x/crypto` | Argon2id — ключ из пароля владельца; XChaCha20-Poly1305 — запертый ключ данных; ChaCha20-Poly1305 — куски вложений. HKDF — из стандартной библиотеки (`crypto/hkdf`) |
 | **Шифр VFS** | `lukechampine.com/adiantum` | Шифр VFS `adiantum`, уже входящий в бинарник через неё: проверка ключа данных по первым блокам файлов базы до того, как SQLite их откроет (см. §3) |
 | **Терминал** | `golang.org/x/term` | Пароль без эха в `noxd unlock`, `noxd password`, `noxd restore` на всех системах сервера |

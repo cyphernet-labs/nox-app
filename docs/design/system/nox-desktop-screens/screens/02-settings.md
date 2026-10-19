@@ -30,9 +30,10 @@ NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium desti
 - No role badge and no `People` menu item: the machine holds one person, so such a mark would separate nothing. Same rule as the narrow width — one builder feeds both, so the two cannot drift apart.
 - No mask and no account QR: the ID is public, and a QR of it would add nobody. The `Devices` menu item is the way to the pane that mints an invite.
 - Connection (feature 045): the third item of the first group, glyph `lan` (filled when selected). Its pane is **12 · Connection** — the server address, the onion address and Use Tor — the same body as the phone's 7.10.
-- Notifications: enable switch with a bare leading glyph (22, `onSurfaceVariant`) - no 40dp tinted circle; OS-denied → an inset InfoBanner card above it, in the same geometry as the settings cards, with `Open settings` at its trailing edge, switch off.
-- Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
-- Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error. Confirming does what it does on mobile 7.1: the device revokes its own key over a live connection, then the session and all local data are wiped.
+- Notifications: enable switch with a bare leading glyph (22, `onSurfaceVariant`) - no 40dp tinted circle; OS-denied → an inset InfoBanner card above it, in the same geometry as the settings cards, with `Open settings` at its trailing edge, switch off. The app never raises the OS permission prompt while push delivery is not settled (Q2 of the open-questions register): it only reads the status.
+- Appearance: System / Light / Dark theme cards. Language: System / English / Українська. A choice that fails to save goes back to the previous one and says “Could not save. Try again.” in a snackbar.
+- About: one settings-group row - the `info` glyph, `Version` and its value on the right (1.2.3 (build 456)); no chevron, not tappable.
+- Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error. Confirming does what it does on mobile 7.1: the device revokes its own key over a live connection, then the session and all local data are wiped. Until that ends the dialog stays up and modal, with a spinner in place of its Log out button; a logout that fails closes the dialog and says “Could not log out. Please try again.” in a snackbar.
 
 ## Navigation
 - Menu item → swaps detail pane (Devices → 09 · Devices, Connection → 12 · Connection).
@@ -41,6 +42,8 @@ NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium desti
 ## Copy (EN)
 - Pane title: Settings
 - Logout: Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back. · Cancel · Log out
+- Logout error (snackbar): Could not log out. Please try again.
+- Save error (snackbar): Could not save. Try again.
 
 ## Design-system components
 - NavRail

@@ -5,13 +5,13 @@
 **Purpose.** App version / build.
 
 ## Anatomy
-App bar (back + About). Grouped row: Version → 1.2.3 (build 456).
+App bar (back + About). Grouped row: `info` glyph (bare, as on every settings row) + Version → 1.2.3 (build 456), the value on the right.
 
 ## States
 - `default` — About
 
 ## Behavior
-- Static informational row.
+- Static informational row: no chevron, not tappable - it opens nothing.
 
 ## Navigation
 - Back → Settings (7.1).

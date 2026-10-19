@@ -42,11 +42,12 @@ Scrim + right drawer (380): Details header, chat avatar/name with the `Rename ch
 - Wrong-server banner: This onion address belongs to a different server. / Try again
 - Section: Files
 - Empty: No files yet / Files sent in this chat will appear here.
+- Load error: Something went wrong / Try again (the shared strings; the card has no error sentence of its own)
 
 ## Design-system components
 - ChatsDesktop (base)
 - ChatInfoDrawer
-- Avatar (72)
+- Avatar (72; 56 on the phone's 5.4, the rest of the header the same)
 - Segmented
 - FileGlyph
 - EmptyState

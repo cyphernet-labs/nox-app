@@ -12,13 +12,14 @@ Centered error glyph (onSurfaceVariant, 48–96) + title + message + primary “
 - `embedded` — Embedded
 
 ## Behavior
-- Blocking variant has NO back (it is the last entry in the stack — e.g. failed cold-start).
+- Blocking variant has NO back button: it is the last entry in the stack (e.g. onboarding could not be finished on 2.3), and on Android the system back minimizes the app. The splash never routes here.
 - Embedded variant shows a back arrow (reached from within a flow).
 - Props: icon, title, message, onRetry. Copy pattern: “Could not <verb>. Check your connection and try again.”
 
 ## Navigation
 - Try again → re-runs the failed action.
 - Embedded back → previous screen.
+- Blocking, system back (Android) → minimizes the app.
 
 ## Copy (EN)
 - Default title: Something went wrong

@@ -101,7 +101,9 @@ For pixel-level reference of assembled screens, see the live builds in the proje
 ## Still to deliver (asset orders, per design-system.md §11)
 
 Final logo SVG (full-color on dark) · app launcher icon (a set built from the 200×200 raster logo
-ships in `nox-app-icons/`; the final one waits for the vector logo) · 3 empty-state illustrations
-(chats / messages / files; placeholders in `nox-assets/illustrations/`, which the app does not draw -
-see `NoxEmptyState` in `spec/primitives.md`) · final `ColorScheme` tuning pass in Material Theme
-Builder.
+ships in `nox-app-icons/`; the final one waits for the vector logo).
+
+No empty-state illustration is ordered: the art of an empty state is the `NoxEmptyState` composition
+(see `spec/primitives.md`), and the three SVGs in `nox-assets/illustrations/` are sketches of the
+corpus that do not ship. The `ColorScheme` is tuned and fixed by the tokens (design-system.md
+§2.2–2.3).

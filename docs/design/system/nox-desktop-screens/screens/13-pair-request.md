@@ -7,7 +7,7 @@
 **Adaptation from mobile.** none - the same AlertDialog as mobile 8.2, centred over the whole window: title bar, navigation rail and panes alike
 
 ## Anatomy
-Scrim over the whole window + centred AlertDialog: the `devices` glyph in `secondary`, “New device: {platform}. Allow it to join?” (bodyLarge, centred), the error line “Couldn't send your answer. Try again.” when an answer did not get through (bodyMedium, `error`, a live region), then “Deny” and “Allow” at the end. `{platform}` is one of “iPhone or iPad” · “Android” · “Mac” · “Windows” · “Linux”, or “Unknown system” - the app's own words, never text from the wire.
+Scrim over the whole window + centred AlertDialog: the `devices` glyph in `secondary`, “New device: {platform}. Allow it to join?” (bodyLarge, centred), the error line “Couldn't send your answer. Try again.” when an answer did not get through (bodyMedium, `error`, a live region), then “Deny” and “Allow” at the end. `{platform}` is one of “iPhone or iPad” · “Android” · “Mac” · “Windows” · “Linux”, or “Unknown system” - the app's own words, the same the rows of 09 · Devices use, never text from the wire.
 
 ## States
 - `asking` — Both buttons enabled.

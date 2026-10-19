@@ -160,7 +160,7 @@ const SECTIONS = [
       render: () => <Box w={360}><div style={{borderRadius:12,overflow:'hidden',border:'1px solid '+t.outlineVariant}}>
         <Composer t={t} value="On it" sendActive />
       </div></Box> },
-    { name: 'NoxEmptyState', tag: 'custom', desc: 'Illustration placeholder + headline + message. Swap the box for a real SVG when art ships.',
+    { name: 'NoxEmptyState', tag: 'custom', desc: 'The empty-state art (outlined box + glyph + brand dots) + headline + message. No illustration ships.',
       dart: `NoxEmptyState(glyph: Symbols.forum, title: 'No chats yet', message: '…')`,
       render: () => <Box w={300}><div style={{height:300,display:'flex'}}>
         <EmptyState t={t} glyph="forum" title="No chats yet" message="Start a conversation — tap +." />

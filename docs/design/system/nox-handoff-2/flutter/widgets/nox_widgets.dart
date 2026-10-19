@@ -412,9 +412,9 @@ class NoxComposer extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────
-// NoxEmptyState — illustration placeholder + title + message.
-// Replace the placeholder box with a real SVG once illustrations
-// ship (nox-assets/illustrations).
+// NoxEmptyState — the empty-state art + title + message.
+// The outlined box with its glyph and brand accents IS the art:
+// no illustration is ordered or shipped (design-system.md §10).
 // Source: src/chats-parts.jsx <EmptyState>.
 // ─────────────────────────────────────────────────────────────
 class NoxEmptyState extends StatelessWidget {
@@ -439,7 +439,7 @@ class NoxEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // illustration placeholder — thin outline + brand accents (§10)
+            // the art — thin outline + glyph + brand accents (§10)
             Container(
               width: 132,
               height: 132,

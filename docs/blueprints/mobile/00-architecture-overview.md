@@ -41,7 +41,8 @@ nox_app/
 ├── analysis_options.yaml               line length 140, исключения для генерации
 ├── .fvmrc                              Flutter 3.44.1, закреплён через FVM
 ├── lib/
-│   ├── main.dart                       точка входа: runZonedGuarded → AppDataRoot.useLocalFolderOnWindows()
+│   ├── main.dart                       точка входа: runZonedGuarded → лицензии шрифтов в LicenseRegistry
+│   │                                   → AppDataRoot.useLocalFolderOnWindows()
 │   │                                   → Future.wait([configureDependencies(env), setPreferredOrientations(portraitUp)])
 │   │                                   → getIt.allReady() → getIt<AppConfigRepository>().initialize(flavorType:)
 │   │                                   → sessionRepository.sweepLegacyKeys() → appStateRepository.holdUntil(_start())
@@ -70,10 +71,14 @@ nox_app/
 │   │   │   ├── app_config/
 │   │   │   │   ├── app_flavor_type.dart         enum AppFlavorType{prod,stage}
 │   │   │   │   ├── app_flavor.dart              AppFlavor.getFlavor() (String.fromEnvironment('app.flavor'))
-│   │   │   │   └── app_config.dart              AppConfig({required AppFlavorType flavor, String? apiUrl}) (plain class)
+│   │   │   │   └── app_config.dart              AppConfig({required AppFlavorType flavor}) (plain class; адреса сервера
+│   │   │   │                                     в нём нет — он приходит ссылкой спаривания)
 │   │   │   └── item/
 │   │   │       ├── item_model.dart              @freezed доменная модель (БЕЗ JSON)
 │   │   │       └── item_status.dart             enum ItemStatus
+│   │   ├── service/                             интерфейсы служб, которые зовут блоки: OutboxService, AttachmentPrefetchService,
+│   │   │                                         PairRequestService, ConnectionStatusService, LocalFilesService, …
+│   │   │                                         (реализации — в data/service/ и data/sync/)
 │   │   └── repository/
 │   │       ├── base/
 │   │       │   ├── base.dart                    barrel-экспорт base/*
@@ -146,7 +151,12 @@ nox_app/
 │   │       ├── sync_service.dart                применяет журнальные события в DAO и двигает курсор since
 │   │       ├── live_session_starter.dart        порядок подъёма живого канала (wipe чужого мира → подписка → сокет)
 │   │       ├── connection/                      выбор пути перед каждой попыткой (прямой адрес / Tor), статус связи
-│   │       └── outbox_service.dart              слив очереди исходящих — ЕДИНСТВЕННЫЙ отправитель (фаза 027)
+│   │       ├── outbox_service_impl.dart         OutboxServiceImpl (as: OutboxService) — слив очереди исходящих,
+│   │       │                                    ЕДИНСТВЕННЫЙ отправитель (фаза 027)
+│   │       ├── attachment_prefetch_service_impl.dart  AttachmentPrefetchServiceImpl (as: AttachmentPrefetchService) —
+│   │       │                                    подкачка полученных картинок
+│   │       └── pair_request_service_impl.dart   PairRequestServiceImpl (as: PairRequestService) — запросы новых
+│   │                                            устройств (фаза 046, env [dev])
 │   │
 │   ├── presentation/                   ← ПРЕЗЕНТАЦИЯ (импортирует только domain)
 │   │   ├── app/
@@ -170,7 +180,7 @@ nox_app/
 │   │   │   │   └── settings_placeholder_page.dart  заглушка вкладки Settings скелетного AppShell (без BLoC;
 │   │   │   │                                        вкладку Chats заменил реальный chats_list_page/ со своим BLoC)
 │   │   │   └── item_list_page/                  рабочий пример страницы
-│   │   │       ├── item_list_page.dart          StatefulWidget: routeName + route() + BlocProvider
+│   │   │       ├── item_list_page.dart          StatefulWidget + BlocProvider (харнесс — тело вкладки, без route())
 │   │   │       ├── bloc/
 │   │   │       │   ├── item_list_bloc.dart       part 'item_list_event.dart'; part 'item_list_state.dart';
 │   │   │       │   ├── item_list_event.dart      part of bloc; @freezed sealed Event
@@ -189,7 +199,7 @@ nox_app/
 │   │   ├── app_spacing_tokens.dart             responsive отступы (flutter_screenutil)
 │   │   ├── app_dimension_tokens.dart           семантический слой над ramp'ом (space/radius/border/icon/size)
 │   │   ├── app_text_style_tokens.dart          типографика (+ fontSizeResolver для ScreenUtilInit)
-│   │   ├── app_overlay_style_tokens.dart       AppOverlayStyleTokens (system UI overlay)
+│   │   ├── app_overlay_style_tokens.dart       AppOverlayStyleTokens: of(colorScheme) + splash (только через AnnotatedRegion)
 │   │   ├── nox_icons.dart                      геттеры SVG-иконок поверх сгенерированного assets.gen
 │   │   ├── gen/assets.gen.dart                 flutter_gen → пути ассетов (генерится, gitignored)
 │   │   └── theme/
@@ -220,7 +230,7 @@ nox_app/
 
 - **`lib/domain/`** импортирует **ничего** из `data/` или `presentation/`. Это чистый Dart + аннотации Freezed. Домен — это контракт. Доменному слою **разрешено** импортировать `lib/general/` (платформо-нейтральные утилиты и константы — без UI и без бизнес-логики), но `data/` и `presentation/` — **никогда**.
 - **`lib/data/`** импортирует `domain/` (чтобы реализовывать его интерфейсы и возвращать его модели). **Никогда** не импортирует `presentation/`.
-- **`lib/presentation/`** импортирует `domain/` (потребляет интерфейсы и модели через DI). **Никогда** не импортирует `data/`. Презентация знает только абстрактный интерфейс репозитория; конкретный `*Impl` подставляется через DI. Расхождение в коде (нашёл сам при сверке): у `OutboxService` и `AttachmentPrefetchService` доменного интерфейса нет, и `ChatThreadBloc`, `CreateChatBloc`, `RenameChatBloc` импортируют их из `lib/data/sync/` напрямую.
+- **`lib/presentation/`** импортирует `domain/` (потребляет интерфейсы и модели через DI). **Никогда** не импортирует `data/`. Презентация знает только абстрактный интерфейс репозитория или службы; конкретный `*Impl` подставляется через DI. Службы, которые зовут блоки, — тоже доменные интерфейсы в `lib/domain/service/`: `OutboxService` (`outbox_service.dart`) и `AttachmentPrefetchService` (`attachment_prefetch_service.dart`) реализуют `OutboxServiceImpl` (`lib/data/sync/outbox_service_impl.dart`) и `AttachmentPrefetchServiceImpl` (`lib/data/sync/attachment_prefetch_service_impl.dart`) с регистрацией `@LazySingleton(as: …)`; так же устроены `PairRequestService` / `PairRequestServiceImpl`. Блок берёт службу через `getIt<OutboxService>()`.
 
 ```
    presentation/  ──depends on──▶  domain/  ◀──depends on──  data/
@@ -242,11 +252,11 @@ nox_app/
 2. BLoC (ItemListBloc._onInitialize)
    _itemRepository = getIt<ItemRepository>()
    → вызывает _itemRepository.getItems(config: GetItemsConfig.firstPage())
-     (постраничный серверный список; для потока одного элемента — watchItem(id:))
+     (постраничный серверный список; сигнал изменения одного элемента — watchItem(id:), его данные — fetchItem)
 
 3. Доменный контракт (ItemRepository)
    getItems возвращает Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> (постраничный список)
-   watchItem возвращает Stream<RepositoryResult<ItemModel>> (поток одного элемента)
+   watchItem возвращает Stream<ItemModel?> — голую проекцию кэша, сигнал изменения без RepositoryResult
 
 4. Data-импл (ItemRepositoryImpl с BaseRepositoryHelper)
    оборачивает работу в execute<T>(() async { ... })
@@ -267,7 +277,7 @@ nox_app/
 
 7. Repository impl
    возвращает RepositoryResult.success(data: (items, meta))
-   (для кэшируемого ресурса watchItem отдавал бы через BehaviorSubject<RepositoryResult<ItemModel>>)
+   (у кэшируемого ресурса watchItem — проекция ItemDao: на его тик блок перечитывает fetchItem)
 
 8. BLoC
    result.match(
@@ -284,9 +294,9 @@ nox_app/
    )
 ```
 
-Пути чтения для **пользовательских ресурсов с локальным кэшем** — local-first: DAO (Sembast) служит источником истины для UI; удалённые данные втекают в локальное хранилище через маппер, а затем реактивно вытекают обратно через `BehaviorSubject`.
+Пути чтения для **пользовательских ресурсов с локальным кэшем** — local-first: DAO (Sembast) служит источником истины для UI; удалённые данные втекают в локальное хранилище через маппер. `watch*` репозитория — голая проекция DAO, сигнал изменения: на его тик блок перечитывает данные через `get*` / `fetch*`, которые отдают `RepositoryResult`; ошибка хранилища приходит подписчику ошибкой стрима.
 
-> **Важная оговорка — список чатов читается иначе.** Список чатов — это **серверный, постранично-владеемый список**: BLoC хранит `PagingState` и подгружает страницы напрямую через репозиторий (`getChats`), а не подпиской на поток DAO — см. §7 принципов и [07-pagination.md](07-pagination.md). Сам репозиторий держит локальный Sembast-store и читает **сквозь** него: запрос страницы без `cachedOnly` (и поиск — он идёт на сервер, а не по загруженному срезу) уходит в `ChatRemoteDataSource`, ответ персистится, а локальная выборка отдаётся на `cachedOnly`-чтениях и когда канал недоступен. Соединение экран не держит: первую страницу BLoC читает с `cachedOnly: true` и показывает сразу, а страницу сервера запрашивает в фоне и перечитывает кэш, когда она легла (`FirstPageSynced`); тик живого обновления — тоже `cachedOnly`. Реактивность — сигнал `watchChats()` (Feature 014), чистая проекция store'а. Постраничная форма запроса от этого не меняется. Чисто **network-only** (нет DAO, нет `BehaviorSubject`) остаются замороженный Item-слайс и одноразовые команды. Local-first путь (с DAO и subject) — для пользовательских ресурсов, которые имеет смысл кэшировать целиком.
+> **Важная оговорка — список чатов читается иначе.** Список чатов — это **серверный, постранично-владеемый список**: BLoC хранит `PagingState` и подгружает страницы напрямую через репозиторий (`getChats`), а не подпиской на поток DAO — см. §7 принципов и [07-pagination.md](07-pagination.md). Сам репозиторий держит локальный Sembast-store и читает **сквозь** него: запрос страницы без `cachedOnly` (и поиск — он идёт на сервер, а не по загруженному срезу) уходит в `ChatRemoteDataSource`, ответ персистится, а локальная выборка отдаётся на `cachedOnly`-чтениях и когда канал недоступен. Соединение экран не держит: первую страницу BLoC читает с `cachedOnly: true` и показывает сразу, а страницу сервера запрашивает в фоне и перечитывает кэш, когда она легла (`FirstPageSynced`); тик живого обновления — тоже `cachedOnly`. Реактивность — сигнал `watchChats()` (Feature 014), чистая проекция store'а: его значение блок не читает, а перечитывает загруженные страницы через `getChats`. Постраничная форма запроса от этого не меняется. Чисто **network-only** (нет DAO) остаются замороженный Item-слайс и одноразовые команды. Local-first путь (с DAO) — для пользовательских ресурсов, которые имеет смысл кэшировать.
 
 ---
 
@@ -343,13 +353,13 @@ nox_app/
 
 Привязка идёт к **страницам приложения**, а не к абстрактным «фичам»: один экран = одна самодостаточная папка `<page>_page/` под `lib/presentation/pages/`. BLoC экрана владеет подпапкой `bloc/`; файлы события и состояния — это Dart `part` файла BLoC, поэтому sealed-иерархия остаётся приватной для трио, а сгенерированный `*.freezed.dart` лежит рядом. Приватные для страницы виджеты живут в `widgets/`.
 
-Каждая навигируемая страница (`*Page` с `routeName`/`route()`) **обязательно** владеет собственным BLoC под `bloc/` — **даже если страница logic-less** (тогда минимальный BLoC: trio `Initializing`/`Initialized`/`Error` или value-BLoC а-ля `AppRootBloc`; см. [05-presentation-layer.md](05-presentation-layer.md) §3.4/§6.1 и [08-conventions-and-constitution.md](08-conventions-and-constitution.md) Принцип 5.1). Переиспользуемые виджеты (`widgets/`) BLoC **не требуют**.
+Каждая навигируемая страница (`*Page` со `static Route<T> route()`) **обязательно** владеет собственным BLoC под `bloc/` — **даже если страница logic-less** (тогда минимальный BLoC: trio `Initializing`/`Initialized`/`Error` или value-BLoC а-ля `AppRootBloc`; см. [05-presentation-layer.md](05-presentation-layer.md) §3.4/§6.1 и [08-conventions-and-constitution.md](08-conventions-and-constitution.md) Принцип 5.1). Переиспользуемые виджеты (`widgets/`) BLoC **не требуют**.
 
-> **Расхождение с кодом (сознательное, фазовое).** Скелетный `AppShell` и его `settings_placeholder_page.dart` живут без BLoC; заглушку вкладки Chats уже заменил реальный `chats_list_page/` со своим BLoC, настройки — `settings_root_page/`. В живом коде исключение из Принципа 5.1 сохраняют живая оболочка `TabBarShell` (помечена `// TODO(blueprint-shell-bloc)`), dev-поверхности и чисто презентационные экраны — фазовый carve-out описан в [05-presentation-layer.md](05-presentation-layer.md) §5.1.
+> **Фазовое исключение.** Скелетный `AppShell` и его `settings_placeholder_page.dart` (не смонтированы) живут без BLoC; вкладки живой оболочки — `chats_list_page/` и `settings_root_page/` со своими BLoC. Без BLoC остаются dev-поверхности и чисто презентационные экраны — фазовый carve-out описан в [05-presentation-layer.md](05-presentation-layer.md) §5. Состояние вкладок живой оболочки `TabBarShell` переезжает в value-BLoC (форма [05](05-presentation-layer.md) §6.1) — в коде это маркер `// TODO(blueprint-shell-bloc)`.
 
 ```
 lib/presentation/pages/<page>_page/
-├── <page>_page.dart          # StatefulWidget: routeName + static Route route() + BlocProvider
+├── <page>_page.dart          # StatefulWidget: static Route<T> route() (имя — в RouteSettings) + BlocProvider
 ├── bloc/
 │   ├── <page>_bloc.dart       # part '<page>_event.dart'; part '<page>_state.dart'; part '<page>_bloc.freezed.dart';
 │   ├── <page>_event.dart      # part of bloc; @freezed sealed Event-union
@@ -357,7 +367,7 @@ lib/presentation/pages/<page>_page/
 └── widgets/                   # виджеты, приватные для этой страницы
 ```
 
-Рабочий пример — `item_list_page/` (`item_list_page.dart` + `bloc/{item_list_bloc, item_list_event, item_list_state}.dart`; папка `widgets/` заводится только когда у страницы появляются приватные виджеты). Кросс-страничные переиспользуемые виджеты (кнопки, инпуты, progress/error/empty-состояния, refresh-индикатор) живут выше — под `lib/presentation/widgets/`, **а не** внутри `widgets/` конкретной страницы.
+Рабочий пример — `item_list_page/` (`item_list_page.dart` + `bloc/{item_list_bloc, item_list_event, item_list_state}.dart`; папка `widgets/` заводится только когда у страницы появляются приватные виджеты). Кросс-страничные переиспользуемые виджеты (кнопки, инпуты, progress/error/empty-состояния, плашки) живут выше — под `lib/presentation/widgets/`, **а не** внутри `widgets/` конкретной страницы.
 
 > **Использование Freezed для BLoC — намеренное переопределение.** В ранних вариантах блюпринта события и состояния были рукописными `sealed`-классами на `Equatable` с ручными `when()`/`copyWith()`. Здесь это **отменено намеренно**: события и состояния — это `@freezed sealed` unions (`*.freezed.dart`, **никогда** `*.g.dart` — на BLoC-типах нет `fromJson`). Canonical-имена подсостояний — **bare**: `Initializing` / `Initialized` / `Error` (так в коде: `const factory ItemListState.error({BaseRepositoryException? exception}) = Error;`, ветвление как `Initializing()` / `Initialized()` / `Error()`). Префиксные имена (`<Feature>Initializing`…) допустимы как вариант для избегания коллизий, но канон — bare. Производная/вычисляемая логика выносится в **extension-геттеры**, а не в тело `@freezed`. Тонкий `BaseBloc<E,S>` (в `lib/presentation/base/`) оборачивает обработчики в `executeLogic` с `try/catch`. Каждая навигируемая страница владеет собственным BLoC, даже logic-less (Принцип 5.1). Полностью — в [05-presentation-layer.md](05-presentation-layer.md).
 
@@ -398,12 +408,12 @@ lib/presentation/pages/<page>_page/
 - **Композиция в data-пайплайне** — мапперы композируют дочерние мапперы через конструктор; `BaseMapper` даёт list-варианты; entity содержат только базовые типы (enum как `.name` String, DateTime как ISO-8601 String) — вся коэрция в маппере.
 - **Дисциплина дизайн-токенов** — только токены (`AppSpacingTokens`, `AppTextStyleTokens`, responsive через `flutter_screenutil`); `Semantics` на интерактивных виджетах; единый `feature_flags.dart`.
 - **Наблюдаемость и обработка ошибок** — единый канал `LogRepository` (обязательный, никакого raw `print`); типизированной иерархии исключений нет — всё сводится к `RepositoryException` внутри `BaseRepositoryHelper.execute<T>()` (четыре ветки: уже смапленный `BaseRepositoryException` проходит насквозь; `SocketUnavailableException` → `connection` (фаза 026 — иначе мёртвый канал уходит в catch-all как `unknown` и кэш-фоллбэк становится недостижим); `DioException` мапится по типу/статусу — таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, прочее → `internal`; всё остальное → `unknown`), который всегда логирует. Коды ошибок контракта v0 §2.1 (`invalid_request`, `name_taken`, `payload_too_large`, `attachment_gone`, `rate_limited`, `unsupported_schema`, …) поднимаются из конверта через `unwrapEnvelope` + `RepositoryException.fromWireCode` (неизвестный код → `internal`).
-- **Реактивные репозитории + carve-out** — для кэшируемых пользовательских ресурсов: `BehaviorSubject` + реактивный Sembast DAO (`onSnapshots`, transactions); env-scoped `AppDatabase` (Dev/Prod=IO, Test=memory) через `@LazySingleton(as: AppDatabase, env: [...])`; репозиторий подписывается на поток DAO один раз. **Carve-out:** постранично-владеемые серверные списки читаются страницами через репозиторий (`PagingState`, а не подписка на DAO) — при этом сам список чатов с Feature 013 кэшируется в Sembast, а чисто **network-only** (без DAO и subject) остаются замороженный Item-слайс и одноразовые команды (см. [07-pagination.md](07-pagination.md)).
-- **`RepositoryResult<T>` повсюду** — `@freezed` с данными-XOR-исключением (`.success(data:)` / `.error(exception:)`); поверхностный `match<R>(onData, onError)`. Никогда не разыменовывать `data` вслепую.
+- **Cache-first репозитории + carve-out** — для кэшируемых пользовательских ресурсов: реактивный Sembast DAO (`onSnapshots`, transactions); env-scoped `AppDatabase` (Dev/Prod=IO, Test=memory) через `@LazySingleton(as: AppDatabase, env: [...])`. `watch*` — голая проекция DAO, сигнал изменения без `RepositoryResult`; данные блок перечитывает через `get*` / `fetch*`. **Carve-out:** постранично-владеемые серверные списки читаются страницами через репозиторий (`PagingState`, а не значение стрима DAO) — при этом сам список чатов с Feature 013 кэшируется в Sembast, а чисто **network-only** (без DAO) остаются замороженный Item-слайс и одноразовые команды (см. [07-pagination.md](07-pagination.md)).
+- **`RepositoryResult<T>` в чтениях и командах** — `@freezed` с данными-XOR-исключением (`.success(data:)` / `.error(exception:)`); поверхностный `match<R>(onData, onError)`. Никогда не разыменовывать `data` вслепую. Сигнал `watch*` обёртки не несёт: его ошибка — ошибка стрима.
 - **Тематизация — light + dark** — `AppTheme.light()/dark()` (строятся на каждый вызов, не кэшируются); `themeMode` приходит из `AppRootBloc`; цвет в фичах — из `Theme.of(context).colorScheme`, `NoxBrand`, `NoxScrims`, `NoxOpacity` (`ThemeExtension<AppColors>` зарегистрирован, но это двухполевой каркас без вызовов `context.appColors`); `ColorScheme`/`TextTheme` берутся из сгенерированного хендоффа (`nox_color_scheme.dart`/`nox_text_theme.dart`, регенерируются из `docs/design/system/nox-handoff/`), а **не** через `ColorScheme.fromSeed` (см. [06-theming.md](06-theming.md)).
 - **Кросс-платформенность и адаптивная оболочка** — пять целевых платформ (iOS, Android, Windows, Linux, macOS; web вне scope); single-window. Оболочка width-driven на `Constants.railBreakpoint=840dp`: нижний бар с center-docked `+` FAB ↔ навигационная рельса, body с сохранением состояния вкладок, 2 destination (Chats/Settings), без отдельного экрана профиля. Живая оболочка — `TabBarShell` с рукописной рельсой `AppNavigationRailWidget`; Material'овский `NavigationRail` остался только в незамонтированном скелете `AppShell` (Feature-001). Платформенные ветки — через `PlatformUtils` (`isIOS`/`isAndroid`/`isWindows`/`isMacOS`/`isLinux`); десктоп-специфика (push/deep-links/secure-storage) вводится no-op/disabled-заглушкой с первым десктоп-потребителем подсистемы, не раньше.
 - **Унифицированный envelope ответа** — бэкенд возвращает единый конверт, на data-слое это `ResponseEntity<T>` + рукописный реестр `EntityConverter<E>`. Реальная форма — конверт контракта v0: `ResponseEntity{success, ErrorWireEntity? error, T? data}`, где `error = {code, message}` (§2.1); репозиторий разворачивает её через `BaseRepositoryHelper.unwrapEnvelope`. Новая entity, достижимая через конверт, должна быть добавлена в **обе** цепочки `EntityConverter` (`fromJson`/`toJson`), иначе — `ArgumentError`.
-- **Компиляционная изоляция флейворов** — `AppFlavorType{prod, stage}` + `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev`. Никакого рантайм-ветвления по флейвору. Секреты через SOPS+age+mise; версии — CalVer + сдвинутая эпоха (`YY.M.D+EPOCH`). См. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md).
+- **Компиляционная изоляция флейворов** — `AppFlavorType{prod, stage}` + `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev`. Флейвор несёт только `app.flavor`: адреса сервера в сборке нет, адрес и ключ сервера приходят ссылкой спаривания. Никакого рантайм-ветвления по флейвору. Секреты через SOPS+age+mise; версии — CalVer + сдвинутая эпоха (`YY.M.D+EPOCH`). См. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md).
 
 ---
 
@@ -414,6 +424,6 @@ lib/presentation/pages/<page>_page/
 - [ ] Вы понимаете, что это **один пакет** `nox_app` с одним `pubspec.yaml` и одним `build_runner`, а слои (`presentation`, `domain`, `data`, `di`, `general`, `design`, `resource`) — это **папки** в `lib/`, а не отдельные pub-пакеты.
 - [ ] Вы можете сформулировать одностороннее правило зависимостей (`presentation → domain ← data`, `domain` не импортирует ничего, кроме `general/`) и понимаете, почему **цикла `domain ⇄ data` здесь нет** (в отличие от трёхпакетного варианта из исходников).
 - [ ] Вы можете провести путь чтения (UI → BLoC → контракт → impl → DAO/API → mapper → `RepositoryResult` → Freezed-состояние) и записи (UI → BLoC → impl `execute<T>` → DAO-транзакция → результат), и знаете, как `execute<T>()` сводит ошибки к `RepositoryException` (уже смапленный `BaseRepositoryException` — насквозь, `SocketUnavailableException` → `connection`, `DioException` — по типу/статусу, прочее → `unknown`) — **типизированной иерархии исключений нет**.
-- [ ] Вы знаете carve-out: пользовательские кэшируемые ресурсы идут local-first (DAO + `BehaviorSubject`), **постраничные серверные списки читаются страницами через репозиторий (`PagingState`)** — причём список чатов при этом всё равно кэшируется в Sembast (Feature 013), — а чисто **network-only** остаются замороженный Item-слайс и одноразовые команды.
+- [ ] Вы знаете carve-out: пользовательские кэшируемые ресурсы идут local-first (DAO; `watch*` — сигнал изменения, данные — `get*`), **постраничные серверные списки читаются страницами через репозиторий (`PagingState`)** — причём список чатов при этом всё равно кэшируется в Sembast (Feature 013), — а чисто **network-only** остаются замороженный Item-слайс и одноразовые команды.
 - [ ] Вы знаете ключевые принципы: `RepositoryResult` (success XOR error), `PageMetadata{hasMore, nextPage}` (никакого `total` на проводе), entity на базовых типах vs богатые модели, codegen-never-edited, **Freezed-BLoC** с bare-именами подсостояний (а не рукописный Equatable-sealed), пять целевых платформ с адаптивной оболочкой (нижний бар ↔ рельса на 840dp).
 - [ ] Вы знаете, что нейтральный рабочий пример — **Item**, первая реальная фича — **список чатов**, а следующий документ к прочтению — [01-stack-and-tooling.md](01-stack-and-tooling.md).

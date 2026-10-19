@@ -18,7 +18,7 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
-- A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
+- A row shows the OS family and two moments (paired, last seen). The family is named in the app's own words, the same the pair-request dialog (04 · Pair request) uses - “iPhone or iPad” · “Android” · “Mac” · “Windows” · “Linux”, or “Unknown system” - never text from the wire. The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
 - `Revoke` opens a confirm dialog. Revoking the current device is a logout, and asks the logout question word for word - but the dialog is this screen's own: the confirm button stays `Revoke`, not the `Log out` that 7.1's logout dialog carries. You press what you asked for and read what it will actually do.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
 - A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads; nobody has to leave the section and come back to find out.
@@ -41,10 +41,12 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 ## Copy (EN)
 - Title: Devices
 - This device · Revoke · Add a device · Copy · Hide
+- OS family: iPhone or iPad · Android · Mac · Windows · Linux · Unknown system
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - (current device) Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.
 - Scan this from the other device. The link works for 10 minutes.
 - This link works only on your home network.
+- Invite QR (screen-reader label): Pairing link QR code
 - Copy
 - Hide
 
