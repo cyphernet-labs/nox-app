@@ -36,7 +36,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
-      - name: Format check (lib + test only; docs/ and generated excluded)
-        run: dart format -l 140 --set-exit-if-changed $(git ls-files lib test | grep '\.dart$')
+      - name: Format check (lib, test and packages/nox_tor, as make format; docs/ and generated excluded)
+        run: dart format -l 140 --set-exit-if-changed $(git ls-files lib test packages/nox_tor/lib packages/nox_tor/test packages/nox_tor/hook | grep '\.dart$')
       - run: flutter analyze
-      - run: flutter test --exclude-tags golden   # golden tests are local-only (M1/macOS), excluded from CI
+      - run: flutter test --exclude-tags "golden || live"   # golden tests are local-only (M1/macOS); live probes need a running noxd
