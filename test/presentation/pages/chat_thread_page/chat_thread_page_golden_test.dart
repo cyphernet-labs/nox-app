@@ -230,20 +230,20 @@ void main() {
       // The remaining debug scenarios (P10): offline (a NOTICE strip over the thread),
       // empty (no messages) and fatal (full-screen error). Each seeded via initialScenario
       // and locked on both the mobile (360) and desktop (`_wide` pane) surfaces.
-      // pinRefused (036) joins them: the wrong machine answered, which is a
+      // serverMismatch joins them: the wrong machine answered, which is a
       // different glyph, a different sentence and an action `offline` has not
       // got - so its own baseline on both surfaces.
       // turnOnTor (phase 045): a failed round with a known cause, which the
       // strip says in place of «No connection» - its own baseline on both.
       for (final scenario in const [
         ChatThreadScenario.offline,
-        ChatThreadScenario.pinRefused,
+        ChatThreadScenario.serverMismatch,
         ChatThreadScenario.turnOnTor,
         ChatThreadScenario.empty,
         ChatThreadScenario.fatal,
       ]) {
         final name = switch (scenario) {
-          ChatThreadScenario.pinRefused => 'pin_refused',
+          ChatThreadScenario.serverMismatch => 'server_mismatch',
           ChatThreadScenario.turnOnTor => 'turn_on_tor',
           _ => scenario.name,
         };

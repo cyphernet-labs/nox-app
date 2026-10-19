@@ -22,8 +22,8 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -120,7 +120,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
-  bool _isServerMismatch() => _status.isServerMismatch || _phase.isServerMismatch || _scenario == ChatThreadScenario.pinRefused;
+  bool _isServerMismatch() => _status.isServerMismatch || _phase.isServerMismatch || _scenario == ChatThreadScenario.serverMismatch;
 
   /// The debug scenarios that play a channel that is down.
   bool get _scenarioOffline => _scenario == ChatThreadScenario.offline || _scenario == ChatThreadScenario.turnOnTor;
@@ -131,7 +131,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
   /// Why, when that is known (phase 045) - or the debug scenarios' stand-ins.
   ConnectionProblem? _problem() {
-    if (_scenario == ChatThreadScenario.pinRefused) return ConnectionProblem.otherServer;
+    if (_scenario == ChatThreadScenario.serverMismatch) return ConnectionProblem.otherServer;
     if (_scenario == ChatThreadScenario.turnOnTor) return ConnectionProblem.turnOnTor;
     return _isOffline() || _isServerMismatch() ? _status.problem : null;
   }

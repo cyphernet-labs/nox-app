@@ -1,4 +1,5 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/mapper/device/device_platform_wire.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
@@ -54,7 +55,7 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
           devices.add(
             DeviceModel(
               deviceKey: key,
-              platform: entry['platform'] as String? ?? '',
+              platform: DevicePlatformWire.parse(entry['platform']),
               pairedAt: _seconds(entry['created_at']),
               lastSeenAt: _seconds(entry['last_seen_at']),
               isCurrent: own != null && key == own,

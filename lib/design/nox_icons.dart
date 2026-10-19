@@ -195,7 +195,7 @@ abstract final class NoxIcons {
   /// Other / unknown (`insert_drive_file` substitute — stock Flutter still `Icons.insert_drive_file`).
   static SvgGenImage get draft => Assets.svg.icons.draft;
 
-  // --- emptyStates — fallback glyphs until the 3 illustrations ship (see Assets.svg.illustrations) ---
+  // --- emptyStates — the glyph at the centre of each empty state's art (AppEmptyContentWidget) ---
 
   /// 5.2 no messages.
   static SvgGenImage get chatBubble => Assets.svg.icons.chatBubble;

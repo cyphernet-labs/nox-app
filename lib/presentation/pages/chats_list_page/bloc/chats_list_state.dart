@@ -9,7 +9,7 @@ part of 'chats_list_bloc.dart';
 /// (Constitution VI).
 /// `turnOnTor` stands in for a failed round with a known cause (phase 045):
 /// the strip says why instead of «No connection».
-enum ChatsListScenario { normal, empty, inlineError, fatal, offline, pinRefused, unread, torObsolete, turnOnTor }
+enum ChatsListScenario { normal, empty, inlineError, fatal, offline, serverMismatch, unread, torObsolete, turnOnTor }
 
 @freezed
 sealed class ChatsListState with _$ChatsListState {

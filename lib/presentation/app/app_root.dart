@@ -1,7 +1,9 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:nox_app/design/app_overlay_style_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
@@ -236,9 +238,14 @@ class _AppRootState extends State<AppRoot> {
                       ),
                       // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
                       // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
-                      builder: (context, child) => MediaQuery(
-                        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                        child: child ?? const SizedBox.shrink(),
+                      // The status bar follows the theme on every screen (blueprint 06 §6.1); an
+                      // AppBar and the brand-fixed splash set their own over it.
+                      builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+                        value: AppOverlayStyleTokens.of(Theme.of(context).colorScheme),
+                        child: MediaQuery(
+                          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                          child: child ?? const SizedBox.shrink(),
+                        ),
                       ),
                       home: const SplashPage(),
                     ),

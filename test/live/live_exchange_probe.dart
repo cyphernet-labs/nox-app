@@ -92,10 +92,7 @@ void main() {
     addTearDown(socket.stop);
     await target.pair(socket);
 
-    await socket.start(
-      url: target.socketUrl,
-      credentialsProvider: () async => const GreetingCredentials(label: 'AppProbe'),
-    );
+    await socket.start(url: target.socketUrl, credentialsProvider: () async => const GreetingCredentials());
     await Future<void>.delayed(const Duration(seconds: 2));
     expect(socket.identity, isNotNull, reason: 'the greeting must have been answered');
     expect(socket.limits, isNotNull);

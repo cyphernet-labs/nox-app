@@ -1,7 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
-import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
@@ -15,21 +14,19 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
   AppConfig? _config;
 
-  /// In-memory handshake limits: contract defaults until the transport (027)
-  /// stores a live hello. In-memory is deliberate - a fresh handshake arrives
-  /// on every connection, there is nothing durable to persist.
+  /// In-memory handshake limits: contract defaults until a greeting stores the
+  /// server's. In-memory is deliberate - a fresh greeting arrives on every
+  /// connection, there is nothing durable to persist.
   ServerLimits _limits = ServerLimits.contractDefaults;
 
-  /// Secure-storage key for the (future) auth token. No writer yet — a real sign-in
-  /// will persist it (TBD); read-only plumbing this phase.
+  /// Secure-storage key of a request-level auth token. Nothing writes one: the
+  /// channel check (contract §1) authenticates every connection, so the token
+  /// stays read-only plumbing for the `Authorization` header.
   static const String _kAuthIdToken = 'auth_id_token';
 
   @override
   Future<void> initialize({required AppFlavorType flavorType}) async {
-    // The address comes from the build define, so a build with no server
-    // configured keeps working on mocks rather than failing to start. The token
-    // bootstrap still waits on stage-2 auth — stage 1 has no authentication.
-    _config = AppConfig(flavor: flavorType, apiUrl: AppFlavor.getApiUrl());
+    _config = AppConfig(flavor: flavorType);
   }
 
   @override

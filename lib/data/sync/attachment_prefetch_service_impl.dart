@@ -8,6 +8,7 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 
@@ -29,9 +30,9 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// at once. A broken link does not end a fetch: the download service keeps at
 /// it and goes on from the bytes already here (phase 043), and it records the
 /// path itself.
-@LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
-class AttachmentPrefetchService {
-  AttachmentPrefetchService(this._downloads, this._phase, this._transfers);
+@LazySingleton(as: AttachmentPrefetchService, env: [Environment.dev, Environment.prod, Environment.test])
+class AttachmentPrefetchServiceImpl implements AttachmentPrefetchService {
+  AttachmentPrefetchServiceImpl(this._downloads, this._phase, this._transfers);
 
   final AttachmentDownloadService _downloads;
   final SessionPhaseService _phase;
@@ -73,6 +74,7 @@ class AttachmentPrefetchService {
   /// the channel has just come back, which is the moment that deserves one.
   ///
   /// The future completes when the queue has run dry.
+  @override
   Future<void> prefetch(List<MessageModel> messages, {bool retryNow = false}) {
     // The second downloader, and the one easiest to forget: it goes out over
     // Dio on its own schedule, without passing through the socket at all. A
@@ -146,6 +148,7 @@ class AttachmentPrefetchService {
   /// starts with no memory of this one's files - and the queue empties BEFORE
   /// the downloads are stopped, or the worker would take the next picture of
   /// the old world the moment the current one ends.
+  @override
   void reset() {
     _generation++;
     _queue.clear();

@@ -46,6 +46,19 @@ void main() {
     expect(LocaleController.instance.language.value, AppLanguage.english);
   });
 
+  testWidgets('a choice that could not be saved goes back, and the screen says so', (tester) async {
+    LocaleController.debugWrite = (_) async => false;
+    addTearDown(() => LocaleController.debugWrite = null);
+    await pumpApp(tester, const LanguagePage());
+
+    await tester.tap(find.text(l10nEn.languageEnglish));
+    await tester.pumpAndSettle();
+
+    expect(_selectedLabel(tester), l10nEn.languageSystem, reason: 'the selection returns to the saved choice');
+    expect(LocaleController.instance.language.value, AppLanguage.system, reason: 'and so does the app');
+    expect(find.text(l10nEn.settingsSaveError), findsOneWidget);
+  });
+
   testWidgets('every option carries a leading thumbnail, System included', (tester) async {
     // The flags used to be 40dp circles in a list row, clipped by the row they sat
     // in. They are tiles now, in the geometry Appearance 7.3 uses - and System has

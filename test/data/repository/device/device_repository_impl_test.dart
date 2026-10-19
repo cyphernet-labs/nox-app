@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -57,7 +58,7 @@ void main() {
     final devices = (await repository.getDevices()).data!;
 
     expect(devices.length, 2);
-    expect(devices.first.platform, 'ios');
+    expect(devices.first.platform, DevicePlatform.ios);
     expect(devices.first.isCurrent, isTrue, reason: 'derived from this device own key, not sent by the server');
     expect(devices.last.isCurrent, isFalse);
     // Seconds, not milliseconds: reading these wrong puts every device in 1970

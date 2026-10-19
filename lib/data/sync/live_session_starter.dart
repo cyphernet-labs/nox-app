@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -88,9 +88,9 @@ class LiveSessionStarter {
       return;
     }
     final apiUrl = paired.data;
-    // No build-time fallback. `AppConfig.apiUrl` names a machine nobody ever
-    // presented, so there is no key a connection to it could be checked
-    // against. An install that has not paired simply does not connect.
+    // The address comes from the pairing link alone: an address from the build
+    // would name a machine nobody presented, with no key a connection to it
+    // could be checked against. An install that has not paired does not connect.
     if (apiUrl == null || apiUrl.isEmpty) return;
 
     final storedKey = await _session.serverKey();
@@ -202,9 +202,8 @@ class LiveSessionStarter {
   /// What this connection states about who is greeting (contract §3).
   ///
   /// Read fresh at every greeting, not captured once: a sign-in or a logout in
-  /// the same process must greet as the right person. The label is stated only
-  /// when this device has just renamed — repeating a cached name on every
-  /// greeting would push it back over a rename made from another device.
+  /// the same process must greet as the right person. No name rides along - a
+  /// name travels only in `identity.setLabel`.
   Future<GreetingCredentials?> _credentials() async {
     final session = await _session.readSession();
     if (!session.hasData) {

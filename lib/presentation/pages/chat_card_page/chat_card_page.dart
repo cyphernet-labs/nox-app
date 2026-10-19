@@ -279,7 +279,12 @@ class _ChatCardBodyState extends State<ChatCardBody> {
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
           child: Row(
             children: [
-              AppRingedAvatarWidget(name: chat.name, size: AppDimensionTokens.size.avatarLg),
+              // The same row on both widths; the side sheet (desktop corpus) draws the
+              // avatar at 72, the page (mobile corpus) at 56.
+              AppRingedAvatarWidget(
+                name: chat.name,
+                size: widget.isDrawer ? AppDimensionTokens.size.avatarXl : AppDimensionTokens.size.avatarLg,
+              ),
               SizedBox(width: AppSpacingTokens.s16),
               Expanded(
                 child: Text(

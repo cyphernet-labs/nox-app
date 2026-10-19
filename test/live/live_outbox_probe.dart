@@ -16,7 +16,7 @@ import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 
 import 'live_target.dart';
 import 'package:nox_app/data/repository/chat/outbox_repository_impl.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/outbox_service_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -152,10 +152,7 @@ void main() {
     final socket = NoxSocketClient(WebSocketChannelFactory(target.client()), _MemoryCursor());
     addTearDown(socket.stop);
     await target.pair(socket);
-    await socket.start(
-      url: target.socketUrl,
-      credentialsProvider: () async => const GreetingCredentials(label: 'OutboxProbe'),
-    );
+    await socket.start(url: target.socketUrl, credentialsProvider: () async => const GreetingCredentials());
     await Future<void>.delayed(const Duration(seconds: 2));
     expect(socket.identity, isNotNull, reason: 'the greeting must have been answered');
 
@@ -174,7 +171,7 @@ void main() {
     final firstRun = OutboxRepositoryImpl(dao, mapper, OutboxCopies(getIt<DeviceVault>())) as OutboxRepository;
     final offlinePhase = _Phase();
     final sender = _LiveSend(RealMessageRemoteDataSource(socket));
-    final firstDrain = OutboxService(
+    final firstDrain = OutboxServiceImpl(
       firstRun,
       sender,
       offlinePhase,
@@ -196,7 +193,7 @@ void main() {
 
     final livePhase = _Phase()..phaseValue = SessionPhase.live;
     final secondSender = _LiveSend(RealMessageRemoteDataSource(socket));
-    final secondDrain = OutboxService(
+    final secondDrain = OutboxServiceImpl(
       secondRun,
       secondSender,
       livePhase,

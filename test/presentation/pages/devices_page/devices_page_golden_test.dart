@@ -4,6 +4,7 @@ library;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
+import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_page.dart';
 
@@ -17,14 +18,14 @@ DevicesState _state() => DevicesState(
   devices: [
     DeviceModel(
       deviceKey: 'k-phone',
-      platform: 'ios',
+      platform: DevicePlatform.ios,
       pairedAt: DateTime.utc(2026, 6, 1),
       lastSeenAt: DateTime.utc(2026, 6, 15),
       isCurrent: true,
     ),
     DeviceModel(
       deviceKey: 'k-desktop',
-      platform: 'macos',
+      platform: DevicePlatform.macos,
       pairedAt: DateTime.utc(2026, 5, 10),
       lastSeenAt: DateTime.utc(2026, 6, 14),
       isCurrent: false,

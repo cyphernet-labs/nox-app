@@ -7,6 +7,18 @@ import java.io.File
 import java.security.KeyStore
 
 class MainActivity : FlutterActivity() {
+    /**
+     * The system back on the last screen sends the app to the background rather
+     * than finishing it - the "minimize" of the spec (4.1 on the Chats tab, the
+     * blocking error 3.1), and what Android itself does for a launcher activity
+     * since 12. FlutterActivity would finish(): the engine torn down, the next
+     * tap a cold start through the splash with the connection dialled again.
+     */
+    override fun popSystemNavigator(): Boolean {
+        moveTaskToBack(true)
+        return true
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nox/secure_store").setMethodCallHandler { call, result ->

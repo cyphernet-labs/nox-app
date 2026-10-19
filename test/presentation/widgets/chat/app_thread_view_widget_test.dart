@@ -105,7 +105,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, AppThreadViewWidget(chat: _sampleChat(), demo: true));
 
-      await _selectScenario(tester, 'pinRefused');
+      await _selectScenario(tester, 'serverMismatch');
 
       expect(find.text(l10nEn.connectionProblemOtherServer), findsOneWidget);
     });

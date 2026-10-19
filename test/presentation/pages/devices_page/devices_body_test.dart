@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
+import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_page.dart';
@@ -26,14 +27,14 @@ DevicesState _state() => DevicesState(
   devices: [
     DeviceModel(
       deviceKey: 'k-phone',
-      platform: 'ios',
+      platform: DevicePlatform.ios,
       pairedAt: DateTime.utc(2026, 6, 1),
       lastSeenAt: DateTime.utc(2026, 6, 15),
       isCurrent: true,
     ),
     DeviceModel(
       deviceKey: 'k-desktop',
-      platform: 'macos',
+      platform: DevicePlatform.macos,
       pairedAt: DateTime.utc(2026, 5, 10),
       lastSeenAt: DateTime.utc(2026, 6, 14),
       isCurrent: false,
@@ -98,7 +99,10 @@ void main() {
     // First in the list, which is the other half of how the current one is told
     // apart now that it shares a card with the rest.
     final tiles = tester.widgetList<ListTile>(find.byType(ListTile)).toList();
-    expect(find.descendant(of: find.byWidget(tiles.first), matching: find.textContaining(l10nEn.devicesCurrent)), findsOneWidget);
+    expect(
+      find.descendant(of: find.byWidget(tiles.first), matching: find.textContaining(l10nEn.devicesCurrent.replaceAll(' ', '\u00A0'))),
+      findsOneWidget,
+    );
   });
 
   testWidgets('revoking THIS device asks the logout question, not the revoke one', (tester) async {

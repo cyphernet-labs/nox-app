@@ -65,12 +65,9 @@ void main() {
   /// Connects a device that ALREADY belongs to this world: a stored cursor
   /// without a stored journal is the upgrade case, which tears the session down
   /// on purpose, so tests about replay have to say which world they are in.
-  Future<FakeSocket> connect({int cursor = 0, String? label}) async {
+  Future<FakeSocket> connect({int cursor = 0}) async {
     if (await sync.getCursor() > 0) await sync.setJournal('j_test');
-    await client.start(
-      url: url,
-      credentialsProvider: () async => GreetingCredentials(label: label),
-    );
+    await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
     final socket = factory.latest;
     socket.pushGreeting();
     // The client answers the greeting only after an async cursor read, so wait
@@ -165,7 +162,7 @@ void main() {
       expect(data.containsKey('device_key'), isFalse);
       expect(data.containsKey('signature'), isFalse);
       expect(data.containsKey('login_ref'), isFalse);
-      expect(data.containsKey('label'), isFalse, reason: 'stated only after a rename');
+      expect(data.containsKey('label'), isFalse, reason: 'a name travels only in identity.setLabel');
     });
 
     test('a greeting that still carries a challenge is answered all the same, and the challenge ignored', () async {
@@ -221,7 +218,7 @@ void main() {
     });
 
     test('what the greeting declared dies with the connection that declared it', () async {
-      final socket = await connect(cursor: 0, label: 'Anna');
+      final socket = await connect(cursor: 0);
       expect(client.identity, isNotNull);
       expect(client.limits, isNotNull);
 
@@ -325,10 +322,9 @@ void main() {
       await waitUntil(() async => await sync.getJournal() == 'j_two', reason: 'the new journal replaces the stale one');
     });
 
-    test('the device offers its stored label and takes the identity the server returns', () async {
-      final socket = await connect(cursor: 3, label: 'Anna');
+    test('the device takes the identity the server returns', () async {
+      await connect(cursor: 3);
 
-      expect((socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>)['label'], 'Anna');
       expect(client.identity?.label, 'Anna');
       expect(client.limits?.maxMessageBytes, 65536);
     });
@@ -471,10 +467,7 @@ void main() {
   // support flag for `device.setAccessKey` (contract §2.1, §3, §8A).
   group('a server from phase 039', () {
     Future<FakeSocket> greetedWith(Map<String, dynamic>? addresses) async {
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(label: 'Anna'),
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
       final socket = factory.latest;
       socket.pushGreeting();
       await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');

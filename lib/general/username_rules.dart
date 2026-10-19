@@ -7,8 +7,8 @@
 /// used to live here compared against four hardcoded strings, so those four
 /// names were refused by a rule nothing else in the system observed.
 ///
-/// The design spec still states uniqueness as a product rule; that divergence
-/// is open and resolves with stage-2 pairing, where the server assigns labels.
+/// On a server of one person there is nobody to collide with; naming people
+/// across servers belongs to the relay (Q18).
 abstract final class UsernameRules {
   static final RegExp charset = RegExp(r'^[A-Za-z0-9._-]+$');
 

@@ -7,7 +7,7 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/data/service/phase_connection_status_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -27,7 +27,6 @@ import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
-import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
@@ -984,13 +983,14 @@ class _SlowServerMessages implements MessageRepository {
 }
 
 /// Records what the thread asks to have fetched, and fetches nothing.
-class _RecordingPrefetch extends AttachmentPrefetchService {
-  _RecordingPrefetch() : super(getIt<AttachmentDownloadService>(), getIt<SessionPhaseService>(), getIt<AttachmentTransferService>());
-
+class _RecordingPrefetch implements AttachmentPrefetchService {
   final List<List<MessageModel>> calls = <List<MessageModel>>[];
 
   @override
   Future<void> prefetch(List<MessageModel> messages, {bool retryNow = false}) async => calls.add(messages);
+
+  @override
+  void reset() {}
 }
 
 /// A session phase this test drives by hand, plus a count of how many times the

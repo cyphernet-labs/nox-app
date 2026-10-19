@@ -14,11 +14,10 @@ void main() {
     expect(() => build().config, throwsStateError);
   });
 
-  test('exposes the stage flavor and a null (TBD) apiUrl after initializing', () async {
+  test('exposes the stage flavor after initializing with stage', () async {
     final repo = build();
     await repo.initialize(flavorType: AppFlavorType.stage);
     expect(repo.config.flavor, AppFlavorType.stage);
-    expect(repo.config.apiUrl, isNull); // TBD placeholder — no real requests this phase
   });
 
   test('exposes the prod flavor after initializing with prod', () async {

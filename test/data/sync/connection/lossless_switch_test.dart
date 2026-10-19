@@ -21,7 +21,7 @@ import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/data/service/session_phase_service_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/outbox_service_impl.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
@@ -201,7 +201,7 @@ void main() {
   late _Network network;
   late ConnectionPathSelector selector;
   late SyncService sync;
-  late OutboxService outbox;
+  late OutboxServiceImpl outbox;
 
   Future<void> waitUntil(FutureOr<bool> Function() done, {required String reason}) async {
     for (var i = 0; i < 1000; i++) {
@@ -263,7 +263,7 @@ void main() {
       getIt<ChatDao>(),
       getIt<SessionRepository>(),
     );
-    outbox = OutboxService(
+    outbox = OutboxServiceImpl(
       getIt<OutboxRepository>(),
       messages,
       SocketSessionPhaseService(socket),

@@ -3,14 +3,18 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 
-/// US3 / FR-006..FR-007 / SC-002 — brand + illustrations bundled, no broken paths,
-/// AppImagesTokens removed.
+/// US3 / FR-006..FR-007 / SC-002 — the brand logo bundled, no broken paths,
+/// AppImagesTokens removed. Empty states draw no illustration: their art is the
+/// composition of AppEmptyContentWidget, so none is bundled.
 void main() {
-  test('logo and the 3 empty-state illustrations resolve to existing assets', () {
+  test('the logo resolves to an existing asset', () {
     expect(File(Assets.png.logo.path).existsSync(), isTrue);
-    expect(File(Assets.svg.illustrations.emptyChats.path).existsSync(), isTrue);
-    expect(File(Assets.svg.illustrations.emptyMessages.path).existsSync(), isTrue);
-    expect(File(Assets.svg.illustrations.emptyFiles.path).existsSync(), isTrue);
+  });
+
+  test('no empty-state illustration is bundled', () {
+    // What ships is what pubspec declares; a folder left on a disk does not.
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    expect(pubspec.contains('assets/svg/illustrations'), isFalse);
   });
 
   test('reference-only logo is not bundled and AppImagesTokens is removed', () {

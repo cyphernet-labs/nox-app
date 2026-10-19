@@ -4,7 +4,7 @@ part of 'chat_thread_bloc.dart';
 /// states on stub data (FR-005 / FR-029). `sendError` flips the next send to `error`;
 /// `offline` keeps sends queued as `pending`; `turnOnTor` is offline with a known
 /// cause, which the strip says in place of «No connection» (phase 045).
-enum ChatThreadScenario { normal, empty, offline, pinRefused, fatal, sendError, turnOnTor }
+enum ChatThreadScenario { normal, empty, offline, serverMismatch, fatal, sendError, turnOnTor }
 
 @freezed
 sealed class ChatThreadState with _$ChatThreadState {

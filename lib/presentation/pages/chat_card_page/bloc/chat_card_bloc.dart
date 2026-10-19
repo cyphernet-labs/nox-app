@@ -61,7 +61,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
 
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
-  bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatCardScenario.pinRefused;
+  bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatCardScenario.serverMismatch;
 
   /// «No connection» only once a whole round of path finding found nothing.
   bool _isOffline() =>
@@ -70,7 +70,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
 
   /// Why, when that is known (phase 045) - or the debug scenarios' stand-ins.
   ConnectionProblem? _problem() {
-    if (_scenario == ChatCardScenario.pinRefused) return ConnectionProblem.otherServer;
+    if (_scenario == ChatCardScenario.serverMismatch) return ConnectionProblem.otherServer;
     if (_scenario == ChatCardScenario.turnOnTor) return ConnectionProblem.turnOnTor;
     return _isOffline() || _isServerMismatch() ? _status.problem : null;
   }

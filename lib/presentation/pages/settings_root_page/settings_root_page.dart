@@ -139,21 +139,23 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   Future<void> _logout() async {
-    final confirmed = await AppLogoutDialogWidget.show(context);
-    if (confirmed != true || !mounted) return;
-    if (widget.demo) {
-      // Gallery preview: hop to the standalone (demo) Splash without touching real state.
-      Navigator.of(context).push(SplashPage.routeDemo());
-    } else {
-      // Real flow: full wipe + re-derive app state; the spine returns to Login. A
-      // failed wipe must NOT present as a successful logout (Constitution I: logout
-      // fully wipes) — surface it instead of silently leaving the identity on disk.
-      final result = await authRepository.logout();
-      if (!mounted) return;
-      result.match(
-        onData: (_) {},
-        onError: (_) => showAppSnackBar(context, text: context.l10n.logoutError, error: true),
-      );
+    // Real flow: the dialog runs the logout and holds its spinner until the wipe is
+    // done; the spine then returns to the pairing screen. A failed wipe must NOT
+    // present as a successful logout (Constitution I: logout fully wipes) — it is
+    // surfaced instead of silently leaving the identity on disk. The gallery runs
+    // nothing and hops to the standalone (demo) Splash.
+    final outcome = await AppLogoutDialogWidget.show(
+      context,
+      logout: widget.demo ? null : () async => (await authRepository.logout()).match<bool>(onData: (_) => true, onError: (_) => false),
+    );
+    if (!mounted) return;
+    switch (outcome) {
+      case LogoutDialogResult.done when widget.demo:
+        Navigator.of(context).push(SplashPage.routeDemo());
+      case LogoutDialogResult.failed:
+        showAppSnackBar(context, text: context.l10n.logoutError, error: true);
+      default:
+        break;
     }
   }
 

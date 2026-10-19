@@ -6,7 +6,7 @@ enum FilesViewMode { list, grid }
 /// Debug-selectable card scenario (5.4, dev-only) — reproduces server-dependent
 /// states on stub data (FR-005 / FR-062). `turnOnTor` is offline with a known
 /// cause, which the strip says in place of «No connection» (phase 045).
-enum ChatCardScenario { normal, empty, offline, pinRefused, fatal, turnOnTor }
+enum ChatCardScenario { normal, empty, offline, serverMismatch, fatal, turnOnTor }
 
 @freezed
 sealed class ChatCardState with _$ChatCardState {

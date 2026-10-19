@@ -9,13 +9,13 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/outbox_copies.dart';
 import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -448,9 +448,9 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // us, and asking it to revoke a key it does not know would be noise.
         // Bounded: a person who chose to sign out must sign out, and the local
         // wipe is what actually protects them. A server that does not answer
-        // gets a few seconds, not the full command timeout with the progress
-        // dialog already gone - the orphaned key is revoked from another
-        // device, which is the accepted price (§8A).
+        // gets a few seconds, not the full command timeout, while the
+        // confirmation dialog holds its spinner - the orphaned key is revoked
+        // from another device, which is the accepted price (§8A).
         if (!forced) {
           await _revokeOwnKey().timeout(
             const Duration(seconds: 3),
