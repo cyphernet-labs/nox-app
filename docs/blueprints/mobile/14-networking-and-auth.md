@@ -1,8 +1,8 @@
 # 14 — Сеть и авторизация
 
-> **Назначение:** зафиксировать сетевой слой приложения NOX — как поднимается HTTP-клиент (`ApiClient` на Dio), откуда он берёт `baseUrl` и токен (`AppConfigRepository`), и как это стыкуется с REST-слоем из [04-data-layer.md](04-data-layer.md) (`RequestBuilder` → API-класс → `ResponseEntity<T>`). Базовая часть (§1–3) — **канон-паттерн блюпринта**: один Dio с одним auth-`InterceptorsWrapper`, читающим `getUserAuthIdToken()` → `Bearer`. У NOX **один** бэкенд — Go-сервер `noxd` (`client_backend/`, встроенный SQLite), второго хоста нет. Основной транспорт контракта v0 — **WebSocket-конверт**; клиент конверта построен фазой 026 (`NoxSocketClient`, `lib/data/remote/socket/nox_socket_client.dart`). Каждое соединение — `wss` для команд и каждая передача `https` для байтов — это **канал нативного модуля** `packages/nox_tor` (§6.0): TCP или поток Tor → TLS 1.3 → проверка `POST /auth` → `POST /auth2`, в которой устройство доказывает свой ключ, а сервер — свой, и канал открывается, только если это ключ из ссылки спаривания; ключи и подписи считает RustSecureBox. Центр сертификации и сертификат сервера ничего не решают. Порт — тот, что несёт ссылка; 443 нигде не зашит. До сервера два пути — прямой адрес и встроенный Tor к его onion-сервису; какой из них, решает выбор пути перед каждой попыткой (§6): сначала всегда прямой, Tor — только с включённым `Use Tor`. Чужой ключ на прямом адресе значит «не дома», и выбор идёт дальше. Чужой ключ за onion-адресом — собственная терминальная фаза сессии (`SessionPhase.serverMismatch`), и **не** путь `unauthenticated`: тот заканчивается принудительным выходом с полным стиранием, то есть предъявление чужого ключа стало бы способом стереть данные на всех устройствах человека. Ни один отказ канала к выходу не ведёт. REST остаётся только под blob-обмен (`file.uploadBegin` → `PUT` → `message.send{attachment:{file_id}}`; `file.downloadBegin` → `GET` с `Range`, одноразовые 10-минутные токены; с фазы 043 обе стороны продолжаются после обрыва и не ограничены по времени — §6.3б), поэтому §1–3 описывают именно REST-плечо. **Аутентификацию даёт канал**, а доступ устройство получает спариванием (контракт §8A): заголовков авторизации и токенов контракт v0 не несёт. §4 — размеченный пример авторизации **запросов** (собственная токен-модель: короткий access-JWT + opaque refresh, и подписанные запросы: HMAC-SHA256 + security-заголовки + replay-окно + build-gate) — он даёт **структуру** интерсепторов, а не контракт.
+> **Назначение:** зафиксировать сетевой слой приложения NOX — как поднимается HTTP-клиент (`ApiClient` на Dio), откуда он берёт `baseUrl` и токен (`AppConfigRepository`), и как это стыкуется с REST-слоем из [04-data-layer.md](04-data-layer.md) (`RequestBuilder` → API-класс → `ResponseEntity<T>`). Базовая часть (§1–3) — **канон блюпринта**: один Dio в синглтоне `ApiClient` с одним `AuthInterceptor`, читающим `getUserAuthIdToken()` → `Bearer`, и адрес спаренного сервера из ссылки спаривания — `initBase(address:)`. У NOX **один** бэкенд — Go-сервер `noxd` (`client_backend/`, встроенный SQLite), второго хоста нет. Основной транспорт контракта v0 — **WebSocket-конверт**; клиент конверта построен фазой 026 (`NoxSocketClient`, `lib/data/remote/socket/nox_socket_client.dart`). Каждое соединение — `wss` для команд и каждая передача `https` для байтов — это **канал нативного модуля** `packages/nox_tor` (§6.0): TCP или поток Tor → TLS 1.3 → проверка `POST /auth` → `POST /auth2`, в которой устройство доказывает свой ключ, а сервер — свой, и канал открывается, только если это ключ из ссылки спаривания; ключи и подписи считает RustSecureBox. Центр сертификации и сертификат сервера ничего не решают. Порт — тот, что несёт ссылка; 443 нигде не зашит. До сервера два пути — прямой адрес и встроенный Tor к его onion-сервису; какой из них, решает выбор пути перед каждой попыткой (§6): сначала всегда прямой, Tor — только с включённым `Use Tor`. Чужой ключ на прямом адресе значит «не дома», и выбор идёт дальше. Чужой ключ за onion-адресом — собственная терминальная фаза сессии (`SessionPhase.serverMismatch`), и **не** путь `unauthenticated`: тот заканчивается принудительным выходом с полным стиранием, то есть предъявление чужого ключа стало бы способом стереть данные на всех устройствах человека. Ни один отказ канала к выходу не ведёт. REST остаётся только под blob-обмен (`file.uploadBegin` → `PUT` → `message.send{attachment:{file_id}}`; `file.downloadBegin` → `GET` с `Range`, одноразовые 10-минутные токены; с фазы 043 обе стороны продолжаются после обрыва и не ограничены по времени — §6.3б), поэтому §1–3 описывают именно REST-плечо. **Аутентификацию даёт канал**, а доступ устройство получает спариванием (контракт §8A): заголовков авторизации и токенов контракт v0 не несёт. §4 — размеченный пример авторизации **запросов** (собственная токен-модель: короткий access-JWT + opaque refresh, и подписанные запросы: HMAC-SHA256 + security-заголовки + replay-окно + build-gate) — он даёт **структуру** интерсепторов, а не контракт.
 > **Когда читать:** перед поднятием `lib/data/remote/` (Dio-клиент, auth-interceptor), перед подключением `AppConfigRepository` к `ApiClient` и `main.dart`, и обязательно — перед любой правкой канала, спаривания и пути до сервера (§6) и перед реализацией auth-флоу (login / refresh / logout) клиента.
-> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`), [04-data-layer.md](04-data-layer.md) (`ApiClient`/`BaseApiRepository`/`RequestBuilder`/`ResponseEntity`/`EntityConverter`, `BaseRepositoryHelper`), [02-dependency-injection.md](02-dependency-injection.md) (`AppFlavorType`, `AppConfig`, `configureDependencies`, bootstrap `main.dart`), [13-deep-links.md](13-deep-links.md) (входные web-deep-link ссылки — какие пути могут обходить подпись; deep links в приложении не реализованы, конкретный набор таких путей — открытый вопрос), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`dio`, `flutter_secure_storage`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`app.apiUrl` в закоммиченном `config/stage.json`, который соединение не читает; `apiSignatureKey` — пример/TBD-поле схемы §4).
+> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`), [04-data-layer.md](04-data-layer.md) (`ApiClient`/`BaseApiRepository`/`RequestBuilder`/`ResponseEntity`/`EntityConverter`, `BaseRepositoryHelper`), [02-dependency-injection.md](02-dependency-injection.md) (`AppFlavorType`, `AppConfig`, `configureDependencies`, bootstrap `main.dart`), [13-deep-links.md](13-deep-links.md) (входные web-deep-link ссылки — какие пути могут обходить подпись; deep links в приложении не реализованы, конкретный набор таких путей — открытый вопрос), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`dio`, `flutter_secure_storage`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейвор несёт только `app.flavor`, адреса сервера в сборке нет; `apiSignatureKey` — пример/TBD-поле схемы §4).
 
 ---
 
@@ -10,7 +10,7 @@
 
 Этот документ — единственный дом сетевого контракта клиента. Он отвечает на три вопроса:
 
-1. **Как поднят HTTP-клиент** — `ApiClient.initBase()` (Dio + interceptor'ы), `BaseApiRepository` как база API-классов. §1.
+1. **Как поднят HTTP-клиент** — `ApiClient` (Dio + `AuthInterceptor`) с `initBase(address:)`, `BaseApiRepository` как база API-классов. §1.
 2. **Откуда адрес и токен** — адрес соединения приходит ссылкой спаривания и попадает в `ApiClient.initBase(address:)` от `LiveSessionStarter`; `AppConfigRepository` держит флейвор-резолвед конфиг, источник bearer-токена (без писателя) и лимиты приветствия. Здесь его контракт фиксируется. §2.
 3. **Как это стыкуется с REST-слоем** — `RequestBuilder` / `RequestBuilderHelper` и envelope `ResponseEntity<T>` / `EntityConverter<E>` (полные шаблоны — в [04-data-layer.md](04-data-layer.md), здесь — краткий мост). §3.
 
@@ -18,75 +18,95 @@
 
 > **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example, согласован с блюпринтом). Импорты — полные `package:nox_app/...`.
 >
-> **Реальный код vs целевой паттерн.** §1–4 описывают **целевой** сетевой контракт. Реальный `ApiClient` намеренно тоньше: он живёт плоско в `lib/data/remote/api_client.dart` (не `lib/data/remote/api/base/...`), это `@LazySingleton(env: [Environment.dev])` — он есть только там, где есть живой канал, — с конструктором `ApiClient(this._config, this._channels)` (`AppConfigRepository` + `ChannelHttpClient`), одним `final Dio dio` и 30-сек таймаутами. `initBase({required String address})` у него — **идемпотентный метод экземпляра**, а не статическая фабрика: он ставит `dio.options.baseUrl` на адрес соединения (`https://<host:port>`, **без** суффикса `/api/`), вешает `IOHttpClientAdapter` на `ChannelHttpClient.transferClient` и один раз навешивает `AuthInterceptor` (§4-security-pipeline'а нет). Для команд `ApiClient` **инертен**: живой канал команд — WS-конверт (фаза 026), а Dio несёт только байты вложений — его инжектит один data source, `RealFileRemoteDataSource` (фаза 028). Зовёт `initBase` только `LiveSessionStarter`: при старте — с адресом из ссылки спаривания, затем на каждом приветствии — с адресом пути, по которому оно пришло; `AppConfig.apiUrl` его источником не является. DI-флип 016 **сделан** (фаза 026): `Real*RemoteDataSource` забиндены на `[Environment.dev]`, моки сужены до `[prod, test]`. Структура `lib/data/remote/api/base/api_client.dart` + `BaseApiRepository` ниже — это **целевой** REST-каркас (один хост — у NOX один бэкенд). Все четыре мок-API-класса — `GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi` (см. §3) — оба этих каркаса обходят.
+> **Что здесь код, а что пример.** §1 — реальный `ApiClient` (`lib/data/remote/api_client.dart`): `@LazySingleton(env: [Environment.dev])` — он есть только там, где есть живой канал, — с конструктором `ApiClient(this._config, this._channels)` (`AppConfigRepository` + `ChannelHttpClient`), одним `final Dio dio` и 30-сек таймаутами; `initBase({required String address})` — **идемпотентный метод экземпляра**, и зовёт его только `LiveSessionStarter`: при старте — с адресом из ссылки спаривания, затем на каждом приветствии — с адресом пути, по которому оно пришло. Адреса из сборки нет. Для команд `ApiClient` **инертен**: живой канал команд — WS-конверт (фаза 026), а Dio несёт только байты вложений — его инжектит один data source, `RealFileRemoteDataSource` (фаза 028). §2 — реальный `AppConfigRepository`. `BaseApiRepository` (§1) и request-builder-обвязка (§3) — **целевой** REST-каркас: в коде их нет, все четыре мок-API-класса — `GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi` (см. §3) — обходятся без них. §4 — размеченный пример. DI-флип 016 **сделан** (фаза 026): `Real*RemoteDataSource` забиндены на `[Environment.dev]`, моки сужены до `[prod, test]`.
 
 ---
 
-## 1. `ApiClient` (канон-паттерн блюпринта)
+## 1. `ApiClient` — Dio для байтов вложений
 
-Один экземпляр Dio: `initBase()` — основной (и единственный) API, авторизованный одним auth-`InterceptorsWrapper`. У NOX **один** бэкенд (`noxd`) — второго хоста нет. В шаблоне канона ниже `baseUrl` берётся из `AppConfigRepository.config.apiUrl` с суффиксом `/api/`; у NOX так **нельзя**: адрес из сборки не принадлежит ни одному спариванию, и ключа сервера, которым можно проверить соединение с ним, нет — поэтому реальный `initBase(address:)` получает адрес спаренного сервера от `LiveSessionStarter`, без `/api/` (§0, §6). Таймауты — 30 с, `Content-Type: application/json`, `ResponseType.json`.
+Один экземпляр Dio — в синглтоне `ApiClient`, с одним `AuthInterceptor`. У NOX **один** бэкенд (`noxd`) — второго хоста нет. Адрес приходит только ссылкой спаривания: `initBase(address:)` вызывает только `LiveSessionStarter` — при старте с адресом из ссылки, затем на каждом приветствии с адресом пути, по которому оно пришло (§6). **Адреса из сборки нет** — по модели безопасности: у него не было бы ключа сервера, и канал не смог бы проверить соединение с ним. Таймауты — 30 с.
 
-`lib/data/remote/api/base/api_client.dart` (целевая структура — в реальном коде это плоский `lib/data/remote/api_client.dart` с методом `initBase()` и без суффикса `/api/`, см. §0):
+`lib/data/remote/api_client.dart` (сокращённо):
 
 ```dart
 import 'package:dio/dio.dart';
-import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:dio/io.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
+@LazySingleton(env: [Environment.dev])
 class ApiClient {
-  static Dio initBase({String? contentType}) {
-    final appConfigRepository = getIt<AppConfigRepository>();
-    final baseOptions = BaseOptions(
-      baseUrl: '${appConfigRepository.config.apiUrl}/api/',
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
-      contentType: contentType ?? 'application/json',
-      responseType: ResponseType.json,
-    );
-    final dio = Dio(baseOptions);
+  ApiClient(this._config, this._channels)
+    : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
 
-    dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        final token = await appConfigRepository.getUserAuthIdToken();
-        if (token != null) {
-          options.headers['Authorization'] = 'Bearer $token';
-        } else {
-          options.headers.remove('Authorization');
-        }
-        return handler.next(options);
-      },
-      onResponse: (response, handler) => handler.next(response),
-      onError: (e, handler) => handler.next(e),
-    ));
-    return dio;
+  final AppConfigRepository _config;
+  final ChannelHttpClient _channels;
+  final Dio dio;
+
+  // beginTransfer / endTransfer / cancelTransfers / pathGeneration - the
+  // registry of byte transfers (phase 043), see §6.3б and 16-file-upload.md.
+
+  /// Points the client at the paired server and installs the interceptor.
+  /// Idempotent for the interceptor; the base URL is re-pointed on every call.
+  ///
+  /// [address] is REQUIRED, and there is no build-time fallback. An address
+  /// that came from the build belongs to no pairing, so there is no key a
+  /// connection to it could be checked against.
+  void initBase({required String address}) {
+    final previous = dio.options.baseUrl;
+    if (address.isNotEmpty) {
+      dio.options.baseUrl = address.contains('://') ? address : 'https://$address';
+    }
+    // A new address is a new path: every transfer on the old one ends now and
+    // goes on by the new one.
+    if (previous.isNotEmpty && previous != dio.options.baseUrl) {
+      _pathGeneration++;
+      cancelTransfers();
+    }
+    _installAdapter();
+    // Dio's adapter asks for a client ONCE and caches it; the channel client
+    // throws its clients away when the binding changes.
+    _channels.onDiscarded = _installAdapter;
+    if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
+      dio.interceptors.add(AuthInterceptor(_config));
+    }
+  }
+
+  /// The transfers' own client, not the socket's: Dio writes its connect
+  /// timeout onto the client it is given, on every request.
+  void _installAdapter() {
+    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _channels.transferClient);
   }
 }
 ```
 
-Ключевое в каноне:
+Ключевое:
 
-- **Один auth-interceptor, читающий токен асинхронно на каждом запросе.** Токен не кешируется в interceptor'е — `await appConfigRepository.getUserAuthIdToken()` дёргается per request, поэтому ротация/обновление токена видны сразу. `null`-токен → заголовок `Authorization` **снимается** (не остаётся протухший). *Реальный `AuthInterceptor` (`lib/data/remote/interceptor/auth_interceptor.dart`) заголовок не снимает, а просто не ставит: `RequestOptions` собирается на каждый запрос заново, протухшему заголовку взяться неоткуда.*
-- **`onResponse` / `onError` — пасс-тру.** Это место под debug-логи/трекинг; ошибки **не** перехватываются здесь и **не** мапятся в типизированные исключения — на non-2xx Dio просто бросает `DioException`, который ловится выше (см. §3 и [04-data-layer.md](04-data-layer.md) §5: `DioException` мапится по типу/статусу). *Реальный `AuthInterceptor.onError` тоже пасс-тру и **всегда** пробрасывает ошибку дальше, `401` включительно: `401` от `/files` — неудавшаяся передача (ключа соединения нет среди спаренных, контракт §1), а не выход. Соединение доказывает ключ устройства в проверке канала, ещё до `/ws` и `/files`, и у принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` и событие `device.revoked` (§6.0). Выход по ответу файла позволил бы любому ответу `/files` стереть устройство.*
+- **Адрес — только из ссылки спаривания.** Base URL — `https://<host:port>` спаренного сервера, без суффикса пути; порт — тот, что несёт ссылка. Новый адрес — новый путь: передачи старого обрываются и сразу продолжаются по новому (`pathGeneration`, §6.3б).
+- **Каждое соединение — канал модуля.** `IOHttpClientAdapter` получает `ChannelHttpClient.transferClient` (свой у Dio: Dio пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр); каждое его соединение проходит TLS 1.3 и проверку `POST /auth` → `POST /auth2` само по себе (§6.0). Клиенты канала пересоздаются при `bind`/`unbind`, поэтому адаптер ставится заново через `onDiscarded`.
+- **Один auth-interceptor, читающий токен асинхронно на каждом запросе.** `AuthInterceptor` (`lib/data/remote/interceptor/auth_interceptor.dart`) зовёт `getUserAuthIdToken()` per request и ставит `Authorization: Bearer <token>` только для непустого значения; писателя токена нет — соединение аутентифицирует канал. `onError` ничего не решает и **всегда** пробрасывает ошибку дальше, `401` включительно: `401` от `/files` — неудавшаяся передача (ключа соединения нет среди спаренных, контракт §1), а не выход. Соединение доказывает ключ устройства в проверке канала, ещё до `/ws` и `/files`, и у принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` и событие `device.revoked` (§6.0). Выход по ответу файла позволил бы любому ответу `/files` стереть устройство. На non-2xx Dio бросает `DioException`, который ловится выше (см. §3 и [04-data-layer.md](04-data-layer.md) §5: `DioException` мапится по типу/статусу).
+- **Для команд инертен.** Команды идут WS-конвертом (`NoxSocketClient`, фаза 026); `ApiClient` инжектит один data source — `RealFileRemoteDataSource` (байты вложений, фаза 028).
 - **Один хост.** У NOX единственный бэкенд (`noxd`, `client_backend/`) — отдельного второго хоста (search/etc.) нет. Его адрес и порт приходят ссылкой спаривания и живут в сессии (§6), а не в `AppConfig`.
 
 ### `BaseApiRepository`
 
-База всех API-классов отдаёт единственный клиент как геттер — у NOX один хост.
+База API-классов отдаёт единственный клиент как геттер — у NOX один хост.
 
-`lib/data/remote/api/base/base_api_repository.dart` (целевой каркас — в реальном коде файла ещё нет, ни один из четырёх мок-API-классов его не наследует, см. §3):
+`lib/data/remote/api/base/base_api_repository.dart` (целевой каркас — в реальном коде файла нет, ни один из четырёх мок-API-классов его не наследует, см. §3):
 
 ```dart
 import 'package:dio/dio.dart' as dio;
-import 'package:nox_app/data/remote/api/base/api_client.dart';
+import 'package:nox_app/data/remote/api_client.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 
 abstract class BaseApiRepository {
-  dio.Dio get baseClient => ApiClient.initBase();
+  dio.Dio get baseClient => getIt<ApiClient>().dio;
 }
 ```
 
-> Каждый вызов геттера поднимает свежий `Dio` (interceptor'ы навешиваются заново). Это **намеренный** выбор паттерна, а не оплошность: токен читается **из репозитория на лету** при каждом запросе, поэтому отдельный долгоживущий синглтон-Dio не обязателен — ротация/обновление токена видны мгновенно.
->
-> **Что значит «один Dio».** Формулировка «один экземпляр Dio» в §1 — буквальна: у NOX один бэкенд, поэтому один клиент (`baseClient`, авторизованный). Имеется в виду, что клиент **не** singleton-инстанс: свежий `Dio` на каждый вызов геттера остаётся каноном. Если профилирование покажет, что пересборка interceptor'ов на запрос дорога́ (актуально с тяжёлым security-interceptor'ом §4.2 — HMAC + сбор UA), допустимая оптимизация — поднять `baseClient` как `@lazySingleton Dio` и навесить interceptor'ы один раз; токен при этом всё равно читается per request внутри `onRequest`, так что семантика «токен на лету» сохраняется. Это опциональная perf-добавка, а не требование.
+> `baseClient` — единственный `Dio` синглтона `ApiClient`: тот же клиент, тот же адрес спаренного сервера, тот же канал. Свежесть авторизации даёт не пересоздание клиента, а `AuthInterceptor`, который читает токен на каждом запросе. `ApiClient` зарегистрирован только в `[Environment.dev]`, поэтому API-класс поверх `BaseApiRepository` живёт там же.
 
 ---
 
@@ -94,7 +114,7 @@ abstract class BaseApiRepository {
 
 `ApiClient` (§1) и bootstrap в `main.dart` (см. [02-dependency-injection.md](02-dependency-injection.md)) ссылаются на `AppConfigRepository`; [04-data-layer.md](04-data-layer.md) и [02-dependency-injection.md](02-dependency-injection.md) его используют, а контракт выписан здесь. Observability у NOX идёт через `LogRepository` (см. [04-data-layer.md](04-data-layer.md)).
 
-> **Реальный контракт (6 членов).** Ниже выписан **фактический** интерфейс `AppConfigRepository` ([lib/domain/repository/app_config/app_config_repository.dart](../../../lib/domain/repository/app_config/app_config_repository.dart)). Две поправки к канон-паттерну блюпринта: (1) `getUserAuthIdToken()` — **метод**, а не геттер (он читает secure storage, поэтому вызывается со скобками); (2) отдельного геттера `baseApiUrl` **нет** — `apiUrl` берут через `config.apiUrl`. Сам конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), несущий `final AppFlavorType flavor` **и** `final String? apiUrl` (значение резолвится из `--dart-define app.apiUrl` через `AppFlavor.getApiUrl()`: на stage — `http://127.0.0.1:8080` из `config/stage.json`, в prod-флейворе значения нет → `null`; соединение `apiUrl` не читает — адрес приходит ссылкой спаривания, §6); поля `apiSignatureKey` в коде нет — это пример/TBD-поле схемы §4. Поверх auth-seam'а фичи 019 контракт дорос парой `limits` / `updateLimits(ServerLimits)` — границы полезной нагрузки из `session.hello` (контракт v0 §3): до первого живого хендшейка отдаются `ServerLimits.contractDefaults` (`maxMessageBytes` 65536, `maxAttachmentBytes` 104857600, `maxFrameBytes` 131072), а `LiveSessionStarter` (`lib/data/sync/live_session_starter.dart`) кладёт лимиты каждого приветствия через `updateLimits`. (Doc-comment'ы в цитатах ниже воспроизведены из реального кода; в реализации остались устаревшие формулировки — «transport (027)», «stage-2 auth».)
+> **Реальный контракт (6 членов).** Ниже выписан **фактический** интерфейс `AppConfigRepository` ([lib/domain/repository/app_config/app_config_repository.dart](../../../lib/domain/repository/app_config/app_config_repository.dart)). Две поправки к канон-паттерну блюпринта: (1) `getUserAuthIdToken()` — **метод**, а не геттер (он читает secure storage, поэтому вызывается со скобками); (2) геттера `baseApiUrl` **нет**, как нет и адреса сервера в конфиге: адрес приходит ссылкой спаривания (§6). Сам конфиг — класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`) с единственным полем `final AppFlavorType flavor`; поля `apiSignatureKey` в коде нет — это пример/TBD-поле схемы §4. Поверх auth-seam'а фичи 019 контракт дорос парой `limits` / `updateLimits(ServerLimits)` — границы полезной нагрузки из `session.hello` (контракт v0 §3): до первого живого хендшейка отдаются `ServerLimits.contractDefaults` (`maxMessageBytes` 65536, `maxAttachmentBytes` 104857600, `maxFrameBytes` 131072), а `LiveSessionStarter` (`lib/data/sync/live_session_starter.dart`) кладёт лимиты каждого приветствия через `updateLimits`.
 
 `lib/domain/repository/app_config/app_config_repository.dart`:
 
@@ -104,17 +124,16 @@ import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 
 /// Holds flavor-dependent config, initialized once after the DI container is ready
-/// (see contracts/di-bootstrap.md), plus the auth-token source for the transport
-/// seam. `apiUrl` carries the server address from feature 026; the token writer is
-/// stage-2 auth and does not exist yet.
+/// (see contracts/di-bootstrap.md), plus the auth-token source of the transport
+/// seam. The server address is not config: it comes from the pairing link.
 abstract class AppConfigRepository {
   Future<void> initialize({required AppFlavorType flavorType});
 
   AppConfig get config;
 
-  /// The signed-in user's auth token for the `Authorization` header. Read from secure
-  /// storage (key `auth_id_token`); `null`/empty in the mock phase (no writer yet — the
-  /// stage-2 sign-in will persist it; stage 1 of the contract runs without auth).
+  /// A request-level token for the `Authorization` header, read from secure
+  /// storage (key `auth_id_token`). Nothing writes one - the channel check
+  /// authenticates the connection - so this is `null` in every build.
   Future<String?> getUserAuthIdToken();
 
   /// Server payload bounds from the last session.hello (contract §3), the
@@ -147,21 +166,19 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
   AppConfig? _config;
 
-  /// In-memory handshake limits: contract defaults until the transport (027)
-  /// stores a live hello. In-memory is deliberate - a fresh handshake arrives
-  /// on every connection, there is nothing durable to persist.
+  /// In-memory handshake limits: contract defaults until a greeting stores the
+  /// server's. In-memory is deliberate - a fresh greeting arrives on every
+  /// connection, there is nothing durable to persist.
   ServerLimits _limits = ServerLimits.contractDefaults;
 
-  /// Secure-storage key for the (future) auth token. No writer yet — a real sign-in
-  /// will persist it (TBD); read-only plumbing this phase.
+  /// Secure-storage key of a request-level auth token. Nothing writes one: the
+  /// channel check (contract §1) authenticates every connection, so the token
+  /// stays read-only plumbing for the `Authorization` header.
   static const String _kAuthIdToken = 'auth_id_token';
 
   @override
   Future<void> initialize({required AppFlavorType flavorType}) async {
-    // The address comes from the build define, so a build with no server
-    // configured keeps working on mocks rather than failing to start. The token
-    // bootstrap still waits on stage-2 auth — stage 1 has no authentication.
-    _config = AppConfig(flavor: flavorType, apiUrl: AppFlavor.getApiUrl());
+    _config = AppConfig(flavor: flavorType);
   }
 
   @override
@@ -188,11 +205,11 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 }
 ```
 
-> **Факты реализации.** `AppConfigRepositoryImpl` не подмешивает `BaseRepositoryHelper` (для конфигурации, не ходящей в сеть, он ничего не добавляет), хранит конфиг лениво (`AppConfig? _config`) и собирает его прямо в `initialize` как `_config = AppConfig(flavor: flavorType, apiUrl: AppFlavor.getApiUrl())`, а на чтение `config` до `initialize` бросает `StateError('AppConfigRepository.initialize was not called')`. Токен читается из `flutter_secure_storage` по ключу `auth_id_token` — **писателя нет** (соединение аутентифицирует канал, токенов контракт v0 не несёт), поэтому фактически всегда `null` → запрос уходит без `Authorization`. `isTestEnvironment` приходит из DI (`@Named('isTestEnvironment')`, env-keyed в `RegisterModule`), а не захардкожен.
+> **Факты реализации.** `AppConfigRepositoryImpl` не подмешивает `BaseRepositoryHelper` (для конфигурации, не ходящей в сеть, он ничего не добавляет), хранит конфиг лениво (`AppConfig? _config`) и собирает его прямо в `initialize` как `_config = AppConfig(flavor: flavorType)`, а на чтение `config` до `initialize` бросает `StateError('AppConfigRepository.initialize was not called')`. Токен читается из `flutter_secure_storage` по ключу `auth_id_token` — **писателя нет** (соединение аутентифицирует канал, токенов контракт v0 не несёт), поэтому фактически всегда `null` → запрос уходит без `Authorization`. `isTestEnvironment` приходит из DI (`@Named('isTestEnvironment')`, env-keyed в `RegisterModule`), а не захардкожен.
 
 Связи:
 
-- **`config` — флейвор-резолвед.** Конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), который несёт `flavor` и nullable `apiUrl`; его производит `AppConfigRepositoryImpl.initialize()` и читают через `AppConfigRepository.config` (`@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])`, см. [02-dependency-injection.md](02-dependency-injection.md)). `apiUrl` резолвится из `--dart-define app.apiUrl` (`AppFlavor.getApiUrl()`): на stage это `http://127.0.0.1:8080` из `config/stage.json`, в prod-флейворе значения нет → `null`. Никто, кроме самого `AppConfig`, его не читает: ни `LiveSessionStarter`, ни `ApiClient` (адрес спаренного сервера приходит из сессии, §6); prod остаётся на моках потому, что `Environment.prod` биндит `Mock*RemoteDataSource`, а не из-за пустого `apiUrl`. `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; секрето-несущие значения, когда появятся, придут из зашифрованных секретов через `dart-define-from-file` ([09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)).
+- **`config` — флейвор-резолвед.** Конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), который несёт только `flavor`; его производит `AppConfigRepositoryImpl.initialize()` и читают через `AppConfigRepository.config` (`@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])`, см. [02-dependency-injection.md](02-dependency-injection.md)). Адреса сервера в нём нет: `LiveSessionStarter` берёт спаренный адрес из сессии и отдаёт его `ApiClient.initBase(address:)` (§1, §6); prod остаётся на моках потому, что `Environment.prod` биндит `Mock*RemoteDataSource`. `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; секрето-несущие значения, когда появятся, придут из зашифрованных секретов через `dart-define-from-file` ([09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)).
 - **`initialize(flavorType:)`** вызывается в `main.dart` **после** `getIt.allReady()` (контейнер уже собран) — см. bootstrap-последовательность в [02-dependency-injection.md](02-dependency-injection.md) §«main.dart» и [05-presentation-layer.md](05-presentation-layer.md). Это место «поднять конфиг/observability после готового DI».
 - **`getUserAuthIdToken()`** — единственная точка, откуда auth-interceptor берёт токен; он читает secure storage напрямую (ключ `auth_id_token`, писателя нет). В примере §4 его бэкендит `AuthRepository` поверх того же `flutter_secure_storage` (пример схемы — контракт v0 её не содержит).
 - **`limits` / `updateLimits`** — сюда транспорт кладёт границы из `session.hello`; с фазы 026 это делает `LiveSessionStarter` (`lib/data/sync/live_session_starter.dart`); композер/пикер делают по ним preflight, вместо того чтобы ловить `payload_too_large` на отправке.
@@ -249,7 +266,7 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 
 ### 4.2 (a) Дополнительные request-интерсепторы — HMAC + security-заголовки + timestamp + build-UA
 
-Структура: **отдельный** `InterceptorsWrapper` (или цепочка), навешиваемый в `ApiClient.initBase()` **после** auth-interceptor'а из §1. Он на каждом запросе:
+Структура: **отдельный** `InterceptorsWrapper` (или цепочка), навешиваемый в `ApiClient.initBase(address:)` **после** `AuthInterceptor` из §1. Он на каждом запросе:
 
 1. ставит `x-request-timestamp` (epoch **ms**, в пределах ±5-мин replay-окна сервера);
 2. ставит security-заголовки: `x-trace-id` (uuid per request), `x-device-id` (стабильный id устройства);
@@ -540,7 +557,7 @@ Future<void> _onAppResumed(AppResumed event, Emitter<AuthState> emit) async {
 1. **Не блокировать запрос по connectivity.** Запрос уходит в `ApiClient` всегда; если интерфейса нет — `Dio` бросит `DioException` (`connectionError`/таймаут), `BaseRepositoryHelper.execute` смаппит его в `RepositoryException.connection` (именно `connection`, а не `internal` — маппинг идёт по типу/статусу, см. §3 и [04-data-layer.md](04-data-layer.md)), презентация покажет понятную ошибку. Это и есть «корректная деградация» — единый путь ошибки, без спец-кейса.
 2. **`401 ≠ офлайн`.** Офлайн даёт `connectionError`/таймаут, а не `401`. Поэтому refresh-интерсептор (§4) НЕ должен срабатывать на сетевую ошибку — refresh запускается строго на `401 unauthenticated` от backend. Зацикливание «офлайн → 401 → refresh → офлайн» исключено по построению.
 3. **UX-баннер — не транспортный гейт.** С фазы 040 баннер ведёт `ConnectionStatusService.watchStatus()` (`ChatsListBloc` / `ChatThreadBloc` / `ChatCardBloc`, см. §5.4 и §6.5): в окружении `dev` (флейвор `stage`) статус складывается из фазы сокета, раунда выбора пути и статуса Tor-клиента (`LiveConnectionStatusService`), а под `[prod, test]` он остаётся проекцией фазы сессии (`PhaseConnectionStatusService`), которая там сама проекция `watchOnline()` (`ConnectivitySessionPhaseService`, `lib/data/service/session_phase_service_impl.dart`). Ни та, ни другая ветка на транспортный слой не влияет.
-4. **Ретраи — реактивные, не по таймеру, кроме передач.** Чтение повторяет пользователь (pull-to-refresh / повторный тап) или событие: экраны перечитывают сервер, когда канал снова становится текущим, — фоновый ретрай-демон чтений не заводим. Исключения — передачи: `OutboxService` (`lib/data/sync/outbox_service.dart`, фаза 027) сливает durable-очередь по входу сессии в `live`, а повторяемый отказ планирует следующую попытку по нарастающей паузе; `AttachmentDownloadService` (`lib/data/sync/attachment_download_service_impl.dart`, фаза 043) так же повторяет скачивание вложения по общей лестнице `RetryLadder` и просыпается, когда канал возвращается. Это не демон опроса: пауза существует только пока есть что передать.
+4. **Ретраи — реактивные, не по таймеру, кроме передач.** Чтение повторяет пользователь (pull-to-refresh / повторный тап) или событие: экраны перечитывают сервер, когда канал снова становится текущим, — фоновый ретрай-демон чтений не заводим. Исключения — передачи: `OutboxService` (интерфейс — `lib/domain/service/outbox_service.dart`, реализация `OutboxServiceImpl` — `lib/data/sync/outbox_service_impl.dart`, фаза 027) сливает durable-очередь по входу сессии в `live`, а повторяемый отказ планирует следующую попытку по нарастающей паузе; `AttachmentDownloadService` (`lib/data/sync/attachment_download_service_impl.dart`, фаза 043) так же повторяет скачивание вложения по общей лестнице `RetryLadder` и просыпается, когда канал возвращается. Это не демон опроса: пауза существует только пока есть что передать.
 
    Очередь — store `outbox` в Sembast, а не состояние экрана: она переживает и закрытие экрана, и перезапуск. Ключ записи в нём и есть `client_message_id`, поэтому повторная постановка той же отправки не создаёт второй строки, а отправитель ровно один (про `client_message_id` как ключ идемпотентности — [16-file-upload.md](16-file-upload.md) §1 и §4).
 
@@ -699,11 +716,11 @@ Future<void> _onAppResumed(AppResumed event, Emitter<AuthState> emit) async {
 - [ ] **§6 путь до сервера:** сокет спрашивает цель перед каждой попыткой (`SocketTargetProvider` → `ConnectionPathSelector`) и сообщает, чем кончился набор, не дошедший до приветствия (`reportFailed`); прямые кандидаты — последний работавший, вписанный человеком, публичный, найденные сервером, адрес из ссылки — проверяет `ChannelDirectProber` (канал с проверкой `/auth` и `/auth2`, открыть и закрыть, 4,5 с на адрес, 5 с на раунд, итог «мой» / «другой ключ» / «не ответил»); Tor — только при включённом `Use Tor` (по умолчанию выключен), известном onion-адресе, поддержке платформы (все пять, Linux включительно) и клиенте, которого сеть не объявила устаревшим; ключей доступа Tor нет, цель заранее не задаётся; Arti `=0.47.0` с `hs-pow-full`; выключение `Use Tor` останавливает Tor сразу и обрывает соединение через него; упавший клиент перезапускается; приветствие привязано к своему соединению; старт не ждёт выбора пути; `wrongServer` на прямом адресе — «не дома», за onion — `serverMismatch` (причина `otherServer`); onion-хост открывает модуль потоком Arti, проверка `/auth` и `/auth2` та же, локального порта нет; команды ждут медленный путь до 145 с; возврат на прямой — при смене сети, раз в 2 мин и при перемене адресов; спаривание — тем же выбором пути, через Tor тоже; настройки связи — `ServerAddresses` (`public`, `manualAddress`, `manualOnion`, `useTor`), слово сервера заменяет правку того же поля; причина раунда — `ConnectionProblem` в `ConnectionStatus.problem`, текст — `ConnectionProblemText`; эпоха `key:<ключ сервера>`; в логах onion-хосты — `[onion]`, ссылки — `[link]`.
 - [ ] **§6.4а спаривание с подтверждением (фаза 046):** `pair` одной командой для ссылки с машины и приглашения; `pending` → ожидание на неприветствованном соединении (`pair`, `pair.cancel`, событие `pair.resolved`), `AuthRepository.watchAwaitingApproval()`; исход — повтором токена (по `pair.resolved`, на каждом новом соединении, по своему сроку — 10 мин + 30 с от первого `pending` по часам устройства, на сроке ждущий запрос отзывается): `identity` / `PairingException.declined` / `RepositoryException.notFound` / `PairingException.cancelled`; `cancelPairing()` → `pair.cancel`, исход читается повтором; ожидание в `session.pending_pairing` (защищённое хранилище) переживает перезапуск, экран входа возвращает к нему (`pendingPairing()`); выдавшее устройство — ранний `PairRequestServiceImpl` (`[dev]`): запросы из `device.pairRequested`/`device.pairResolved` живут, пока соединение поприветствовано, `answer` → `device.approve` только по нему, `not_found` — не ошибка, `watchClosed()` для 7.8; семейство — одно из пяти; выход отзывает свой ключ только по поприветствованному соединению, второй выход присоединяется к первому.
 - [ ] **§5 connectivity/lifecycle:** `ConnectivityService` (`watchOnline()` со seed'ом + `isOnline()`, оба «голый» `bool`; `@LazySingleton(as: ConnectivityService, env:[dev,prod])` + `MockConnectivityService` под `[test]`, `connectivity_plus`); app-lifecycle observer на `_AppRootState` (`WidgetsBindingObserver`, `resumed → AppResumed` превентивный refresh, **re-entrancy guard** в `AuthBloc`); connectivity НЕ гейтит запрос — источник истины остаётся за `ApiClient`.
-- [ ] `ApiClient.initBase()` (целевой) — Dio, `baseUrl = ${config.apiUrl}/api/`, 30-сек таймауты, JSON; **один** auth-`InterceptorsWrapper`, читающий `getUserAuthIdToken()` async per request → `Bearer` (null → снять `Authorization`); `onResponse`/`onError` — пасс-тру (debug). В коде `ApiClient` — плоский `lib/data/remote/api_client.dart`: `@LazySingleton(env: [Environment.dev])` с `AppConfigRepository` и `ChannelHttpClient` в конструкторе и **идемпотентным методом** `initBase({required String address})`, который ставит `baseUrl` на адрес соединения (**без** `/api/`), вешает адаптер на `ChannelHttpClient.transferClient` и один раз навешивает `AuthInterceptor`; §4-pipeline'а нет, и для команд он инертен (живой канал команд — WS-конверт фазы 026; `initBase` зовёт только `LiveSessionStarter` с адресом из ссылки и с адресом пути каждого приветствия, инжектит `ApiClient` только `RealFileRemoteDataSource` — байты вложений фазы 028).
-- [ ] **Один хост.** У NOX единственный бэкенд — Go-сервер `noxd` (`client_backend/`), отдельного второго хоста (search/etc.) нет; его адрес и порт приходят ссылкой спаривания и живут в сессии, а `AppConfig.apiUrl` (на stage — `http://127.0.0.1:8080` из `config/stage.json`, в prod-флейворе `null`) соединение не читает.
-- [ ] `BaseApiRepository` (целевой) отдаёт единственный `baseClient` геттером; API-классы наследуют его. В коде файла ещё нет — все четыре API-класса (`GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi`) — моки, собирающие `ResponseEntity<T>` напрямую, без `BaseApiRepository`/`RequestBuilder`. `GetItemsApi` — намеренно замороженная верификационная нарезка (`ItemsEntity{items, page, page_size, total}`, путь `v1/items`, 1-based); её `total` **не** попадает в доменную `PageMetadata{hasMore, nextPage}`.
+- [ ] `ApiClient` — плоский `lib/data/remote/api_client.dart`: `@LazySingleton(env: [Environment.dev])` с `AppConfigRepository` и `ChannelHttpClient` в конструкторе, один `Dio` с 30-сек таймаутами и **идемпотентный метод** `initBase({required String address})`: `baseUrl` — адрес спаренного сервера (`https://<host:port>`, без суффикса пути), адаптер — на `ChannelHttpClient.transferClient` (заново через `onDiscarded`), `AuthInterceptor` навешивается один раз и читает `getUserAuthIdToken()` async per request → `Bearer` только для непустого токена, ошибки (`401` включительно) только пробрасывает. `initBase` зовёт только `LiveSessionStarter` — с адресом из ссылки спаривания и с адресом пути каждого приветствия; адреса из сборки нет. Для команд `ApiClient` инертен (живой канал команд — WS-конверт фазы 026); инжектит его только `RealFileRemoteDataSource` — байты вложений фазы 028.
+- [ ] **Один хост.** У NOX единственный бэкенд — Go-сервер `noxd` (`client_backend/`), отдельного второго хоста (search/etc.) нет; его адрес и порт приходят ссылкой спаривания и живут в сессии, а не в `AppConfig` и не в сборке.
+- [ ] `BaseApiRepository` (целевой) отдаёт единственный `baseClient` геттером — `getIt<ApiClient>().dio`; API-классы наследуют его. В коде файла нет — все четыре API-класса (`GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi`) — моки, собирающие `ResponseEntity<T>` напрямую, без `BaseApiRepository`/`RequestBuilder`. `GetItemsApi` — намеренно замороженная верификационная нарезка (`ItemsEntity{items, page, page_size, total}`, путь `v1/items`, 1-based); её `total` **не** попадает в доменную `PageMetadata{hasMore, nextPage}`.
 - [ ] `AppConfigRepository` — фактический контракт (6 членов): `initialize(flavorType:)` / `config` / `getUserAuthIdToken()` (**метод**) / `limits` / `updateLimits(ServerLimits)` / `isTestEnvironment` в `domain/`; геттера `baseApiUrl` нет; импл — `@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])` с `FlutterSecureStorage` + `@Named('isTestEnvironment')` в конструкторе, без `BaseRepositoryHelper`, `StateError` на чтение `config` до `initialize`; резолв через `getIt<AppConfigRepository>()` напрямую (в `global_aliases.dart` не алиасится).
-- [ ] `AppConfig` несёт `flavor` + nullable `apiUrl` (из `--dart-define app.apiUrl` через `AppFlavor.getApiUrl()`: stage — `http://127.0.0.1:8080`, prod — `null`; соединением не читается, [02-dependency-injection.md](02-dependency-injection.md), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)); `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; собирается в `AppConfigRepositoryImpl.initialize(flavorType:)`, который вызывается в `main.dart` после `getIt.allReady()`.
+- [ ] `AppConfig` несёт только `flavor` ([02-dependency-injection.md](02-dependency-injection.md), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)); адреса сервера в нём нет — он приходит ссылкой спаривания; `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; собирается в `AppConfigRepositoryImpl.initialize(flavorType:)`, который вызывается в `main.dart` после `getIt.allReady()`.
 - [ ] REST-мост: `RequestBuilder`/`RequestBuilderHelper` + `ResponseEntity<T>`/`EntityConverter<E>` — по [04-data-layer.md](04-data-layer.md) §2–3, §7; envelope = `{success, ErrorWireEntity? error, T? data}` (контракт v0, `error` = `{code, message}`); распаковка — `unwrapEnvelope`, у `execute` четыре catch-ветки (`BaseRepositoryException` насквозь → `SocketUnavailableException` → `connection` → `DioException` по типу/статусу → catch-all `unknown`), нет `ApiException`/`DaoException`; конкретный код ошибки даёт `RepositoryException.fromWireCode(error.code)`, а не ручная проверка `statusCode`.
 - [ ] **§4 (пример; контрактом v0 не требуется):** дополнительный security-interceptor — в примере ровно 5 security-заголовков: `x-request-timestamp` (epoch ms, ±5 мин), `x-request-signature`, `x-user-agent`, `x-device-id`, `x-trace-id` (отсутствие любого → `403` до проверки HMAC); `x-user-agent` — 6 slash-сегментов `'{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}'` (канон `UserAgentModel`); `x-request-signature` — HMAC-SHA256 по `METHOD\nPATH\nBODY_SHA256\nTIMESTAMP` (METHOD = `ApiRequestMethod.<verb>`, **не** uppercase; PATH — в примере **с** query); пропуск подписи для web-deep-link endpoint'ов.
 - [ ] **§4 (пример; контрактом v0 не требуется):** `getUserAuthIdToken()` бэкендит `AuthRepository` поверх `flutter_secure_storage` (access-JWT + opaque refresh); refresh→rotate→retry на 401 через refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`); single-flight lock на refresh (reuse-detection блэклистит сессию); разлогин при провале refresh; десктоп-бэкенды хранилища — Keychain/DPAPI/libsecret, local wipe = `secureStorage.deleteAll()` + Sembast/`shared_preferences` (единый путь, 5 платформ). В коде уже есть secure storage, `AuthRepositoryImpl.logout({forced})` с полным wipe и чтение ключа `auth_id_token` (писателя нет); токен-модели нет — контракт v0 авторизует соединение каналом (§6.0).

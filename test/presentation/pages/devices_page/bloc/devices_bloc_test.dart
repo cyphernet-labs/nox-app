@@ -46,14 +46,14 @@ void main() {
 
   final phone = DeviceModel(
     deviceKey: 'k-phone',
-    platform: 'ios',
+    platform: DevicePlatform.ios,
     pairedAt: DateTime(2026, 9, 1),
     lastSeenAt: DateTime(2026, 9, 4),
     isCurrent: true,
   );
   final tablet = DeviceModel(
     deviceKey: 'k-tablet',
-    platform: 'android',
+    platform: DevicePlatform.android,
     pairedAt: DateTime(2026, 8, 1),
     lastSeenAt: DateTime(2026, 8, 20),
     isCurrent: false,
@@ -61,7 +61,7 @@ void main() {
 
   final laptop = DeviceModel(
     deviceKey: 'k-laptop',
-    platform: 'macos',
+    platform: DevicePlatform.macos,
     pairedAt: DateTime(2026, 9, 10),
     lastSeenAt: DateTime(2026, 9, 10),
     isCurrent: false,

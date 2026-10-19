@@ -115,7 +115,8 @@ Outlined 132 box (radius 20, 1.5 `outlineVariant`) holding a 56 glyph, with two 
 inside it — teal 14 top-right, gold 10 bottom-left — over a headline and a message.
 This composition IS the empty-state art, not a placeholder for an illustration: the three SVGs in
 `nox-assets/illustrations` read at 132 as a rendering fault rather than as art, and the screens were
-designed around the box. The app (`AppEmptyContentWidget`) draws the box and references none of them.
+designed around the box. The app (`AppEmptyContentWidget`) draws the box; none of the three ships with
+it - they stay in the corpus as sketches, and no illustration is ordered.
 - **API:** `NoxEmptyState({required IconData glyph, required String title, required String message})`
 
 ### NoxSegmented — single-select segmented · *stock wrapper*

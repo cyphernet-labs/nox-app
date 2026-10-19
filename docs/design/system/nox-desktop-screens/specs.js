@@ -140,12 +140,12 @@ window.NOX_SPECS = [
     "behavior": [
       "Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.",
       "Account: identity card carrying the name and the public ID. Editing → inline name field.",
-      "Phase 037 removed the Server owner badge and its 'ownership not stated' state, at both widths: the machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart.",
+      "No role badge and no People menu item, at both widths: the machine holds one person, so such a mark would separate nothing.",
       "Connection (phase 045): the third item of the first group (glyph lan, filled when selected); its pane holds the server address, the onion address and Use Tor - the phone's 7.10 body (spec screens/12-connection.md).",
       "Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.",
       "Appearance: System / Light / Dark theme cards. Language: System / English / Українська.",
-      "Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.",
-      "Phase 032 removed the mask and the inline account QR: the ID is public. Show QR selects the Devices pane, where an invite is minted with a one-shot token."
+      "Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error. Confirming revokes this device's key over a live connection, then wipes the session and all local data; until that ends the dialog stays up and modal, with a spinner in place of its Log out button. A logout that fails closes the dialog and says “Could not log out. Please try again.” in a snackbar.",
+      "No mask and no account QR: the ID is public. A device is added from the Devices pane, which the Devices menu item selects: its Add a device mints an invite with a one-shot token."
     ],
     "navigation": [
       "Menu item → swaps detail pane.",
@@ -153,7 +153,8 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Pane title: Settings",
-      "Logout: Log out? / Your ID and local data will be removed from this device."
+      "Logout: Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.",
+      "Logout error (snackbar): Could not log out. Please try again."
     ],
     "ds": [
       "NavRail",
@@ -186,8 +187,8 @@ window.NOX_SPECS = [
       "Same role as mobile 1.1. Chrome hidden; brand-fixed dark, not themed. One-shot reveal."
     ],
     "navigation": [
-      "Valid ID → Chats (01).",
-      "No ID → Login (03)."
+      "Same routes as mobile 1.1: paired, onboarding done → Chats (01); paired, the name not yet set → Set username (03); not paired, or local data whose key is gone (wiped first) → Login (03).",
+      "A secure store that does not answer yet keeps the splash up. No route to Error (05)."
     ],
     "copy": [
       "Wordmark: NOX"
@@ -324,7 +325,7 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Title: Scan a QR code",
-      "Helper: Point your webcam at a code, or enter the ID manually.",
+      "Helper: Point your webcam at the code, or paste the pairing link.",
       "Denied: Camera access needed / To scan a QR code, allow camera access in system settings. / Open settings"
     ],
     "ds": [

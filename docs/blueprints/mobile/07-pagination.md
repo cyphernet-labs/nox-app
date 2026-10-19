@@ -2,7 +2,7 @@
 
 > **Назначение:** зафиксировать единственный канонический стандарт постраничной подгрузки списков в приложении NOX — библиотека `infinite_scroll_pagination` ^5.1.1 (v5, stateless), `PagingState<K,T>` внутри Freezed-стейта BLoC, переиспользуемый extension `PagingStateExt.applyPage` и две модели пагинации контракта v0 — страничная (список чатов) и seq-курсорная (история сообщений). **Когда читать:** перед реализацией любого экрана со списком, который сервер отдаёт постранично (первый реальный кейс — список чатов: server-owned список личного пространства одного человека (ревизия 2026-09-10), который читается **cache-first с фоновым read-through**: первая страница берётся из кэша (`cachedOnly: true`) и показывается сразу, страница сервера догружается в фоне и оседает в `ChatDao` поверх Sembast; догрузка следующих страниц идёт в сервер, а кэш отдаёт срез сам ещё на реактивном тике и при мёртвом канале), а также при ревью BLoC, отдающего `PagingState`. **Связанные документы:** `05-presentation-layer.md` (BLoC = Freezed, `BaseBloc`, страницы, `state.when`), `04-data-layer.md` (`RepositoryResult`, `ResponseEntity`, mapper, кэш-first vs network-only), `03-domain-layer.md` (доменные модели `@freezed`, `RepositoryException`), `06-theming.md` (токены для индикаторов/разделителей), `10-code-templates.md` (полные шаблоны), `08-conventions-and-constitution.md` (правила слоёв).
 
-> **Реактивный рефреш поверх пагинации (Feature 014).** `PagingState` + `applyPage` + `getX` остаются **единственной проекцией** списка; реактивность добавляется как **change-signal**: подписка на `watchX()` (значение игнорируется) диспатчит `loadX(refresh: true)`, который перечитывает уже загруженное через тот же `getX`/`applyPage` и складывает результат в live-стейт (без спиннера, сохраняя scroll/поиск/desktop-выбор). Форма перечитывания зависит от пути: список чатов заново читает префикс страниц `1..loadedPageCount`; тред с фазы 025 делает ОДИН tail-запрос `limit = items.length + pageSize` (курсорный путь не имеет номеров страниц). С живым бэкендом (окружение `dev` — это флейвор `stage`, флейвора `dev` в проекте нет) форма та же: `watchX()` — стрим изменений над локально-кэшированным срезом (`ChatDao.watch()` / `MessageDao`), а `getX` без `cachedOnly` идёт в сервер с фолбэком в кэш при мёртвом канале (`on SocketUnavailableException`). Сам тик рефреша перечитывает с флагом `cachedOnly: true` и провода не касается. **Соединение экран не держит:** первая страница списка и хвост треда тоже читаются с `cachedOnly: true` и показываются сразу, а сервер спрашивается в фоне (`_syncFirstPage` / `_syncTail`, вне `sequential()`-хендлера загрузки); по его завершении блок перечитывает кэш событием `FirstPageSynced` / `WindowSynced`. Спиннер (`syncing`) — только при пустом кэше, пока идёт фоновое чтение. См. `specs/014-reactive-data-refresh/`.
+> **Реактивный рефреш поверх пагинации (Feature 014).** `PagingState` + `applyPage` + `getX` остаются **единственной проекцией** списка; реактивность добавляется как **change-signal**: подписка на `watchX()` (значение игнорируется) диспатчит `loadX(refresh: true)`, который перечитывает уже загруженное через тот же `getX`/`applyPage` и складывает результат в live-стейт (без спиннера, сохраняя scroll/поиск/desktop-выбор). Форма перечитывания зависит от пути: список чатов заново читает префикс страниц `1..loadedPageCount`; тред с фазы 025 делает ОДИН tail-запрос `limit = items.length + pageSize` (курсорный путь не имеет номеров страниц). С живым бэкендом (окружение `dev` — это флейвор `stage`, флейвора `dev` в проекте нет) форма та же: `watchX()` — голая проекция DAO над локально-кэшированным срезом (`ChatDao.watch()` / `MessageDao.watch(chatId)`), без `RepositoryResult` (ошибка хранилища — ошибка стрима), а `getX` без `cachedOnly` идёт в сервер с фолбэком в кэш при мёртвом канале (`on SocketUnavailableException`) и отдаёт `RepositoryResult`. Сам тик рефреша перечитывает с флагом `cachedOnly: true` и провода не касается. **Соединение экран не держит:** первая страница списка и хвост треда тоже читаются с `cachedOnly: true` и показываются сразу, а сервер спрашивается в фоне (`_syncFirstPage` / `_syncTail`, вне `sequential()`-хендлера загрузки); по его завершении блок перечитывает кэш событием `FirstPageSynced` / `WindowSynced`. Спиннер (`syncing`) — только при пустом кэше, пока идёт фоновое чтение. См. `specs/014-reactive-data-refresh/`.
 
 ---
 
@@ -28,8 +28,8 @@
 dependencies:
   flutter_bloc: ^9.0.0                # BLoC
   infinite_scroll_pagination: ^5.1.1  # PagingState + PagedListView (v5, stateless)
-  bloc_concurrency: ^0.3.0            # event transformers (sequential / restartable) — primary option
-  rxdart: ^0.28.0                     # debounceTime for a custom transformer — alternative
+  bloc_concurrency: ^0.3.0            # sequential() for page loads
+  rxdart: ^0.28.0                     # debounceTime + switchMap under the project's debounceRestartable()
 ```
 
 Документация библиотеки: <https://pub.dev/documentation/infinite_scroll_pagination/latest/>.
@@ -44,8 +44,8 @@ dependencies:
    - `List<ItemModel> items` — плоский список для бизнес-логики;
    - `int nextPage` (страничный путь) **или** `int? oldestLoadedSeq` (seq-курсор треда) — координата следующей порции.
 3. Сервер возвращает `has_more` вместо `total` (контракт v0); на страничном пути `nextPage = hasMore ? page + 1 : null` (1-based, вычисляется клиентски), на курсорном — следующая порция запрашивается `before_seq = min(seq загруженного)`. `hasMore == false` означает «страниц больше нет».
-4. **Один** универсальный `LoadItems({required bool reset})` — делает и первую загрузку, и догрузку, и сброс после смены фильтра.
-5. Параметры запроса (search / sort / filter) читаем **из стейта, а не из event** — UI вызывает просто `add(LoadItems(reset: false))` без аргументов.
+4. **Один** универсальный `LoadItems({@Default(false) bool reset})` — делает и первую загрузку, и догрузку, и сброс после смены фильтра, и pull-to-refresh.
+5. Параметры запроса (search / sort / filter) читаем **из стейта, а не из event** — UI вызывает просто `add(const LoadItems())` без аргументов.
 6. Любое изменение фильтра/поиска/сортировки ⇒ `pagingState.reset()` (метод пакета) + очистка `items` + обнуление `nextPage` + `add(LoadItems(reset: true))`.
 7. Debounce обязателен на `LoadItems`.
 8. Никакой ручной работы с `pages` и `keys` — всё в `PagingStateExt.applyPage`.
@@ -149,7 +149,7 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
 
 ### 4.5 Репозиторий: контракт и реализация
 
-Пагинированный server-owned список отдаёт канонический метод `getItems` (префикс `get*` = параметризованный/списочный запрос; `fetch*` зарезервирован под одиночный one-shot `fetchItem`). Метод возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` — Dart-record в payload, обёрнутый в наш envelope (именованные варианты `RepositoryResult.success(data:)` / `RepositoryResult.error(exception:)`). Низкоуровневые исключения data-слоя не образуют отдельной типизированной иерархии: их **маппит в `enum RepositoryException` (маркер `BaseRepositoryException`)** и обязательно логирует через `LogRepository` миксин `BaseRepositoryHelper.execute<TD>()` (см. `04-data-layer.md`). Веток перевода **четыре**: уже доменный `BaseRepositoryException` (например, код ошибки контракта, поднятый `unwrapEnvelope` через `RepositoryException.fromWireCode`) пробрасывается неразбавленным; `SocketUnavailableException` → `connection` (фаза 026 — без неё мёртвый канал попал бы в catch-all как `unknown`, и кэш-фоллбэк ниже стал бы недостижим); `DioException` маппится по типу и статусу (таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, остальное → `internal`); catch-all → `unknown`. Форма возврата одинакова независимо от того, откуда репозиторий берёт срез: продуктовые пагинированные списки (чаты, история сообщений) — **read-through поверх кэша** (`ChatDao` / `MessageDao` поверх Sembast): каждое не-`cachedOnly` чтение идёт в `*RemoteDataSource` ровно за запрошенным окном и оседает в кэше (`_persistWire` / `_fetchWindow`, а не единоразовый seed фичи 013), поиск по чатам намеренно уходит на сервер (локальная фильтрация превратила бы «поиск по всему пространству» в «поиск по загруженному»), `PageMetadata` списка чатов берётся с провода (`hasMore`), а у треда собирается как «источник ИЛИ остаток кэша»; кэш обслуживает срез сам при `cachedOnly: true` (первое чтение экрана и тик рефреша) и при мёртвом канале (`on SocketUnavailableException`), а действительно **network-only** (без DAO/subject) остался только замороженный verification-срез `Item`. Чатовые one-shot команды тоже пишут в DAO: `createChat` (фаза 041) создаёт чат на устройстве — id чеканится локально, строка ложится через `_chatDao.upsert`, а на сервер чат создаёт очередь; `updateChatName` для чата, который уже есть на сервере, кладёт серверный ответ через `_chatDao.upsert` (чат, ждущий создания, переименовывается локально); `isChatNameTaken` сперва смотрит в кэш. Отправка сообщения идёт не одним выстрелом, а через долговечную очередь (`outbox`, фаза 027). Канон обеих веток — `04-data-layer.md` §8.
+Пагинированный server-owned список отдаёт канонический метод `getItems` (префикс `get*` = параметризованный/списочный запрос; `fetch*` зарезервирован под одиночный one-shot `fetchItem`). Метод возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` — Dart-record в payload, обёрнутый в наш envelope (именованные варианты `RepositoryResult.success(data:)` / `RepositoryResult.error(exception:)`). Низкоуровневые исключения data-слоя не образуют отдельной типизированной иерархии: их **маппит в `enum RepositoryException` (маркер `BaseRepositoryException`)** и обязательно логирует через `LogRepository` миксин `BaseRepositoryHelper.execute<TD>()` (см. `04-data-layer.md`). Веток перевода **четыре**: уже доменный `BaseRepositoryException` (например, код ошибки контракта, поднятый `unwrapEnvelope` через `RepositoryException.fromWireCode`) пробрасывается неразбавленным; `SocketUnavailableException` → `connection` (фаза 026 — без неё мёртвый канал попал бы в catch-all как `unknown`, и кэш-фоллбэк ниже стал бы недостижим); `DioException` маппится по типу и статусу (таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, остальное → `internal`); catch-all → `unknown`. Форма возврата одинакова независимо от того, откуда репозиторий берёт срез: продуктовые пагинированные списки (чаты, история сообщений) — **read-through поверх кэша** (`ChatDao` / `MessageDao` поверх Sembast): каждое не-`cachedOnly` чтение идёт в `*RemoteDataSource` ровно за запрошенным окном и оседает в кэше (`_persistWire` / `_fetchWindow`, а не единоразовый seed фичи 013), поиск по чатам намеренно уходит на сервер (локальная фильтрация превратила бы «поиск по всему пространству» в «поиск по загруженному»), `PageMetadata` списка чатов берётся с провода (`hasMore`), а у треда собирается как «источник ИЛИ остаток кэша»; кэш обслуживает срез сам при `cachedOnly: true` (первое чтение экрана и тик рефреша) и при мёртвом канале (`on SocketUnavailableException`), а действительно **network-only** (без DAO) остался только замороженный verification-срез `Item`. Чатовые one-shot команды тоже пишут в DAO: `createChat` (фаза 041) создаёт чат на устройстве — id чеканится локально, строка ложится через `_chatDao.upsert`, а на сервер чат создаёт очередь; `updateChatName` для чата, который уже есть на сервере, кладёт серверный ответ через `_chatDao.upsert` (чат, ждущий создания, переименовывается локально); `isChatNameTaken` сперва смотрит в кэш. Отправка сообщения идёт не одним выстрелом, а через долговечную очередь (`outbox`, фаза 027). Канон обеих веток — `04-data-layer.md` §8.
 
 Полный контракт `ItemRepository` — канонический (см. `04-data-layer.md`); ниже показан целиком как **аспирационный стандарт блюпринта**, списочный метод — `getItems`:
 
@@ -162,7 +162,7 @@ import 'package:nox_app/domain/repository/item/get_item_config.dart';
 import 'package:nox_app/domain/repository/item/get_items_config.dart';
 
 abstract class ItemRepository {
-  Stream<RepositoryResult<ItemModel>> watchItem({required String id});
+  Stream<ItemModel?> watchItem({required String id}); // change signal: a bare projection of the cache
   Future<RepositoryResult<ItemModel>> fetchItem({required GetItemConfig config});
   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config});
   Future<RepositoryResult<ItemModel>> createItem({required ItemModel item});
@@ -209,7 +209,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 }
 ```
 
-> **Канонический шаблон vs текущий harness (FR-013).** В `lib/` реальный `ItemRepository` — намеренно урезанный подмножество показанного контракта: только `getItems(...)` + `clean()` (network-only, без DAO/subject — carve-out, доживший ровно в этом замороженном verification-срезе, а не в продуктовых списках). Полный CRUD + cache-first `watchItem` (с `ItemDao` + `BehaviorSubject`) — это завершённый Item-пример блюпринта, который приходит вместе с фичей, которой нужно кэширование; см. `04-data-layer.md`. Реализация `getItems` выше — байт-в-байт с `lib/data/repository/item/item_repository_impl.dart`: конструктор `(this._itemMapper, this._itemRemote)` с зависимостью на интерфейс `ItemRemoteDataSource` (seam фичи 016, а не на конкретный API-класс; логирование наследуется через mixin `BaseRepositoryHelper`, без инъекции `LogRepository`-поля), null-payload ⇒ `RepositoryResult.error(exception: RepositoryException.unknown)`, маппинг через `_itemMapper.toListModel(entities: entity.items)`. За интерфейсом сегодня стоит `MockItemRemoteDataSource`, делегирующий в MOCK-класс `GetItemsApi` (path `v1/items`, query `page` / `page_size` / `search`) — замороженный пример verification-среза. Продуктовый транспорт — WebSocket-конверт контракта v0 — пришёл **фазой 026**: `NoxSocketClient` (`lib/data/remote/socket/nox_socket_client.dart`) плюс DI-флип mock → real в окружении `dev`, куда ведёт флейвор `stage` (флейворы — только `stage` и `prod`): `RealChatRemoteDataSource` / `RealMessageRemoteDataSource`, `env: [Environment.dev]` (`MockItemRemoteDataSource` флипа не получает и остаётся во всех окружениях — срез мёртвый). REST/Dio остаётся только под upload/download блобов (фаза 028); каждое соединение, сокет и передачи байтов, — канал Rust-модуля `packages/nox_tor` (фазы **044** и **050**): TLS 1.3 с техническим сертификатом, затем проверка `POST /auth` → `POST /auth2` с RustSecureBox по ключу сервера из ссылки спаривания ([14-networking-and-auth.md](14-networking-and-auth.md) §6.0). `WebSocketChannelFactory` передаёт в `IOWebSocketChannel.connect(customClient:)` клиент сокета из `ChannelHttpClient`; адрес и ключ сервера берутся из спаренной сессии — не из `AppConfig.apiUrl`: адрес из сборки не принадлежит ни одному спариванию, и ключа сервера, с которым можно сверить соединение, у него нет по построению.
+> **Канонический шаблон vs текущий harness (FR-013).** В `lib/` реальный `ItemRepository` — намеренно урезанный подмножество показанного контракта: только `getItems(...)` + `clean()` (network-only, без DAO — carve-out, доживший ровно в этом замороженном verification-срезе, а не в продуктовых списках). Полный CRUD + сигнал `watchItem` (голая проекция `ItemDao`) + cache-first `fetchItem` — это завершённый Item-пример блюпринта, который приходит вместе с фичей, которой нужно кэширование; см. `04-data-layer.md`. Реализация `getItems` выше — байт-в-байт с `lib/data/repository/item/item_repository_impl.dart`: конструктор `(this._itemMapper, this._itemRemote)` с зависимостью на интерфейс `ItemRemoteDataSource` (seam фичи 016, а не на конкретный API-класс; логирование наследуется через mixin `BaseRepositoryHelper`, без инъекции `LogRepository`-поля), null-payload ⇒ `RepositoryResult.error(exception: RepositoryException.unknown)`, маппинг через `_itemMapper.toListModel(entities: entity.items)`. За интерфейсом сегодня стоит `MockItemRemoteDataSource`, делегирующий в MOCK-класс `GetItemsApi` (path `v1/items`, query `page` / `page_size` / `search`) — замороженный пример verification-среза. Продуктовый транспорт — WebSocket-конверт контракта v0 — пришёл **фазой 026**: `NoxSocketClient` (`lib/data/remote/socket/nox_socket_client.dart`) плюс DI-флип mock → real в окружении `dev`, куда ведёт флейвор `stage` (флейворы — только `stage` и `prod`): `RealChatRemoteDataSource` / `RealMessageRemoteDataSource`, `env: [Environment.dev]` (`MockItemRemoteDataSource` флипа не получает и остаётся во всех окружениях — срез мёртвый). REST/Dio остаётся только под upload/download блобов (фаза 028); каждое соединение, сокет и передачи байтов, — канал Rust-модуля `packages/nox_tor` (фазы **044** и **050**): TLS 1.3 с техническим сертификатом, затем проверка `POST /auth` → `POST /auth2` с RustSecureBox по ключу сервера из ссылки спаривания ([14-networking-and-auth.md](14-networking-and-auth.md) §6.0). `WebSocketChannelFactory` передаёт в `IOWebSocketChannel.connect(customClient:)` клиент сокета из `ChannelHttpClient`; адрес и ключ сервера берутся только из спаренной сессии (ссылка спаривания) — адреса из сборки нет.
 
 ---
 
@@ -295,7 +295,7 @@ BLoC построен по правилам `05-presentation-layer.md`: `@freeze
 
 ### 6.1 State (Freezed-юнион)
 
-Поля пагинации (`pagingState`, `items`, `nextPage`) живут в варианте `Initialized` плюс вспомогательные поля (`loadingInProgress`, `refreshInProgress`, `searchQuery`; `total` из стейтов удалён фазой 025 — его больше нет и в `PageMetadata`). Производный геттер `isAnyInProgress` — в extension, не в `@freezed`-теле. Имена членов юниона — **bare** (`Initializing` / `Initialized` / `Error`), как в боевом коде; префиксная форма (`ItemList<...>`) — допустимый вариант против коллизий имён, но канон блюпринта здесь — bare.
+Поля пагинации (`pagingState`, `items`, `nextPage`) живут в варианте `Initialized` плюс вспомогательные поля (`loadingInProgress`, `query`; поля `total` нет ни в стейте, ни в `PageMetadata`). Производный геттер `isSearching` — в extension, не в `@freezed`-теле. Имена членов юниона — **bare** (`Initializing` / `Initialized` / `Error`), как в боевом коде; префиксная форма (`ItemList<...>`) — допустимый вариант против коллизий имён, но канон блюпринта здесь — bare.
 
 ```dart
 // lib/presentation/pages/item_list_page/bloc/item_list_state.dart
@@ -311,8 +311,7 @@ sealed class ItemListState with _$ItemListState {
     @Default(GetItemsConfig.defaultPage) int nextPage,
     @Default(false) bool isLastPage,
     @Default(false) bool loadingInProgress,
-    @Default(false) bool refreshInProgress,
-    @Default('') String searchQuery,
+    @Default('') String query,
   }) = Initialized;
 
   const factory ItemListState.error({BaseRepositoryException? exception}) = Error;
@@ -320,7 +319,7 @@ sealed class ItemListState with _$ItemListState {
 
 /// Computed (derived) logic lives in extension getters, NOT in the @freezed body.
 extension InitializedX on Initialized {
-  bool get isAnyInProgress => loadingInProgress || refreshInProgress;
+  bool get isSearching => query.trim().isNotEmpty;
 }
 ```
 
@@ -328,7 +327,7 @@ extension InitializedX on Initialized {
 
 ### 6.2 Event (Freezed-юнион)
 
-Единый `LoadItems({required bool reset})` для первой загрузки, догрузки и reset. Pull-to-refresh несёт `Completer<void>`. Параметры запроса в events **не** передаются — читаются из стейта.
+Единый `LoadItems({@Default(false) bool reset})` для первой загрузки, догрузки, reset и pull-to-refresh. Параметры запроса в events **не** передаются — читаются из стейта.
 
 ```dart
 // lib/presentation/pages/item_list_page/bloc/item_list_event.dart
@@ -339,46 +338,27 @@ sealed class ItemListEvent with _$ItemListEvent {
   /// Fired once from initState: ..add(const ItemListEvent.initialize()).
   const factory ItemListEvent.initialize() = Initialize;
 
-  /// reset == true — first page / after a filter change; false — load more.
-  const factory ItemListEvent.loadItems({required bool reset, Completer<void>? completer}) = LoadItems;
+  /// reset == true — first page / after a filter change / pull-to-refresh; false — load more.
+  const factory ItemListEvent.loadItems({@Default(false) bool reset}) = LoadItems;
 
-  /// Pull-to-refresh: complete the completer once loading finishes.
-  const factory ItemListEvent.refreshRequested({required Completer<void> completer}) = RefreshRequested;
-
-  /// Search query change (debounce + reset).
-  const factory ItemListEvent.updateSearchQuery({required String value}) = UpdateSearchQuery;
-
-  /// Item tapped — navigation flows via a side-effect stream (see 05-presentation-layer.md §3.3).
-  const factory ItemListEvent.showItemDetails({required String itemId}) = ShowItemDetails;
+  /// Search query change (debounceRestartable on the handler, then a reset).
+  const factory ItemListEvent.searchChanged(String query) = SearchChanged;
 }
 ```
 
-### 6.3 Debounce-трансформеры
+### 6.3 Трансформеры событий
 
-Debounce **обязателен** на `LoadItems` — `PagedListView` вызывает `fetchNextPage` агрессивно во время скролла.
-
-**Основной вариант — `bloc_concurrency`:**
+`LoadItems` строго сериализован — `PagedListView` вызывает `fetchNextPage` агрессивно во время скролла; ввод поиска дебаунсится.
 
 ```dart
 import 'package:bloc_concurrency/bloc_concurrency.dart';
+import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
-on<LoadItems>(_onLoadItems, transformer: sequential());        // strictly serial, no page races
-on<UpdateSearchQuery>(_onUpdateSearchQuery, transformer: restartable()); // new input cancels the old one
+on<LoadItems>(_onLoadItems, transformer: sequential());                   // strictly serial, no page races
+on<SearchChanged>(_onSearchChanged, transformer: debounceRestartable());  // 300 ms of quiet, then the latest; the old handler is cancelled
 ```
 
-**Альтернатива — кастомный `rxdart` debounce:**
-
-```dart
-import 'package:rxdart/rxdart.dart';
-
-EventTransformer<E> debounce<E>(Duration d) =>
-    (events, mapper) => events.debounceTime(d).switchMap(mapper);
-
-on<LoadItems>(_onLoadItems, transformer: debounce(const Duration(milliseconds: 300)));
-on<UpdateSearchQuery>(_onUpdateSearchQuery, transformer: debounce(const Duration(milliseconds: 300)));
-```
-
-> Рекомендация: `sequential()` для загрузки страниц (исключает гонку при быстрой подгрузке) + `restartable()` для поиска (новый запрос отменяет «протухший») — как основной путь; `rxdart`-debounce — когда нужен явный временной интервал.
+> `debounceRestartable` — проектный трансформер (`lib/presentation/base/bloc_transformers.dart`) поверх rxdart: `events.debounceTime(duration).switchMap(mapper)`, по умолчанию 300 мс. Им же идут проверки имени чата (`CreateChatBloc`, `RenameChatBloc`). Голый `restartable()` для ввода не годится: без паузы он отправлял бы запрос на каждую букву.
 
 ### 6.4 BLoC
 
@@ -389,18 +369,16 @@ on<UpdateSearchQuery>(_onUpdateSearchQuery, transformer: debounce(const Duration
 - координата и параметры берутся **из текущего `state`**, не из event;
 - после `await` — повторно читаем `this.state` и выходим, если строка поиска изменилась (stale-guard);
 - результат потребляется через `result.hasData` / `result.match`, `result.exception` пробрасывается в `pagingState.error`;
-- навигация/снэкбары уходят через `PublishSubject`-стримы, не через стейт (см. `05-presentation-layer.md`).
+- побочный эффект, если он нужен (снэкбар, навигация), — статус в состоянии, который страница ловит `BlocListener` (`05-presentation-layer.md` §5.6); стримов-эффектов у блока нет. Этому списку эффект не нужен: ошибку догрузки он показывает сам (`pagingState.error` → `newPageErrorIndicatorBuilder`), а тап по элементу страница обрабатывает без блока (§7).
 
 ```dart
 // lib/presentation/pages/item_list_page/bloc/item_list_bloc.dart
 import 'dart:async';
 
 import 'package:bloc_concurrency/bloc_concurrency.dart';
-import 'package:collection/collection.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:rxdart/rxdart.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
@@ -409,6 +387,7 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/item/get_items_config.dart';
 import 'package:nox_app/domain/repository/item/item_repository.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
+import 'package:nox_app/presentation/base/bloc_transformers.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 
 part 'item_list_event.dart';
@@ -419,24 +398,10 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
   ItemListBloc() : super(const ItemListState.initializing()) {
     on<Initialize>(_onInitialize);
     on<LoadItems>(_onLoadItems, transformer: sequential());
-    on<RefreshRequested>(_onRefreshRequested);
-    on<UpdateSearchQuery>(_onUpdateSearchQuery, transformer: restartable());
-    on<ShowItemDetails>(_onShowItemDetails);
+    on<SearchChanged>(_onSearchChanged, transformer: debounceRestartable());
   }
 
   final _itemRepository = getIt<ItemRepository>();
-
-  // Navigation — side-effect stream (canon 05 §3.3), not via state. The page
-  // subscribes to navigateToDetails in initState (full page widget — in 05 §3.3).
-  final _navigateToDetailsController = PublishSubject<ItemModel>();
-
-  Stream<ItemModel> get navigateToDetails => _navigateToDetailsController.stream;
-
-  @override
-  Future<void> close() async {
-    await _navigateToDetailsController.close();
-    await super.close();
-  }
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ItemListState> emit) async {
     emit(ItemListState.initialized(pagingState: PagingState<String, ItemModel>()));
@@ -445,13 +410,10 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
   FutureOr<void> _onLoadItems(LoadItems event, Emitter<ItemListState> emit) async {
     final state = this.state;
-    if (state is! Initialized || state.loadingInProgress) {
-      event.completer?.complete();
-      return;
-    }
+    if (state is! Initialized || state.loadingInProgress) return;
 
     // Params come from state, not from the event.
-    final query = state.searchQuery;
+    final query = state.query;
     final isFirstPage = event.reset;
     final existingList = isFirstPage ? const <ItemModel>[] : state.items;
     final config = isFirstPage
@@ -461,7 +423,6 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
     // Mark loading (PagedListView shows the bottom spinner itself).
     emit(state.copyWith(
       loadingInProgress: true,
-      refreshInProgress: isFirstPage,
       pagingState: state.pagingState.copyWith(isLoading: true, error: null),
     ));
 
@@ -472,7 +433,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
         // Stale-guard: the user may have changed the search during the await.
         final updated = this.state;
-        if (updated is! Initialized || updated.searchQuery != query) return;
+        if (updated is! Initialized || updated.query != query) return;
 
         result.match(
           onData: (data) {
@@ -488,7 +449,6 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
               nextPage: applied.nextPage ?? updated.nextPage, // null => no more pages, keep coordinate
               isLastPage: !meta.hasMore,
               loadingInProgress: false,
-              refreshInProgress: false,
             ));
           },
           onError: (exception) {
@@ -499,7 +459,6 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
               // Load-more error — surface in pagingState.error for newPageErrorIndicator.
               emit(updated.copyWith(
                 loadingInProgress: false,
-                refreshInProgress: false,
                 pagingState: updated.pagingState.copyWith(isLoading: false, error: exception),
               ));
             }
@@ -512,47 +471,30 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
         if (updated is Initialized) {
           emit(updated.copyWith(
             loadingInProgress: false,
-            refreshInProgress: false,
             pagingState: updated.pagingState.copyWith(isLoading: false, error: exception),
           ));
         }
       },
     );
-
-    event.completer?.complete();
   }
 
-  FutureOr<void> _onRefreshRequested(RefreshRequested event, Emitter<ItemListState> emit) {
-    final state = this.state;
-    if (state is Initialized && !state.isAnyInProgress) {
-      add(LoadItems(reset: true, completer: event.completer));
-    } else if (!event.completer.isCompleted) {
-      event.completer.complete();
-    }
-  }
-
-  FutureOr<void> _onUpdateSearchQuery(UpdateSearchQuery event, Emitter<ItemListState> emit) {
+  FutureOr<void> _onSearchChanged(SearchChanged event, Emitter<ItemListState> emit) {
     final state = this.state;
     if (state is! Initialized) return;
-    final query = event.value.trim();
-    if (state.searchQuery == query) return;
+    final query = event.query.trim();
+    if (state.query == query) return;
 
     // Reset-on-filter: package reset() + clear items + reset nextPage + restart.
+    // A load of the previous query still under way ends on its stale-guard.
     emit(state.copyWith(
       items: const [],
       pagingState: state.pagingState.reset(),
       nextPage: GetItemsConfig.defaultPage,
       isLastPage: false,
-      searchQuery: query,
+      loadingInProgress: false,
+      query: query,
     ));
     add(const LoadItems(reset: true));
-  }
-
-  void _onShowItemDetails(ShowItemDetails event, Emitter<ItemListState> emit) {
-    final state = this.state;
-    if (state is! Initialized) return;
-    final match = state.items.firstWhereOrNull((e) => e.id == event.itemId);
-    if (match != null) _navigateToDetailsController.add(match);
   }
 }
 ```
@@ -561,18 +503,19 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
 - `PagingState.reset()` — метод пакета, возвращает чистый `PagingState`. Использовать **всегда** при смене фильтра/поиска/сортировки.
 - `event.reset` различает первую загрузку (или после смены фильтра) и догрузку. При `reset: true` координату НЕ читаем — стартуем с `defaultPage`.
-- Параметры запроса (search/sort/filter) читаем из `state`, а не передаём в `LoadItems`. UI вызывает просто `add(const LoadItems(reset: false))`.
-- Stale-guard после `await`: повторно читаем `this.state` и сверяем `searchQuery` — чтобы не записать «протухший» ответ. `restartable()` на поиске даёт ту же защиту со стороны трансформера.
+- Параметры запроса (search/sort/filter) читаем из `state`, а не передаём в `LoadItems`. UI вызывает просто `add(const LoadItems())`.
+- Stale-guard после `await`: повторно читаем `this.state` и сверяем `query` — чтобы не записать «протухший» ответ. `debounceRestartable()` на поиске даёт ту же защиту со стороны трансформера: обработчик прежнего ввода отменяется.
+- Pull-to-refresh — тот же `LoadItems(reset: true)`; страница ждёт ответа на стриме блока (§7). Отдельного события и `Completer` нет.
 - Тело хендлера обёрнуто в `executeLogic(() async {…}, onError: (error, exception, stackTrace) {…})` базового блока (`BaseBloc`) — позиционный первый аргумент-логика + 3-аргументный `onError` (см. `05-presentation-layer.md` §2); это и есть точка единого логирования/обработки сбоев.
 - `result.match(onData:, onError:)` — потребление `RepositoryResult` (именованные `success(data:)` / `error(exception:)`). `exception` уходит в `pagingState.error` (догрузка) или в `ItemListState.error` (первая страница при пустом списке) — это **ключевое правило**: мы не используем «сырой» `try/catch`, а потребляем `RepositoryResult`.
 
-> **Канонический шаблон vs текущий verification-harness (FR-013).** Показанный выше BLoC — это **аспирационный канон** блюпринта (поиск с debounce, pull-to-refresh с `Completer`, stale-guard, side-effect-стрим `navigateToDetails`). Реальный `lib/presentation/pages/item_list_page/bloc/item_list_bloc.dart` — намеренно урезанное подмножество:
-> - `ItemListEvent` = `{ initialize, loadItems({@Default(false) bool reset}) }` — без `refreshRequested` / `updateSearchQuery` / `showItemDetails` / `Completer`;
-> - `Initialized` = `{ pagingState, items, @Default(GetItemsConfig.defaultPage) int nextPage, isLastPage, loadingInProgress }` — без `searchQuery` / `refreshInProgress`; computed-геттеры в коде — `pagedItems` + `hasMore` (не `isAnyInProgress`);
-> - только `sequential()` на `LoadItems`, без `restartable()`/поиска и без `PublishSubject`/`close()`;
+> **Канонический шаблон vs текущий verification-harness (FR-013).** Показанный выше BLoC — это **аспирационный канон** блюпринта (поиск с `debounceRestartable()`, pull-to-refresh через тот же `LoadItems(reset: true)`, stale-guard). Реальный `lib/presentation/pages/item_list_page/bloc/item_list_bloc.dart` — намеренно урезанное подмножество:
+> - `ItemListEvent` = `{ initialize, loadItems({@Default(false) bool reset}) }` — без `searchChanged`;
+> - `Initialized` = `{ pagingState, items, @Default(GetItemsConfig.defaultPage) int nextPage, isLastPage, loadingInProgress }` — без `query`; computed-геттеры в коде — `pagedItems` + `hasMore` (не `isSearching`);
+> - только `sequential()` на `LoadItems`, без поиска;
 > - дополнительная ранняя защита `if (!isReset && !current.pagingState.hasNextPage) return;` — пропуск догрузки, когда страниц больше нет (полезный hardening-приём, который стоит перенять и в канон).
 >
-> Это «verification harness на mock-данных», а не нарушение блюпринта: расширенные ветки (поиск/refresh/навигация) добавляются вместе с первой реальной фичей (список чатов).
+> Это «verification harness на mock-данных», а не нарушение блюпринта: расширенные ветки (поиск, pull-to-refresh) — по образцу первой реальной фичи, списка чатов (`ChatsListBloc`: `SearchChanged` на `debounceRestartable()`, `LoadChats` на `sequential()`).
 
 ---
 
@@ -580,7 +523,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
 > **Соответствие коду (Принцип III).** `lib/general/text_constants.dart` удалён — канон пользовательских строк это ARB-локализация (`lib/l10n/app_en.arb` + `app_uk.arb`, EN+UK, доступ через `context.l10n`). `TextConstants` в сниппетах ниже — историческое имя из скелета Feature-001; читай его как «строка из `context.l10n`». Так же читаются два других исторических имени в них: `AppTextStyleTokens.body(...)` / `.body2(...)` — это `bodyLarge(...)` / `bodyMedium(...)` (реальный набор фабрик — девять M3-ролей + `monoBody`, [06-theming.md](06-theming.md) §5), а `context.appColors.onSurface` / `.error` — это `Theme.of(context).colorScheme.onSurface` / `.error`: у `AppColors` всего два поля (`surfaceMuted`, `dividerSubtle`), и в коде фич расширение не вызывается ([06-theming.md](06-theming.md) §2).
 
-`PagedListView` — обычный список, который читает `PagingState` и зовёт `fetchNextPage` при приближении к концу. Оборачиваем в `BlocSelector` по `pagingState`, чтобы не ребилдить список при изменении других полей (search text и т.д.). Pull-to-refresh — `AppRefreshIndicatorWidget` **над** `Scaffold`.
+`PagedListView` — обычный список, который читает `PagingState` и зовёт `fetchNextPage` при приближении к концу. Оборачиваем в `BlocSelector` по `pagingState`, чтобы не ребилдить список при изменении других полей (search text и т.д.). Pull-to-refresh — как у списка чатов 5.1: стоковый `RefreshIndicator` вокруг самого `PagedListView`, а `onRefresh` ждёт ответа блока на его стриме.
 
 ```dart
 // lib/presentation/pages/item_list_page/item_list_page.dart (_buildList fragment)
@@ -589,14 +532,15 @@ Widget _buildList(Initialized state) {
     // Select on pagingState — otherwise the list rebuilds on any state change.
     selector: (s) => s is Initialized ? s.pagingState : PagingState<String, ItemModel>(),
     builder: (context, pagingState) {
-      return PagedListView<String, ItemModel>.separated(
+      final list = PagedListView<String, ItemModel>.separated(
         state: pagingState,
-        fetchNextPage: () => context.read<ItemListBloc>().add(const LoadItems(reset: false)),
+        fetchNextPage: () => context.read<ItemListBloc>().add(const LoadItems()),
         builderDelegate: PagedChildBuilderDelegate<ItemModel>(
           itemBuilder: (context, item, index) => ItemTileWidget(
             key: ValueKey(item.id), // helps Flutter reuse widgets across a reset
             item: item,
-            onTap: () => context.read<ItemListBloc>().add(ItemListEvent.showItemDetails(itemId: item.id)),
+            // Nothing for the bloc to decide: the page navigates itself.
+            onTap: () => Navigator.of(context).push(ItemDetailsPage.route(itemId: item.id)),
           ),
           firstPageProgressIndicatorBuilder: (_) =>
               const AppProgressWidget(),
@@ -619,12 +563,14 @@ Widget _buildList(Initialized state) {
         ),
         separatorBuilder: (_, __) => SizedBox(height: AppSpacingTokens.s6),
       );
+      if (!FeatureFlags.enablePullToRefresh) return list;
+      return RefreshIndicator(onRefresh: _refresh, child: list);
     },
   );
 }
 ```
 
-Pull-to-refresh — обёртка **над** `Scaffold` на самом верхнем уровне `build()`:
+`build()` — обычный `Scaffold` с телом по подсостояниям, без обёртки над ним:
 
 ```dart
 @override
@@ -633,15 +579,12 @@ Widget build(BuildContext context) {
     value: _bloc,
     child: BlocBuilder<ItemListBloc, ItemListState>(
       builder: (context, state) {
-        return AppRefreshIndicatorWidget(
-          onRefresh: _refresh,
-          child: Scaffold(
-            appBar: AppBar(title: Text(TextConstants.itemListTitle)),
-            body: state.when(
-              initializing: () => const AppProgressWidget(),
-              initialized: _buildList,
-              error: (_) => Center(child: AppErrorWidget(onTryAgain: () => _bloc.add(const Initialize()))),
-            ),
+        return Scaffold(
+          appBar: AppBar(title: Text(TextConstants.itemListTitle)),
+          body: state.when(
+            initializing: () => const AppProgressWidget(),
+            initialized: _buildList,
+            error: (_) => Center(child: AppErrorWidget(onTryAgain: () => _bloc.add(const Initialize()))),
           ),
         );
       },
@@ -649,28 +592,31 @@ Widget build(BuildContext context) {
   );
 }
 
+/// Keeps the RefreshIndicator spinner up until the reset load actually
+/// finishes: the bloc emits loadingInProgress true, then false (or Error).
 Future<void> _refresh() async {
-  final completer = Completer<void>();
-  _bloc.add(RefreshRequested(completer: completer));
-  return completer.future;
+  final done = _bloc.stream.firstWhere((s) => s is Error || (s is Initialized && !s.loadingInProgress));
+  _bloc.add(const LoadItems(reset: true));
+  await done.timeout(const Duration(seconds: 5), onTimeout: () => _bloc.state);
 }
 ```
 
 Заметки по UI:
 
+- Pull-to-refresh — стоковый `RefreshIndicator` вокруг `PagedListView` (флаг `FeatureFlags.enablePullToRefresh`); `onRefresh` шлёт обычный `LoadItems(reset: true)` и ждёт на стриме блока первого `Error` или `Initialized` с `loadingInProgress == false`, но не дольше 5 с. Отдельного виджета-индикатора и `Completer` в событии нет (так устроен 5.1 — `lib/presentation/pages/chats_list_page/chats_list_page.dart`, `_refresh`).
 - `BlocSelector` по `pagingState` обязателен — иначе список ребилдится при любом изменении стейта.
 - `key: ValueKey(item.id)` помогает Flutter правильно переиспользовать виджеты при reset.
-- Поле поиска вызывает `add(UpdateSearchQuery(value: text))` — debounce в BLoC сам сгладит ввод.
+- Поле поиска вызывает `add(SearchChanged(text))` — `debounceRestartable()` в BLoC сам сгладит ввод.
 - Цвета/отступы/типографика — только через токены (`context.appColors`, `AppSpacingTokens`, `AppTextStyleTokens`), см. `06-theming.md`. Никакого сырого `Color`/`EdgeInsets`/`TextStyle` в коде экрана.
 - `PagedGridView`, `PagedSliverList`, `PagedSliverGrid` — те же правила, меняется только виджет.
 
-> **Текущий harness vs канон.** Реальный `lib/presentation/pages/item_list_page/item_list_page.dart` — намеренно минимальный: голый `PagedListView` (`CircularProgressIndicator` + `ListTile` + `AppHairlineDividerWidget` в `separatorBuilder`, тексты — через `context.l10n`), отрисованный **внутри body `AppShell`** (без собственного `Scaffold` и без `AppRefreshIndicatorWidget`), ветвление — `switch`-выражением по bare-состояниям. Это Scaffold-DEMO на mock-данных (FR-013), а не продуктовая фича. Продуктовый экран со списком — 5.1 `ChatsListPage` (`lib/presentation/pages/chats_list_page/chats_list_page.dart`): `PagedListView<String, ChatModel>.separated`, обёрнутый стоковым `RefreshIndicator` (виджета `AppRefreshIndicatorWidget` в `lib/` нет), без `BlocSelector`; pull-to-refresh шлёт `ChatsListEvent.loadChats(reset: true)` и ждёт в стриме блока конца загрузки (не `Completer` в событии).
+> **Текущий harness vs канон.** Реальный `lib/presentation/pages/item_list_page/item_list_page.dart` — намеренно минимальный: голый `PagedListView` (`CircularProgressIndicator` + `ListTile` + `AppHairlineDividerWidget` в `separatorBuilder`, тексты — через `context.l10n`), отрисованный **внутри body `AppShell`** (без собственного `Scaffold` и без pull-to-refresh), ветвление — `switch`-выражением по bare-состояниям. Это Scaffold-DEMO на mock-данных (FR-013), а не продуктовая фича. Продуктовый экран со списком — 5.1 `ChatsListPage` (`lib/presentation/pages/chats_list_page/chats_list_page.dart`): `PagedListView<String, ChatModel>.separated`, обёрнутый стоковым `RefreshIndicator`, без `BlocSelector`; pull-to-refresh шлёт `ChatsListEvent.loadChats(reset: true)` и ждёт в стриме блока конца загрузки — по канону выше.
 
 ---
 
 ## 8. Тестирование BLoC (`blocTest`)
 
-Обязательно дождаться debounce (`wait:`). При `sequential()` явный `wait` не требуется, но при `rxdart`-debounce — нужен. Моки — только `mockito` (`@GenerateMocks([ItemRepository])`; `mocktail` запрещён): блок резолвит репозиторий через `getIt`, поэтому мок регистрируется в `setUp` (`getIt.allowReassignment = true; getIt.registerSingleton<ItemRepository>(repository)`), а перед любым `when(...)` для generic-результата нужен `provideDummy<RepositoryResult<(List<ItemModel>, PageMetadata)>>(...)`.
+Обязательно дождаться debounce (`wait:`). При `sequential()` явный `wait` не требуется, а событие поиска на `debounceRestartable()` приходит в обработчик только через 300 мс тишины — тест ждёт дольше. Моки — только `mockito` (`@GenerateMocks([ItemRepository])`; `mocktail` запрещён): блок резолвит репозиторий через `getIt`, поэтому мок регистрируется в `setUp` (`getIt.allowReassignment = true; getIt.registerSingleton<ItemRepository>(repository)`), а перед любым `when(...)` для generic-результата нужен `provideDummy<RepositoryResult<(List<ItemModel>, PageMetadata)>>(...)`.
 
 ```dart
 blocTest<ItemListBloc, ItemListState>(
@@ -698,7 +644,7 @@ blocTest<ItemListBloc, ItemListState>(
     return ItemListBloc();
   },
   act: (bloc) => bloc.add(const Initialize()),
-  wait: const Duration(milliseconds: 350), // wait for debounce if the rxdart variant is used
+  wait: const Duration(milliseconds: 350), // longer than debounceRestartable's 300 ms, for the search events
   expect: () => [
     // Emit 1 — _onInitialize: initialized(pagingState: PagingState()) BEFORE loading, loadingInProgress=false (default).
     isA<Initialized>().having((s) => s.loadingInProgress, 'loadingInProgress', false),
@@ -716,7 +662,7 @@ blocTest<ItemListBloc, ItemListState>(
 Что обязательно покрыть тестами:
 - первая загрузка успешна;
 - догрузка добавляет в **конец** `items`, не затирает существующие;
-- смена `searchQuery` ⇒ `items` очищается, `nextPage` сбрасывается на `defaultPage`, `pagingState.reset()` применён;
+- смена `query` ⇒ `items` очищается, `nextPage` сбрасывается на `defaultPage`, `pagingState.reset()` применён (с `debounceRestartable()` — после `wait:` дольше 300 мс);
 - ответ с `hasMore == false` (или `nextCursor == null` в cursor-варианте) ⇒ `hasNextPage: false`, `isLastPage: true`;
 - ошибка догрузки ⇒ `pagingState.error` заполнен, `loadingInProgress: false`, экран НЕ уходит целиком в `Error`;
 - ошибка первой страницы при пустом списке ⇒ эмит `ItemListState.error`;
@@ -728,15 +674,15 @@ blocTest<ItemListBloc, ItemListState>(
 
 ## 9. Чеклист интеграции в новый экран
 
-1. Подключить `infinite_scroll_pagination: ^5.1.1` + `bloc_concurrency` (+ опционально `rxdart`) в `pubspec.yaml`.
+1. Подключить `infinite_scroll_pagination: ^5.1.1` + `bloc_concurrency` + `rxdart` (под `debounceRestartable()`) в `pubspec.yaml`.
 2. Использовать общий доменный `PageMetadata{hasMore, nextPage?}` (`lib/domain/repository/base/`); маппинг ответа в `(List<T>, PageMetadata)` — в реализации репозитория по канону `04-data-layer.md` §8: страничный путь берёт `has_more` с провода и вычисляет `nextPage` клиентски (1-based), seq-курсорный (`before_seq`/`limit`) оставляет `nextPage` пустым. Свёртка `ItemsEntity{…, total}` → `hasMore` — частный случай замороженного verification-среза, а не образец для продуктового эндпоинта.
 3. Привести списочный метод репозитория к канонической сигнатуре `Future<RepositoryResult<(List<T>, PageMetadata)>> getItems({required GetItemsConfig config})` через `BaseRepositoryHelper.execute`.
 4. Подключить общий extension `PagingStateExt.applyPage` (один на проект; им пользуются оба пути).
-5. В Freezed-стейте `Initialized` хранить тройку: `PagingState<String, T>`, `List<T> items`, `int nextPage` (+ `loadingInProgress`, `refreshInProgress`, `searchQuery`). Производное — в extension-геттере (`isAnyInProgress`).
-6. Сделать единый `LoadItems({required bool reset})`; debounce обязателен (`sequential()` для load + `restartable()` для поиска).
+5. В Freezed-стейте `Initialized` хранить тройку: `PagingState<String, T>`, `List<T> items`, `int nextPage` (+ `loadingInProgress`, `query`). Производное — в extension-геттере (`isSearching`).
+6. Сделать единый `LoadItems({@Default(false) bool reset})`; трансформеры обязательны (`sequential()` для load + `debounceRestartable()` для поиска).
 7. Параметры запроса (search/sort/filter) — из `state`, не из event.
 8. Любое изменение фильтра/поиска/сортировки ⇒ `pagingState.reset()` + очистка `items` + обнуление `nextPage` + `add(LoadItems(reset: true))`.
-9. Pull-to-refresh: `RefreshRequested(Completer<void>)` + `AppRefreshIndicatorWidget` над `Scaffold`.
+9. Pull-to-refresh: стоковый `RefreshIndicator` вокруг `PagedListView`; `onRefresh` шлёт `LoadItems(reset: true)` и ждёт на стриме блока первого `Error` или `Initialized` с `loadingInProgress == false`.
 10. В UI — `PagedListView<String, T>.separated` внутри `BlocSelector` по `pagingState`; заполнить все слоты `PagedChildBuilderDelegate`; `key: ValueKey(item.id)`.
 11. Покрыть BLoC тестами по чеклисту из §8 + отдельный unit-тест на `applyPage`.
 
@@ -753,21 +699,21 @@ blocTest<ItemListBloc, ItemListState>(
 - **Не класть `fromJson`** на BLoC-типы (`*.g.dart` для стейта/event запрещён) — у Freezed-юнионов BLoC только `*.freezed.dart`.
 - **Не двигать `nextPage`** при `applied.nextPage == null` — это сигнал «страниц больше нет».
 - **Не забыть `BlocSelector`** по `pagingState` в UI — без него список ребилдится на каждое изменение стейта.
-- **Не считать пагинированный список автоматически network-only** — продуктовые списки (чаты, история сообщений) с фазы 026 — read-through через DAO (запрос в источник + запись в кэш, кэш как фолбэк); без DAO/subject остался только замороженный `Item`-срез: чатовые one-shot команды пишут в DAO, а отправка сообщения идёт через очередь `outbox` (`04-data-layer.md` §6а, §8). Форма возврата от ветки не зависит: всегда `RepositoryResult<(List<T>, PageMetadata)>`.
+- **Не считать пагинированный список автоматически network-only** — продуктовые списки (чаты, история сообщений) с фазы 026 — read-through через DAO (запрос в источник + запись в кэш, кэш как фолбэк); без DAO остался только замороженный `Item`-срез: чатовые one-shot команды пишут в DAO, а отправка сообщения идёт через очередь `outbox` (`04-data-layer.md` §6а, §8). Форма возврата от ветки не зависит: всегда `RepositoryResult<(List<T>, PageMetadata)>`.
 
 ---
 
 ## Чеклист
 
-- [ ] Подключены `infinite_scroll_pagination ^5.1.1` (v5) + `bloc_concurrency` (+ опц. `rxdart`).
+- [ ] Подключены `infinite_scroll_pagination ^5.1.1` (v5) + `bloc_concurrency` + `rxdart` (под `debounceRestartable()`).
 - [ ] Используется общий `PageMetadata{hasMore, nextPage?}`; `nextPage` вычисляется клиентски в репозитории (канон `04-data-layer.md` §8); seq-курсор сообщений идёт через `GetMessagesConfig.tail/olderThan` без отдельного класса метаданных.
 - [ ] Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>` через `BaseRepositoryHelper.execute` (никакого «сырого» `try/catch`).
 - [ ] Один общий `PagingStateExt.applyPage` на проект; отдельный CURSOR-вариант — только под строковый курсор.
-- [ ] Freezed-стейт `Initialized` хранит `PagingState` + плоский `items` + `nextPage` (+ `loadingInProgress`/`refreshInProgress`/`searchQuery`); производное — в extension-геттере.
-- [ ] Единый `LoadItems({required bool reset})`; debounce обязателен (`sequential()` + `restartable()` основной путь).
+- [ ] Freezed-стейт `Initialized` хранит `PagingState` + плоский `items` + `nextPage` (+ `loadingInProgress`/`query`); производное — в extension-геттере.
+- [ ] Единый `LoadItems({@Default(false) bool reset})`; трансформеры обязательны (`sequential()` для загрузок + `debounceRestartable()` для поиска).
 - [ ] Параметры запроса читаются из `state`; reset-on-filter через `pagingState.reset()` + очистка + перезапуск.
 - [ ] `result.exception` пробрасывается в `pagingState.error` (догрузка) / `ItemListState.error` (первая страница при пустом списке).
 - [ ] UI: `PagedListView` в `BlocSelector` по `pagingState`; все слоты делегата заполнены; `ValueKey(item.id)`.
-- [ ] Pull-to-refresh: `RefreshRequested(Completer<void>)` + `AppRefreshIndicatorWidget` над `Scaffold`.
+- [ ] Pull-to-refresh: стоковый `RefreshIndicator` вокруг `PagedListView`, `onRefresh` ждёт ответа блока на его стриме (как 5.1); без отдельного события и `Completer`.
 - [ ] BLoC покрыт тестами (§8) + отдельный unit-тест на `applyPage`.
 - [ ] `fvm flutter analyze` проходит для затронутых файлов.

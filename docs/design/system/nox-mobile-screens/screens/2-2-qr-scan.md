@@ -18,6 +18,7 @@ Live camera fills the screen. Transparent app bar (back, flashlight, switch-came
 - Reticle stroke is brand white (3dp), corners radius m; mask is #000 at 55% (brand-fixed, not themed).
 - Detecting a pairing link closes the scanner at once: the link goes into the Login field, and Login reads it and opens Connect (2.4) — the same path as a pasted link (feature 045). A code that holds no pairing link → snackbar “This QR code is invalid. Try another one.”, and the camera keeps scanning.
 - Permission denied → opaque surface screen (NOT over the camera) with no_photography glyph + “Open settings”.
+- No camera on the device (e.g. the iOS simulator) → the same opaque surface with no_photography, “Camera unavailable”, “No camera is available on this device. Paste the pairing link instead.” and “Enter manually” (no chip in `index.html`).
 
 ## Navigation
 - Valid scan → Login (2.1), which opens Connect (2.4) at once.
@@ -31,6 +32,7 @@ Live camera fills the screen. Transparent app bar (back, flashlight, switch-came
 - Denied title: Camera access needed
 - Denied body: To scan a QR code, allow camera access in system settings.
 - Denied action: Open settings
+- Unavailable: Camera unavailable / No camera is available on this device. Paste the pairing link instead. / Enter manually
 - Invalid code (snackbar): This QR code is invalid. Try another one.
 
 ## Design-system components

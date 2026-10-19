@@ -14,13 +14,15 @@ window.NOX_SPECS = [
     "anatomy": "Brand-fixed dark canvas (#0C2424, NOT themed). Centered logo (168) + NOX wordmark below (Bold 700, +0.12em, #FAFAFA).",
     "behavior": [
       "Shown only on cold start. One-shot reveal ~400ms (emphasized-decelerate); no looping.",
-      "While visible the app restores the stored ID and checks session validity.",
+      "While visible the app opens its local data under this device's key and starts the connection; the first screen waits for that start and for the reveal, whichever ends later. A secure store that does not answer yet keeps the splash up and is asked again (after 2, 4, 8, 16, 30… s) - nothing is wiped for it; only on Android, a store that still fails at the fifth attempt (about half a minute) counts as a lost key.",
       "Background and wordmark colors are brand-fixed — they do NOT switch with light/dark theme."
     ],
     "navigation": [
-      "Has stored, valid ID → Chats shell (4.1 / 5.1).",
-      "No ID → Login (2.1).",
-      "Resolution error → Error (3.1, blocking)."
+      "Paired, onboarding done → Chats shell (4.1 / 5.1).",
+      "Paired, the name not yet set → Set username (2.3).",
+      "Not paired → Login (2.1).",
+      "Local data whose key is gone (a database the key does not open, or a database with no key) → that data is wiped, and Login (2.1).",
+      "No route to Error (3.1): nothing at start-up ends on the error screen."
     ],
     "copy": [
       "Wordmark: NOX"
@@ -190,13 +192,14 @@ window.NOX_SPECS = [
     ],
     "anatomy": "Centered error glyph (onSurfaceVariant, 48–96) + title + message + primary “Try again”.",
     "behavior": [
-      "Blocking variant has NO back (it is the last entry in the stack — e.g. failed cold-start).",
+      "Blocking variant has NO back button: it is the last entry in the stack (e.g. onboarding could not be finished on 2.3), and on Android the system back minimizes the app. The splash never routes here.",
       "Embedded variant shows a back arrow (reached from within a flow).",
       "Props: icon, title, message, onRetry. Copy pattern: “Could not <verb>. Check your connection and try again.”"
     ],
     "navigation": [
       "Try again → re-runs the failed action.",
-      "Embedded back → previous screen."
+      "Embedded back → previous screen.",
+      "Blocking, system back (Android) → minimizes the app."
     ],
     "copy": [
       "Default title: Something went wrong",
@@ -227,7 +230,7 @@ window.NOX_SPECS = [
     ],
     "anatomy": "BottomAppBar (surfaceContainer, elev 2) with a circular notch; two tabs (Chats forum / Settings settings); a docked “+” FAB (primaryContainer, elev 3) cradled in the notch.",
     "behavior": [
-      "Two destinations switch via an IndexedStack with a ≤150ms fade (tabFade); state is preserved per tab.",
+      "Two destinations switch with a ≤150ms fade (tabFade); both stay mounted in one Stack (IgnorePointer + AnimatedOpacity - the hidden one ignores input), so state is preserved per tab.",
       "Selected tab → primary + filled icon; unselected → onSurfaceVariant + outlined icon.",
       "The “+” is an action (create chat), NOT a third tab — it is visible on both tabs."
     ],
@@ -569,10 +572,10 @@ window.NOX_SPECS = [
     "behavior": [
       "Identity card: avatar + name (edit inline) + the full public ID, with Edit name and Copy ID as named tonal buttons. No QR action - adding a device is 7.8's own screen.",
       "Connection (phase 045): the row under Devices (glyph lan) opens 7.10 - the server address, the onion address and Use Tor.",
-      "Phase 037 removed the Server owner badge and its 'ownership not stated' state: the machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart.",
+      "No role badge: with one person on the machine such a mark has one possible answer, and a field with one answer only looks like information.",
       "Editing: name becomes an inline TextField with counter.",
-      "Phase 032 removed the mask, the reveal and the account QR: the ID stopped being a secret. Show QR leads to Devices, where an invite is minted with a one-shot token.",
-      "Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state."
+      "No mask and no reveal: the ID is not a secret. A device is added with Add a device on Devices (7.8), where an invite is minted with a one-shot token.",
+      "Log out → confirm AlertDialog (destructive action tinted error). Confirming revokes this device's key over a live connection, then wipes the session and every bit of local data; until that ends the dialog stays up and modal, with a spinner in place of its Log out button. A logout that fails closes the dialog and says “Could not log out. Please try again.” in a snackbar."
     ],
     "navigation": [
       "Rows → Devices (7.8) / Connection (7.10) / 7.2 / 7.3 / 7.4 / Terms / About.",
@@ -581,7 +584,8 @@ window.NOX_SPECS = [
     "copy": [
       "Title: Settings",
       "Logout title: Log out?",
-      "Logout body: Your ID and local data will be removed from this device.",
+      "Logout body: This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.",
+      "Logout error (snackbar): Could not log out. Please try again.",
       "Actions: Cancel · Log out"
     ],
     "ds": [
@@ -610,7 +614,7 @@ window.NOX_SPECS = [
     ],
     "anatomy": "App bar (back + Notifications). Grouped switch row “Enable notifications”.",
     "behavior": [
-      "Single switch with supporting text “Only for chats you’re in”.",
+      "Single switch with supporting text “For new messages in your chats”.",
       "If the OS permission is denied, an InfoBanner appears (“Notifications are blocked” + Open settings) and the switch reads off."
     ],
     "navigation": [
@@ -618,7 +622,7 @@ window.NOX_SPECS = [
       "Open settings → OS settings."
     ],
     "copy": [
-      "Row: Enable notifications / Only for chats you’re in",
+      "Row: Enable notifications / For new messages in your chats",
       "Denied: Notifications are blocked / Allow notifications in system settings to receive messages from your chats. / Open settings"
     ],
     "ds": [

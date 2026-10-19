@@ -1077,12 +1077,17 @@ func staleSchemaError(dbPath, filesPath string) error {
 // hand it out on this machine instead, and both are named here. The page always
 // listens: since 047 a server cannot start without it, because its password is
 // entered there.
+//
+// Whether anybody can reach the machine is asked the way the page asks it -
+// the device count (store.DeviceCount) - so the line and the page never
+// disagree about it.
 func sayHowToPair(ctx context.Context, st *store.Store, cfg config.Config, logger *slog.Logger) error {
-	counts, err := st.CountEverything(ctx)
+	devices, err := st.DeviceCount(ctx)
 	if err != nil {
-		return fmt.Errorf("count devices: %w", err)
+		// Already says what was being counted.
+		return err
 	}
-	if counts.Devices > 0 {
+	if devices > 0 {
 		return nil
 	}
 	logger.Info("no device can reach this server yet - the service page shows a link to pair one, and `noxd link` prints it",

@@ -20,6 +20,7 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 
 /// Drains the outgoing queue — and is the ONLY thing that sends.
@@ -29,9 +30,9 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// flap could run both over the same message. A duplicate in a journal with no
 /// deletion cannot be taken back, so the whole design collapses into one
 /// serialised drain.
-@LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
-class OutboxService {
-  OutboxService(this._outbox, this._messages, this._phaseService, this._files, this._transfers, this._chats);
+@LazySingleton(as: OutboxService, env: [Environment.dev, Environment.prod, Environment.test])
+class OutboxServiceImpl implements OutboxService {
+  OutboxServiceImpl(this._outbox, this._messages, this._phaseService, this._files, this._transfers, this._chats);
 
   final OutboxRepository _outbox;
   final MessageRepository _messages;
@@ -96,6 +97,7 @@ class OutboxService {
 
   /// Subscribes to the session phase. Idempotent — main() calls it once, but a
   /// second call must not open a second subscription.
+  @override
   void start() {
     _stopped = false;
     _phaseSubscription ??= _phaseService.watchPhase().listen((phase) {
@@ -119,6 +121,7 @@ class OutboxService {
   /// teardown mid-pass — would silently end sending for the life of the
   /// process. Whatever went wrong, the queue is still on disk and the next
   /// trigger deserves a real attempt.
+  @override
   Future<void> flush() {
     _queue = _queue.then((_) => _drain()).catchError((Object error, StackTrace stackTrace) {
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
@@ -135,6 +138,7 @@ class OutboxService {
   /// order, so the pass that sees its upload end finds the record already gone
   /// and moves on at once instead of pausing on it. And a pass is asked for: a
   /// head that was waiting out a pause no longer holds the rest back.
+  @override
   Future<void> discard({required String clientMessageId}) async {
     await _outbox.remove(clientMessageId: clientMessageId);
     final uploading = _uploading;
@@ -145,6 +149,7 @@ class OutboxService {
   /// Cancels the subscription and any pending retry. Called before the logout
   /// wipe: a pass still in flight would write a message into the store the wipe
   /// is in the middle of emptying.
+  @override
   Future<void> stop() async {
     _stopped = true;
     await _phaseSubscription?.cancel();

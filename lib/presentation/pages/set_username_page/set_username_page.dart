@@ -88,17 +88,29 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
     }
   }
 
+  /// The system back on 2.3 is `Skip` (spec Q1/Q11): the step keeps the name the
+  /// server gave and the app moves on, instead of closing on the first screen
+  /// after pairing. The gallery's copy sits on a stack and goes back as usual.
+  void _onBack(bool didPop, Object? result) {
+    if (didPop || _bloc.state.isSubmitting) return;
+    _skip();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<SetUsernameBloc>.value(
-      value: _bloc,
-      child: BlocConsumer<SetUsernameBloc, SetUsernameState>(
-        listenWhen: (previous, current) => previous.status != current.status,
-        listener: _onStatus,
-        builder: (context, state) => AppOnboardingScaffoldWidget(
-          subtitle: context.l10n.windowSubtitleSetUp,
-          field: _field(context, state),
-          actions: _actions(context, state),
+    return PopScope(
+      canPop: widget.demo,
+      onPopInvokedWithResult: _onBack,
+      child: BlocProvider<SetUsernameBloc>.value(
+        value: _bloc,
+        child: BlocConsumer<SetUsernameBloc, SetUsernameState>(
+          listenWhen: (previous, current) => previous.status != current.status,
+          listener: _onStatus,
+          builder: (context, state) => AppOnboardingScaffoldWidget(
+            subtitle: context.l10n.windowSubtitleSetUp,
+            field: _field(context, state),
+            actions: _actions(context, state),
+          ),
         ),
       ),
     );

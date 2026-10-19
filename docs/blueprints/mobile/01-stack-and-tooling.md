@@ -75,11 +75,10 @@ dependencies:
   # --- Core model / reactive ---
   freezed_annotation: 3.1.0
   json_annotation: ^4.12.0    # явная зависимость для *.g.dart
-  rxdart: 0.28.0              # BehaviorSubject / PublishSubject в репозиториях и блоках
+  rxdart: 0.28.0              # операторы потоков (debounceTime/switchMap/skip) + субъекты служб и состояния в памяти
   collection: 1.19.1          # collection-расширения
   intl: 0.20.2                # ТОЛЬКО форматирование дат/чисел (без i18n-инфраструктуры)
   uuid: ^4.5.3                # генерация id
-  crypto: ^3.0.6              # объявлен, но в lib/ и test/ не импортируется (см. таблицу ниже)
 
   # --- DI ---
   injectable: ^3.0.0
@@ -179,12 +178,13 @@ flutter:
   assets:
     - assets/png/
     - assets/svg/icons/
-    - assets/svg/illustrations/
     - assets/svg/flags/
     - assets/animation/
+    - assets/licenses/        # licence texts of the bundled fonts, registered in LicenseRegistry by main.dart
 
   # Real design-system fonts, shipped since 002-design-system-assets.
   # Roboto Mono is used for the long identifier string only (see 06-theming.md).
+  # Every bundled font ships its licence text in assets/licenses/ (06-theming.md §1).
   fonts:
     - family: Roboto
       fonts:
@@ -218,7 +218,7 @@ flutter_gen:
 
 > **`dependency_overrides`.** В этом проекте — **пусто**. Добавляйте override только когда реально упёрлись в ошибку резолва (например, конфликт транзитивов вокруг `win32`). Не копируйте overrides «на всякий случай» из чужих проектов.
 
-> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт `{"app.flavor": "stage|prod"}`, а с фазы 026 `config/stage.json` дополнительно несёт `app.apiUrl`. **Это значение — не путь к живому серверу:** адрес приезжает ссылкой спаривания вместе с ключом сервера и живёт в сессии, а у адреса из сборки ключа сервера нет по построению — канал не может проверить соединение с ним. Ключ остаётся в файле как дефолт сборки, но `LiveSessionStarter` и `ApiClient` его не читают. Потребляются через `--dart-define-from-file` — единообразный флейвор-механизм для всех платформ, включая desktop (Windows/Linux/macOS), у которых нет нативной flavor-машинерии Android/iOS (см. `09-build-and-secrets-infra.md`).
+> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт только `{"app.flavor": "stage|prod"}`. **Адреса сервера в сборке нет:** адрес приезжает ссылкой спаривания вместе с ключом сервера и живёт в сессии, а у адреса из сборки ключа сервера не было бы по построению — канал не смог бы проверить соединение с ним. Потребляются через `--dart-define-from-file` — единообразный флейвор-механизм для всех платформ, включая desktop (Windows/Linux/macOS), у которых нет нативной flavor-машинерии Android/iOS (см. `09-build-and-secrets-infra.md`).
 
 > **Почему нет `equatable`.** Библиотека **намеренно исключена** из зависимостей. Value-equality (`==` / `hashCode`) в этом проекте полностью обеспечивает **Freezed**: каждый `@freezed`-класс генерирует структурное равенство сам — это покрывает и BLoC-state/event (`05-presentation-layer.md`), и любые value-объекты. Правило: **где нужен value-объект, делайте его `@freezed`-классом — не наследуйте `Equatable` и не добавляйте `equatable`**. `equatable` тянем обратно только если найдётся кейс, который Freezed реально не закрывает (на сегодня такого нет).
 
@@ -235,9 +235,9 @@ flutter_gen:
 | `flutter_bloc` + `bloc_concurrency` | управление состоянием; event-трансформеры (`restartable`/`droppable`/`sequential`) поверх Freezed-событий. См. `05-presentation-layer.md`. |
 | `freezed_annotation` (+ dev `freezed`) | sealed unions для State/Event и доменных моделей (`*.freezed.dart`, без `*.g.dart` на BLoC-типах). См. `03`/`05`. |
 | `json_annotation` (+ dev `json_serializable`) | сериализация **entity-слоя** (`*.g.dart`). Доменные модели JSON не несут. См. `04-data-layer.md`. |
-| `rxdart` | `BehaviorSubject<RepositoryResult<...>>` в репозиториях поверх реактивного Sembast-DAO. |
+| `rxdart` | операторы потоков: `debounceTime` + `switchMap` в `debounceRestartable()` (поиск, проверка имени — `05-presentation-layer.md`), `skip` + `debounceTime` на тиках сигнала `watch*`; `BehaviorSubject` — производное состояние в памяти (`AppStateRepositoryImpl`) и потоки служб (фаза сокета, статус связи, запросы устройств). Проекции DAO в `watch*` идут голыми, без субъекта. |
 | `injectable` + `get_it` (+ dev `injectable_generator`) | единый `configureDependencies(String env)` + `$initGetIt`. См. `02-dependency-injection.md`. |
-| `dio` | HTTP-клиент **REST-поверхности** client-сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт: его клиент приехал в фазе **026** (`lib/data/remote/socket/`), поэтому dio остаётся только на файловой цепочке (фаза 028). **Dio ходит по тому же каналу, что и сокет**: `IOHttpClientAdapter` получает `ChannelHttpClient.transferClient` — `HttpClient`, чей `connectionFactory` открывает канал нативного модуля (транспорт → TLS 1.3 → проверка `POST /auth` → `POST /auth2` против ключа сервера из ссылки спаривания) и отдаёт готовый `ChannelSocket`. Порт прямого адреса — тот, что приехал ссылкой (443 — только когда в адресе порта нет), onion-сервис — порт 443. |
+| `dio` | HTTP-клиент **REST-поверхности** клиентского сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт: его клиент приехал в фазе **026** (`lib/data/remote/socket/`), поэтому dio остаётся только на файловой цепочке (фаза 028). **Dio ходит по тому же каналу, что и сокет**: `IOHttpClientAdapter` получает `ChannelHttpClient.transferClient` — `HttpClient`, чей `connectionFactory` открывает канал нативного модуля (транспорт → TLS 1.3 → проверка `POST /auth` → `POST /auth2` против ключа сервера из ссылки спаривания) и отдаёт готовый `ChannelSocket`. Порт прямого адреса — тот, что приехал ссылкой (443 — только когда в адресе порта нет), onion-сервис — порт 443. |
 | `web_socket_channel` | транспорт WebSocket-конверта контракта v0: `SocketChannelFactory` поверх `IOWebSocketChannel` (нужен `pingInterval`) под `NoxSocketClient` — `lib/data/remote/socket/`, фаза 026. |
 | `infinite_scroll_pagination` 5.1.1 | stateless `PagingState`-в-bloc (без `PagingController`). См. `07-pagination.md`. |
 | `flutter_screenutil` 5.9.3 | адаптивные spacing/typography токены, design size 360×779. См. `06-theming.md`. |
@@ -251,7 +251,6 @@ flutter_gen:
 | `nox_tor` (path, workspace) | нативный модуль на Rust за C ABI. Канал к серверу: TCP или поток Arti → TLS 1.3 (rustls) → проверка `POST /auth` → `POST /auth2`; ключи и подписи — RustSecureBox (крейт `packages/rust_secure_box`, зависимость модуля по пути; для Dart — `package:nox_tor/secure_box.dart`); Dart видит канал через `NoxChannelApi` (`package:nox_tor/channel.dart`, `NativeNoxChannelApi` в `[dev]`). Хранилище локальных данных (`nox_vault_*`, фаза 048): ключ локальных данных, который приложение отдаёт модулю один раз за процесс, запечатывание записей базы и кусков файлов; Dart видит его через `NoxVault` (`package:nox_tor/vault.dart`) — синхронно, во всех окружениях, `test` включительно. Встроенный Tor-клиент: Arti `=0.47.0` с фичей `hs-pow-full` (решает задачу PoW onion-сервиса), без ключей доступа и без хранилища ключей; подключение к onion-сервису своего сервера, сон и пробуждение; Dart видит его через `TorService` (`NativeTorService` в `[dev, prod]`). Собирается и работает на всех пяти платформах. Свои зависимости пакета — `native_toolchain_rust`, `hooks`, `code_assets` (нативный хук сборки). См. `14-networking-and-auth.md` §6. |
 | `video_player` | видео на экране файла 5.3 — только из локального файла (открытой временной копии), без потоковой отдачи: нативный плеер ходил бы своим HTTP мимо канала. Реализации есть для iOS, Android и macOS; на Windows и Linux воспроизведения нет, его закрывает `VideoPlaybackCapability`. |
 | `path_provider_platform_interface` + `path_provider_windows` | на Windows `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` каждому, кто спрашивает папку данных (фаза 048, `04-data-layer.md` §6г). Пины — те, что уже резолвит `path_provider`. |
-| `crypto` | объявлен в `pubspec.yaml`, но ни `lib/`, ни `test/` его не импортируют: комментарий в `pubspec.yaml` называет вывод `login_ref`, которого в коде нет (нашёл сам при сверке). |
 | `app_links` | приём входящих ссылок (deep / universal links) — cold-start + warm-поток; парсятся в `DeepLinkRepository`. **План**: зависимость объявлена, но в `lib/` пока не импортируется — deep links не реализованы и остаются открытым вопросом. См. `13-deep-links.md`. |
 
 ---
@@ -355,7 +354,7 @@ formatter:
 - [ ] Camera/QR: `mobile_scanner: ^7.2.0` (iOS/Android/macOS only), `qr_flutter: ^4.1.0` (все 5), `permission_handler: ^12.0.3` (iOS/Android), `zxing2: ^0.2.3` (QR-декод из картинки на Windows/Linux) — АКТИВНЫ.
 - [ ] Файлы/сеть: `file_selector: ^1.1.0` (НЕ `file_picker` — конфликт `win32` с `package_info_plus ^10`), `connectivity_plus: ^7.3.1`, `video_player: ^2.14.0` (iOS/Android/macOS), `path_provider_platform_interface: 2.1.2` + `path_provider_windows: 2.3.0` — АКТИВНЫ.
 - [ ] Нативный модуль: `workspace: [packages/nox_tor]` + `nox_tor: {path: packages/nox_tor}`; Rust по пину `packages/nox_tor/rust/rust-toolchain.toml` установлен (без него не собирается приложение и не идут тесты).
-- [ ] l10n: `flutter_localizations` (sdk) + `flutter: generate: true` + `l10n.yaml`; `fonts:`-блок объявлен (Roboto, Roboto Mono).
+- [ ] l10n: `flutter_localizations` (sdk) + `flutter: generate: true` + `l10n.yaml`; `fonts:`-блок объявлен (Roboto, Roboto Mono); лицензия каждого встроенного шрифта лежит в бандле (`assets/licenses/`) и зарегистрирована в `LicenseRegistry` при старте (`lib/main.dart`).
 - [ ] Feature-gated зависимости (`firebase_*`, `image_picker`, vendor-SDK аналитики) — закомментированы; раскомментируются при активации дока 15/16/17.
 - [ ] `dev_dependencies` содержит `build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `flutter_gen_runner`, `flutter_lints: 6.0.0`, `mockito: ^5.6.4` (с комментарием про конфликт analyzer/injectable_generator), `bloc_test`, `integration_test`, `flutter_test`, `flutter_launcher_icons` (объявлен, но генератор НЕ запускается — перетрёт ручной набор иконок 008), `file_selector_platform_interface` + `plugin_platform_interface` (фейк пикера в тестах).
 - [ ] `dependency_overrides` отсутствует (или содержит только реально необходимые из-за конфликта резолва).

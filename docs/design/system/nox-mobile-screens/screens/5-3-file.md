@@ -21,12 +21,13 @@ App bar (back + file name + download action). Large type glyph in a tinted tile 
 
 ## Navigation
 - Back → previous (thread 5.2 or chat card 5.4).
-- Download → writes the plain file where the person chose (phase 048: the copy on the device is sealed).
+- Download → writes the plain file where the person chose in the system save dialog (phase 048: the copy on the device is sealed), then the snackbar “File saved”.
 
 ## Copy (EN)
 - Size example: 2.4 MB
 - Progress: Downloading… 64%
 - Open error: Couldn't open this file. Free up some space and try again.
+- Saved (snackbar): File saved
 
 ## Design-system components
 - AppBar (title, action download)

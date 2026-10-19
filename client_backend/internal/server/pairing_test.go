@@ -314,6 +314,18 @@ func TestARenameReachesTheOtherDeviceOfTheSamePerson(t *testing.T) {
 	if label != "Anna" {
 		t.Fatalf("label = %q, want Anna", label)
 	}
+
+	// And what that device writes next is signed with the new name, with no
+	// reconnect: its connection holds the name before the event goes out.
+	chatID := seedChat(t, second, "after the rename")
+	sent := second.expectOKAfter(4, fmt.Sprintf(
+		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"m-after-rename","body":{"type":"text","text":"hi"}}}`,
+		chatID))
+	var msg protocol.Message
+	mustUnmarshal(t, sent["message"], &msg)
+	if msg.AuthorLabel != "Anna" {
+		t.Fatalf("the other device signs %q after the rename, want Anna", msg.AuthorLabel)
+	}
 }
 
 // expectErrCode reads the reply for id and returns its error code.

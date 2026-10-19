@@ -573,7 +573,7 @@ func TestASecondPersonCannotBeCreatedByAnyMeans(t *testing.T) {
 	if people != 1 {
 		t.Fatalf("people = %d, want 1", people)
 	}
-	if _, err := s.ResolveIdentity(ctx, "dev-first", "", 600); err != nil {
+	if _, err := s.ResolveIdentity(ctx, "dev-first", 600); err != nil {
 		t.Fatalf("the person stopped resolving: %v", err)
 	}
 }

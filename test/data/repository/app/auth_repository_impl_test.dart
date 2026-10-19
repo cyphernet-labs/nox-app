@@ -10,7 +10,7 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';

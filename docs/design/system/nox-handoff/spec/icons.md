@@ -50,7 +50,7 @@ mockups = Material Symbols Rounded.
 | Archive (zip/rar/7z) | `folder_zip` |
 | Other / unknown | `insert_drive_file` |
 
-## Empty states (fallback until illustrations ship)
+## Empty states (the glyph at the centre of the NoxEmptyState composition; no illustration ships)
 | Screen | Icon |
 |---|---|
 | 5.1 no chats | `forum_outlined` |

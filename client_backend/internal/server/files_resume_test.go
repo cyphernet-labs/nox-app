@@ -242,7 +242,7 @@ func greeted(t *testing.T, ts *httptest.Server, srv *Server) *wsClient {
 	t.Helper()
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
-	c.hello(1, `,"label":"Anna"`)
+	c.hello(1, ``)
 	return c
 }
 

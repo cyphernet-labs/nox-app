@@ -133,10 +133,9 @@ class NoxSocketClient {
   /// meantime makes the attempt that was choosing a stale one.
   int _attempt = 0;
 
-  /// Asked at every greeting rather than handed once at start: the login
-  /// derivation and the device id are read fresh so a sign-in or a logout in
-  /// the same process greets as the right person, and the label is stated only
-  /// on the greeting that follows a rename.
+  /// Asked at every greeting rather than handed once at start, so a sign-in or
+  /// a logout in the same process greets as the right person - or, unpaired,
+  /// holds the connection for `pair` without greeting at all.
   Future<GreetingCredentials?> Function()? _credentialsProvider;
 
   /// Raised when the server turns out to be a different world than the one this
@@ -663,9 +662,6 @@ class NoxSocketClient {
       final reply = await _sendOnce(isGreeting: true, via: connection, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
-        // Stated only after a rename: a greeting that repeats a cached name
-        // would push it back over a rename made from another device.
-        'label': ?credentials.label,
       });
       if (stale()) return;
       if (!reply.ok) {
@@ -993,21 +989,19 @@ class NoxSocketClient {
   }
 }
 
-/// What a greeting states (contract §3). Who is greeting is not among it any
-/// more (phase 044): the connection proved the device's key before the
-/// greeting, and the server knows the device by that.
+/// What a greeting states (contract §3). Who is greeting is not among it (044):
+/// the connection proved the device's key before the greeting, and the server
+/// knows the device by that. Nor is a name: a name travels only in
+/// `identity.setLabel`.
 class GreetingCredentials {
-  const GreetingCredentials({this.label}) : unpaired = false;
+  const GreetingCredentials() : unpaired = false;
 
   /// This install has not paired yet, so there is nothing to greet as.
   ///
   /// The connection is still needed - `pair` is the one command allowed before
   /// a greeting - so the socket stays open and simply does not greet. Greeting
   /// anyway would be refused, and the refusal reads as a revocation.
-  const GreetingCredentials.unpaired() : label = null, unpaired = true;
-
-  /// Present only on the greeting that follows a rename.
-  final String? label;
+  const GreetingCredentials.unpaired() : unpaired = true;
 
   /// See [GreetingCredentials.unpaired].
   final bool unpaired;

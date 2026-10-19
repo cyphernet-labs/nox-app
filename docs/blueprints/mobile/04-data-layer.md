@@ -6,9 +6,9 @@
 
 > **Экран читает кэш, сервер пишет в кэш (2026-10-04).** Первая страница списка чатов и хвост ленты читаются с `cachedOnly: true` и выводятся сразу; запрос к серверу идёт в фоне, а чтения с локальным ответом не ждут отсутствующего соединения (`send(..., waitForConnection: false)`). Подробности — [14-networking-and-auth.md §6.6](14-networking-and-auth.md).
 
-> **`watchX()` как change-signal (Feature 014).** Реактивные Sembast-`watch()`-стримы репозитория (`watchChats`/`watchMessages`) используются презентацией как **сигнал об изменении** кэша, а не как источник проекции: их значение игнорируется, а BLoC перечитывает уже загруженный префикс через тот же `getX` (см. `07-pagination.md`). Мутации, меняющие несколько сущностей (напр. `sendMessage` → сообщение + строка чата), выполняются в data-слое, поэтому реактивный список обновляется без связей между BLoC. См. `specs/014-reactive-data-refresh/`.
+> **`watchX()` как change-signal (Feature 014).** `watch*` cache-first-репозитория (`watchChats`/`watchChat`/`watchMessages`) — голая проекция Sembast-`watch()`, без `RepositoryResult`; презентация использует её как **сигнал об изменении** кэша, а не как источник проекции: значение блок не читает, а перечитывает уже загруженный префикс через тот же `getX`, отдающий `RepositoryResult` (см. `07-pagination.md`). Ошибка хранилища приходит подписчику ошибкой стрима. Мутации, меняющие несколько сущностей (напр. `sendMessage` → сообщение + строка чата), выполняются в data-слое, поэтому реактивный список обновляется без связей между BLoC. См. `specs/014-reactive-data-refresh/`.
 
-> **Reactive-канал не только над Sembast (Feature 015).** Тот же паттерн change-signal применим к не-Sembast источникам: `SessionRepository.watchLabel()` — `async*`-генератор поверх внутреннего broadcast-`StreamController<String?>` над `shared_preferences`-меткой (не реактивной самой по себе): каждый вызов отдаёт **свежий** одноподписочный стрим, поэтому зовётся один раз на потребителя. Он эмитит текущую метку при подписке (seed-then-live, как `watch()`-`async*`), затем каждое переименование (`updateLabel`) и `null` при `clear` (logout). Единый источник identity (технический идентификатор + label) резолвится чистой `resolveIdentity(SessionModel?)`; переименование меняет только label, идентификатор remain-invariant (own-detection в треде опирается на идентификатор). Живые surfaces (desktop rail-аватар) подписываются и обновляются без рестарта. См. `specs/015-identity-unification/`.
+> **Поток значения не над Sembast (Feature 015).** `SessionRepository.watchLabel()` — не сигнал изменения, а поток самого значения (его читают `TabBarShell` и `ChatCardBloc`): `async*`-генератор поверх внутреннего broadcast-`StreamController<String?>` над `shared_preferences`-меткой (не реактивной самой по себе): каждый вызов отдаёт **свежий** одноподписочный стрим, поэтому зовётся один раз на потребителя. Он эмитит текущую метку при подписке (seed-then-live, как `watch()`-`async*`), затем каждое переименование (`updateLabel`) и `null` при `clear` (logout). Единый источник identity (технический идентификатор + label) резолвится чистой `resolveIdentity(SessionModel?)`; переименование меняет только label, идентификатор remain-invariant (own-detection в треде опирается на идентификатор). Живые surfaces (desktop rail-аватар) подписываются и обновляются без рестарта. См. `specs/015-identity-unification/`.
 
 > **RemoteDataSource seam (Feature 016).** Сетевая граница каждой data-фичи — абстрактный интерфейс `*RemoteDataSource` (`lib/data/remote/datasource/`: `ChatRemoteDataSource`/`MessageRemoteDataSource`/`FileRemoteDataSource`/`ItemRemoteDataSource`). Репо зависят **от интерфейса**, не от конкретного мока (dependency inversion). Мок-реализации (`Mock*RemoteDataSource`) биндятся `@LazySingleton(as: Interface, env:[...])`. В окружении `dev` (флейвор `stage`) стоят реальные источники `RealChatRemoteDataSource`/`RealMessageRemoteDataSource`/`RealFileRemoteDataSource` (`remote/datasource/real/`; команды — сокетом, байты файлов — через `ApiClient`), их моки — `[Environment.prod, Environment.test]`; репо/DAO/мапперы/`RepositoryResult`/`PageMetadata`/UI от выбора не зависят. У `ItemRemoteDataSource` (замороженный верификационный срез) real-impl нет, и его мок покрывает `[dev, prod, test]`. `RepositoryResult`+catch-all `execute()` и HTTP→exception-маппинг (S3) остаются контрактом поверх seam. См. `specs/016-remote-datasource-seam/`. _(Feature 017 ретайрил `ChatFilesRemoteDataSource`: файлы чата — не сетевой ресурс, а локальная деривация из уже персистентных вложений `MessageDao` (`MessageRepository.chatFiles(chatId)`, newest-first). У файлов нет собственной сетевой границы — они появляются вместе с сообщениями, а сообщения уже проходят через `MessageRemoteDataSource`.)_
 
@@ -23,7 +23,7 @@
 - **Мапперы** — двунаправленная конвертация `Entity <-> Model` (`BaseMapper`), где происходит ВСЯ коэрция типов (enum, `DateTime`, nullable-нормализация). Композиция дочерних мапперов через конструктор.
 - **Обработка ошибок** — единственный механизм `BaseRepositoryHelper.execute<TD>()`: тонкий guarded try/catch, который **обязательно** логирует через `LogRepository` и возвращает `RepositoryResult.error(...)`. Четыре ветки: `on BaseRepositoryException` (уже доменная ошибка — пробрасывается **как есть**, не понижается до `unknown`), `on SocketUnavailableException` → `RepositoryException.connection` (фаза 026: без неё мёртвый сокет попадает в catch-all как `unknown`, и весь кэш-фоллбэк, завязанный на `connection`, становится недостижимым кодом), `on DioException` (маппинг по типу/статусу через `_mapDioException`), общий `catch` → `RepositoryException.unknown`. Там же живёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)` — разворачивание конверта: payload, иначе `RepositoryException.fromWireCode(error.code)`, иначе `StateError`. **Нет типизированной транспортной иерархии** (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило этого блюпринта), но есть **маркер** `BaseRepositoryException`, который реализует каждая доменная ошибка: общий enum `RepositoryException` и любые feature-специфичные enum'ы реализуют этот маркер (см. §5 и `03-domain-layer.md`). Конкретный доменный код возвращает сам callback явным `return RepositoryResult.error(...)`.
 - **DAO (Sembast)** — реактивное локальное хранилище: `onSnapshots()`/`onSnapshot()`, атомарные `db.transaction()`, env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory).
-- **Репозитории** — реализуют контракты домена; **кэш-first — форма по умолчанию**: либо `watch*` как прямая проекция DAO-потока (продуктовые `ChatRepositoryImpl`/`MessageRepositoryImpl`, фича 013), либо один `BehaviorSubject<RepositoryResult<...>>` (канон реактивного **одиночного** ресурса, §8.1). Продуктовые репозитории читают **сквозь** кэш: чтение без `cachedOnly` идёт на сервер и пишет ответ в Sembast, чтение с `cachedOnly` и чтение без канала отдаются из Sembast. Список чатов и история сообщений — кэш-первые с DAO; network-only (без DAO и subject) — только у **замороженного верификационного среза `Item`** и у того, что действительно не кэшируется (см. §8 и `07-pagination.md`).
+- **Репозитории** — реализуют контракты домена; **кэш-first — форма по умолчанию**: `watch*` — голая проекция DAO-потока, сигнал изменения без `RepositoryResult` и без промежуточного subject'а (продуктовые `ChatRepositoryImpl`/`MessageRepositoryImpl`, фича 013; та же форма у одиночного ресурса, §8.1), а данные отдают `get*`/`fetch*` в `RepositoryResult`. Продуктовые репозитории читают **сквозь** кэш: чтение без `cachedOnly` идёт на сервер и пишет ответ в Sembast, чтение с `cachedOnly` и чтение без канала отдаются из Sembast. Список чатов и история сообщений — кэш-первые с DAO; network-only (без DAO) — только у **замороженного верификационного среза `Item`** и у того, что действительно не кэшируется (см. §8 и `07-pagination.md`).
 
 Направление зависимостей: `data` **реализует** контракты `domain`. `domain` не импортирует `data`. Конвертация между базово-типизированными entities и богатыми доменными моделями живёт исключительно в мапперах.
 
@@ -61,7 +61,9 @@ lib/data/
   sync/
     live_session_starter.dart    # подъём живой сессии: сокет + фазы + первичный sync (026)
     sync_service.dart            # применение событий журнала в DAO (026)
-    outbox_service.dart          # слив очереди исходящих — единственный отправитель (027)
+    outbox_service_impl.dart     # OutboxServiceImpl (as: OutboxService) — слив очереди исходящих, единственный отправитель (027)
+    attachment_prefetch_service_impl.dart  # AttachmentPrefetchServiceImpl (as: AttachmentPrefetchService) — подкачка полученных картинок (028)
+    pair_request_service_impl.dart  # PairRequestServiceImpl (as: PairRequestService) — запросы новых устройств (046)
     retry_ladder.dart            # одна лестница пауз и предел отказов для всего, что повторяется само (043)
     attachment_download_service_impl.dart  # скачивание вложений с продолжением и повторами (043)
     connection/connection_path_selector.dart  # выбор пути перед каждой попыткой и причина неудачи раунда (040, 045), см. 14 §6
@@ -593,7 +595,7 @@ Future<void> mutate({
 2. **Фильтрация и сортировка — в Dart по декодированным сущностям.** Глобальный `field_rename: snake` пишет на диск `chat_id`, поэтому `Finder`/`Filter` по camelCase-ключу молча не находит ничего (та же гоча, что у `ChatDao`/`MessageDao`).
 3. **Состояния `sending` в store нет.** Оно живёт ровно столько, сколько длится один `await` в сервисе; персистировать его — значит после падения процесса оставить на диске запись, помеченную как отправляемая, которую никто не отправляет.
 
-Слив живёт рядом, в `data/sync/outbox_service.dart`, и это **единственный отправитель в приложении**: два отправителя (композер и переотправка по реконнекту) при мигании связи запускались бы внахлёст. Проходы сериализованы цепочкой `Future _queue` (тот же приём, что в `SyncService`), идут строго по `ordinal` и по одной записи, а запись удаляется **только после** того, как репозиторий персистировал сообщение: обратный порядок оставляет окно, в котором сообщения нет нигде.
+Слив — доменная служба `OutboxService` (`lib/domain/service/outbox_service.dart`: `start`, `flush`, `discard`, `stop`), реализация — `OutboxServiceImpl` рядом, в `data/sync/outbox_service_impl.dart` (`@LazySingleton(as: OutboxService)`); блоки берут её через `getIt<OutboxService>()`. Это **единственный отправитель в приложении**: два отправителя (композер и переотправка по реконнекту) при мигании связи запускались бы внахлёст. Проходы сериализованы цепочкой `Future _queue` (тот же приём, что в `SyncService`), идут строго по `ordinal` и по одной записи, а запись удаляется **только после** того, как репозиторий персистировал сообщение: обратный порядок оставляет окно, в котором сообщения нет нигде.
 
 Отказ классифицируется, а не обрабатывается одинаково: `connection` / `rateLimited` / `internal` / `unknown` / нераспознанный — повторяемые (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся **у записи**); прочие — окончательные, помечаются ошибкой, и проход идёт дальше. Иначе одно негодное сообщение держит за собой всю очередь, а слишком длинный текст короче с десятой попытки не станет.
 
@@ -662,7 +664,7 @@ Future<void> mutate({
 
 ### 6г. Данные на диске устройства (048)
 
-Всё, что приложение держит на диске, лежит в **папке данных приложения** и **запечатано ключом локальной базы**; ничего из этого не попадает в системные бэкапы (`09-build-and-secrets-infra.md`, «Данные не уходят в бэкапы»). Шифр — в модуле канала (`package:nox_tor/vault.dart`, `NoxVault`, контракт `specs/048-device-data-at-rest/contracts/ffi-vault.md`): ChaCha20-Poly1305 и HKDF-SHA256 на `ring`, вызовы синхронные.
+Всё, что приложение держит на диске, лежит в **папке данных приложения** и **запечатано ключом локальной базы** — кроме собственных файлов Tor-клиента; ничего из этого не попадает в системные бэкапы (`09-build-and-secrets-infra.md`, «Данные не уходят в бэкапы»). **Исключение — Tor.** Состояние (`nox_tor_state/` в папке данных) и кэш (`nox_tor_cache/` в кэш-папке платформы) пишет сам Arti своим форматом, и ключом локальных данных они не запечатаны. Ключей там нет — хранилища ключей Arti не держит; лежат выбор guard-узлов и консенсус каталога сети Tor. Выход стирает обе папки (`TorService.wipe()`). Шифр — в модуле канала (`package:nox_tor/vault.dart`, `NoxVault`, контракт `specs/048-device-data-at-rest/contracts/ffi-vault.md`): ChaCha20-Poly1305 и HKDF-SHA256 на `ring`, вызовы синхронные.
 
 **Папка данных** — `AppDataRoot` (`local/app_data_root.dart`): `getApplicationSupportDirectory()`; на Windows `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` всем, кто спрашивает эту папку, включая файл сейфа. Раскладка:
 
@@ -672,7 +674,7 @@ Future<void> mutate({
 | `nox_attachments/<file_id>.<ext>` | скачанное вложение; после отправки — и своё | куски |
 | `nox_attachments/<file_id>.<ext>.part` + `.part.tag` | незаконченное скачивание и версия файла (`Last-Modified`) | куски; версия — открыто |
 | `nox_outbox/<client_message_id>/copy` | копия исходящего | куски |
-| `nox_tor_state/` | состояние Tor-клиента (его кэш — `nox_tor_cache/` в папке кэша) | своё |
+| `nox_tor_state/` | состояние Tor-клиента: выбор guard-узлов (его кэш — консенсус каталога — `nox_tor_cache/` в кэш-папке платформы) | нет — собственные файлы Arti, ключей в них нет; выход стирает обе папки |
 | `<temp>/nox_open/<своя папка>/<имя>` | временные открытые копии | нет; живут по правилам ниже |
 | вне папки данных: Android `<cache>/<uuid>/<имя>`, iOS `<tmp>/<bundle id>-Inbox/<имя>` | копии, которые пикер платформы делает из выбранного документа | нет — их делает платформа; удаляются по правилам ниже |
 
@@ -721,7 +723,7 @@ Future<void> mutate({
 
 ### 7а. Dio `ApiClient`
 
-**Реальный код.** Один host, один экземпляр Dio. `ApiClient` — `@LazySingleton(env: [Environment.dev])`: он есть только там, где есть живой канал; конструктор инжектирует `AppConfigRepository` и `ChannelHttpClient`. `initBase({required String address})` ставит base URL (`https` по умолчанию, не `http`), вешает `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (свой у Dio, потому что Dio пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр) и **один раз** — `AuthInterceptor`. Каждое соединение этого клиента открывает канал нативного модуля и проходит проверку `/auth` и `/auth2` само по себе, как соединение сокета. `ChannelHttpClient` сбрасывает оба клиента, когда меняются ключи (`bind`) или канал останавливается (`unbind`), а адаптер Dio запоминает клиент один раз — поэтому `ApiClient` ставит адаптер заново через `ChannelHttpClient.onDiscarded`. Адрес **обязателен**, и `AppConfig.apiUrl` его источником не является: у адреса из сборки нет ключа сервера по построению, значит канал не может проверить соединение с ним. Зовёт `initBase` только `LiveSessionStarter`: при старте — со спаренным адресом, затем на каждом приветствии — с адресом соединения, через которое оно пришло, потому что байты вложений идут тем же путём, что команды (прямой адрес или onion, [14-networking-and-auth.md](14-networking-and-auth.md) §6). `main.dart` не зовёт его вовсе. Data source, инжектирующий `ApiClient`, — `RealFileRemoteDataSource` (файловая цепочка, фаза 028).
+**Реальный код.** Один host, один экземпляр Dio. `ApiClient` — `@LazySingleton(env: [Environment.dev])`: он есть только там, где есть живой канал; конструктор инжектирует `AppConfigRepository` и `ChannelHttpClient`. `initBase({required String address})` ставит base URL (`https` по умолчанию, не `http`), вешает `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (свой у Dio, потому что Dio пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр) и **один раз** — `AuthInterceptor`. Каждое соединение этого клиента открывает канал нативного модуля и проходит проверку `/auth` и `/auth2` само по себе, как соединение сокета. `ChannelHttpClient` сбрасывает оба клиента, когда меняются ключи (`bind`) или канал останавливается (`unbind`), а адаптер Dio запоминает клиент один раз — поэтому `ApiClient` ставит адаптер заново через `ChannelHttpClient.onDiscarded`. Адрес **обязателен**, и источник у него один — ссылка спаривания: адреса из сборки нет, у него не было бы ключа сервера, и канал не смог бы проверить соединение с ним. Зовёт `initBase` только `LiveSessionStarter`: при старте — со спаренным адресом, затем на каждом приветствии — с адресом соединения, через которое оно пришло, потому что байты вложений идут тем же путём, что команды (прямой адрес или onion, [14-networking-and-auth.md](14-networking-and-auth.md) §6). `main.dart` не зовёт его вовсе. Data source, инжектирующий `ApiClient`, — `RealFileRemoteDataSource` (файловая цепочка, фаза 028).
 
 **Хост `.onion`** открывает модуль сам: `ChannelHttpClient.targetFor` превращает его в `OnionTarget`, и канал идёт потоком Arti до onion-сервиса (порт 443), поверх — тот же TLS 1.3 и та же проверка `/auth` и `/auth2`, что на прямом пути. Ни локального порта, ни обычного DNS для onion-имени нет.
 
@@ -785,7 +787,7 @@ class ApiClient {
 }
 ```
 
-Auth-заголовок — отдельный `AuthInterceptor` (`remote/interceptor/auth_interceptor.dart`), а не заголовки по-API: `onRequest` читает токен **асинхронно** на каждом запросе через `AppConfigRepository.getUserAuthIdToken()` (оба члена — `config.apiUrl` и `getUserAuthIdToken()` — в контракте репозитория **есть** с фичи 019) и ставит `Authorization: Bearer <token>` только для непустого значения; `onError` ничего не решает и **всегда** пробрасывает ошибку дальше, `401` включительно. `401` от `/files` — неудавшаяся передача (ключа соединения нет среди спаренных устройств, контракт §1), а не выход: соединение доказывает ключ устройства в проверке канала, ещё до `/ws` и `/files`, и у принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` и событие `device.revoked`. Выход по ответу файла позволил бы любому ответу `/files` стереть устройство. Писателя `auth_id_token` нет: соединение аутентифицирует канал, токенов контракт v0 не несёт, и схема `Bearer` — шов без модели.
+Auth-заголовок — отдельный `AuthInterceptor` (`remote/interceptor/auth_interceptor.dart`), а не заголовки по-API: `onRequest` читает токен **асинхронно** на каждом запросе через `AppConfigRepository.getUserAuthIdToken()` (член контракта репозитория с фичи 019) и ставит `Authorization: Bearer <token>` только для непустого значения; `onError` ничего не решает и **всегда** пробрасывает ошибку дальше, `401` включительно. `401` от `/files` — неудавшаяся передача (ключа соединения нет среди спаренных устройств, контракт §1), а не выход: соединение доказывает ключ устройства в проверке канала, ещё до `/ws` и `/files`, и у принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` и событие `device.revoked`. Выход по ответу файла позволил бы любому ответу `/files` стереть устройство. Писателя `auth_id_token` нет: соединение аутентифицирует канал, токенов контракт v0 не несёт, и схема `Bearer` — шов без модели.
 
 ```dart
 // Real AuthInterceptor (feature 019/S5), abridged.
@@ -818,20 +820,21 @@ class AuthInterceptor extends Interceptor {
 
 ### 7б. `BaseApiRepository` (TARGET)
 
-> **TARGET-форма.** `BaseApiRepository` появляется вместе с request-builder-обвязкой; в коде его нет (API-классы не наследуют общий базовый, а mock-`GetItemsApi` — обычный `@lazySingleton`). Он и не обязателен: контракт v0 идёт WS-конвертом (фаза 026), а REST-поверхность сводится к blob upload/download — если request-builder-обвязку и построят, то под неё. Сигнатура ниже — сама TARGET-форма: реальный `ApiClient.initBase()` — это **инстанс-метод `void`** на `@lazySingleton` (§7а), поэтому базовый класс придётся привязать к инжектированному `ApiClient`, а не к статической фабрике.
+> **TARGET-форма.** `BaseApiRepository` появляется вместе с request-builder-обвязкой; в коде его нет (API-классы не наследуют общий базовый, а mock-`GetItemsApi` — обычный `@lazySingleton`). Он и не обязателен: контракт v0 идёт WS-конвертом (фаза 026), а REST-поверхность сводится к blob upload/download — если request-builder-обвязку и построят, то под неё. Базовый класс отдаёт `Dio` инжектированного синглтона `ApiClient` (§7а): тот же клиент, тот же адрес спаренного сервера, тот же канал.
 
 `lib/data/remote/api/base/base_api_repository.dart`:
 
 ```dart
 import 'package:dio/dio.dart';
-import 'package:nox_app/data/remote/api/base/api_client.dart';
+import 'package:nox_app/data/remote/api_client.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 
 abstract class BaseApiRepository {
-  Dio get baseClient => ApiClient.initBase();
+  Dio get baseClient => getIt<ApiClient>().dio;
 }
 ```
 
-> **Свежий `Dio` на каждый доступ к `baseClient` — намеренное правило этого блюпринта, не дефект.** В TARGET-наброске геттер вызывает `ApiClient.initBase()` при каждом обращении, поэтому новый экземпляр создаётся на запрос. Токен всё равно читается асинхронно в `AuthInterceptor` **на каждый** запрос (§7а), так что свежесть авторизации обеспечена interceptor'ом, а не переиспользованием клиента. _(Реальный `ApiClient` пошёл другим путём — один `Dio` в синглтоне (`[Environment.dev]`) с идемпотентным `initBase(address:)`; если request-builder-обвязку будут строить, выбор между «свежий Dio на запрос» и singleton нужно принять явно, а не унаследовать молча.)_
+> Свежесть авторизации даёт не пересоздание клиента, а `AuthInterceptor`, который читает токен **на каждый** запрос (§7а). `ApiClient` зарегистрирован только в `[Environment.dev]`, поэтому API-класс поверх `BaseApiRepository` живёт там же.
 
 ### 7в. `RequestBuilder` + `RequestBuilderHelper` (TARGET)
 
@@ -976,7 +979,7 @@ class GetItemsApi extends BaseApiRepository with RequestBuilderHelper<GetItemsAp
 
 ### 8.0. SKELETON — network-only `ItemRepositoryImpl` замороженного `Item`-среза (реальный код)
 
-В скелете Feature-001 `ItemRepository` сознательно **узкий**: контракт `03-domain-layer.md` для harness'а экспонирует **только** `getItems(...)` (network-only — свойство этого замороженного harness'а, **не** продуктовое правило) + `clean()`; полный кэш-first CRUD (`watchItem`/`fetchItem`/`createItem`/`updateItem`/`deleteItem` + `ItemDao` + `BehaviorSubject`) — это **полная форма блюпринта** (§8.1), и для `Item` она не построена: кэш-first есть у продуктовых репозиториев (фича 013) и в другой форме (`watch*` — прямая проекция DAO-`watch()`, без промежуточного subject — §8.1). Так что реальный `ItemRepositoryImpl` инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, а не конкретный мок — seam 016), без DAO, без subject, без `dispose`:
+В скелете Feature-001 `ItemRepository` сознательно **узкий**: контракт `03-domain-layer.md` для harness'а экспонирует **только** `getItems(...)` (network-only — свойство этого замороженного harness'а, **не** продуктовое правило) + `clean()`; полный кэш-first CRUD (`watchItem`/`fetchItem`/`createItem`/`updateItem`/`deleteItem` + `ItemDao`) — это **полная форма блюпринта** (§8.1), и для `Item` она не построена: по ней устроены продуктовые репозитории (фича 013). Так что реальный `ItemRepositoryImpl` инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, а не конкретный мок — seam 016), без DAO:
 
 `lib/data/repository/item/item_repository_impl.dart`:
 
@@ -992,7 +995,7 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/item/get_items_config.dart';
 import 'package:nox_app/domain/repository/item/item_repository.dart';
 
-/// Network-only paginated list (no DAO/subject — carve-out). Skeleton source is
+/// Network-only paginated list (no DAO — carve-out). Skeleton source is
 /// a mock (FR-013). Wraps every call in BaseRepositoryHelper.execute (logs via
 /// LogRepository, maps errors to RepositoryException).
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
@@ -1028,35 +1031,30 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 - **`with BaseRepositoryHelper`** (без `on`-ограничения) + каждый публичный метод обёрнут в `execute<TD>()`; callback **сам возвращает уже-обёрнутый** `RepositoryResult<TD>`.
 - **Пустой payload → `RepositoryException.unknown` прямо в callback'е** (так в замороженном `Item`-срезе: `if (entity == null) return ...error(unknown)` — без `throw StateError`). Логирования здесь нет: `unknown` — нормальный доменный исход; необработанные исключения логирует и коэрцирует сам `execute`. **Продуктовые репозитории** (`ChatRepositoryImpl`/`MessageRepositoryImpl`) разворачивают конверт через `unwrapEnvelope(response, 'chats'|'messages'|'send')`: он поднимает точный код §2.1 (`fromWireCode`) или `StateError`, и `execute` отдаёт его наружу — так `name_taken`/`payload_too_large` доходят до BLoC неразмытыми.
 - **`PageMetadata` из обёртки страницы:** контрактные обёртки v0 (`{chats|messages, has_more}`) отдают `hasMore` готовым; verification-срез Item сворачивает offset-математику сам (`hasMore = (page * pageSize) < total`). В обоих случаях `nextPage = hasMore ? page + 1 : null` на страничном пути; `total` в `PageMetadata` не существует (фаза 025). Это канон для всех пагинированных списков — и кэш-first, и network-only (см. подсекцию «Когда network-only всё ещё уместен» ниже и `07-pagination.md`); никакой эвристики «по длине страницы».
-- **`clean()`** в скелете — no-op (`Future<void>.value()` через `async {}`); в полной форме он отменяет подписку и чистит DAO/subject.
+- **`clean()`** в скелете — no-op (`Future<void>.value()` через `async {}`); в полной форме он чистит DAO.
 
-### 8.1. Полная форма — кэш-first реактивный репозиторий (TARGET)
+### 8.1. Полная форма — кэш-first наблюдаемый ресурс (TARGET)
 
-> **TARGET-форма (для `Item`-среза — канон-к-построению).** Ниже — флагманский паттерн для user-scoped watchable-ресурсов. Применительно к `Item` это по-прежнему канон, а не код: `ItemDao` в репозитории **файл существует** (`local/item/item_dao.dart`, `@lazySingleton`), но им пользуется только собственный тест — сам `ItemRepositoryImpl` его не инжектирует, а `BehaviorSubject`, `watchItem`/`fetchItem`/CRUD и `GetItemConfig` (single-resource config) в коде отсутствуют. Кэш-first как таковой **построен** — для продуктовых репозиториев (`ChatRepositoryImpl` + `ChatDao`, `MessageRepositoryImpl` + `MessageDao`), но в другой форме: `watch*` отдаёт DAO-`watch()`-поток напрямую, без промежуточного `BehaviorSubject`, а `get*` читает сквозь кэш — с сервера, если не `cachedOnly` и канал есть, с записью ответа в store, иначе из store. Subject-вариант ниже остаётся каноном для реактивного **одиночного** ресурса. Network-only `getItems` **замороженного `Item`-среза** (§8.0) переносится в эту полную форму без изменений — как свойство harness'а, а не как образец для продуктового списка.
+> **TARGET-форма (для `Item`-среза — канон-к-построению).** Ниже — паттерн для user-scoped наблюдаемых ресурсов; по нему устроены продуктовые `ChatRepositoryImpl` + `ChatDao` и `MessageRepositoryImpl` + `MessageDao`: `watch*` — голая проекция DAO-`watch()`, сигнал изменения без `RepositoryResult` и без промежуточного subject'а, а `get*`/`fetch*` читают сквозь кэш — с сервера, если не `cachedOnly` и канал есть, с записью ответа в store, иначе из store. Применительно к `Item` это канон, а не код: `ItemDao` в репозитории **файл существует** (`local/item/item_dao.dart`, `@lazySingleton`), но им пользуется только собственный тест — сам `ItemRepositoryImpl` его не инжектирует, а `watchItem`/`fetchItem`/CRUD и `GetItemConfig` (single-resource config) в коде отсутствуют. Network-only `getItems` **замороженного `Item`-среза** (§8.0) переносится в эту полную форму без изменений — как свойство harness'а, а не как образец для продуктового списка.
 
 Полная форма `ItemRepositoryImpl` реализует расширенный контракт `ItemRepository` (`watchItem`/`fetchItem`/`getItems`/`createItem`/`updateItem`/`deleteItem`/`clean`) и:
 
 - несёт тот же `@LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])` — **env-список load-bearing**;
-- подмешивает `with BaseRepositoryHelper` и оборачивает **каждый** вызов в `execute<TD>()` (обязательное логирование необработанных исключений + маппинг по четырём веткам §5); callback **сам возвращает уже-обёрнутый** `RepositoryResult<TD>`;
-- подписывается на DAO-поток **один раз** в конструкторе (`_initSubscription`), маппит entities и кормит ОДИН `BehaviorSubject<RepositoryResult<List<ItemModel>>>` — кэш-источник, из которого `watchItem({id})` отдаёт реактивный поток одного ресурса по id;
+- подмешивает `with BaseRepositoryHelper` и оборачивает **каждое** чтение и каждую команду в `execute<TD>()` (обязательное логирование необработанных исключений + маппинг по четырём веткам §5); callback **сам возвращает уже-обёрнутый** `RepositoryResult<TD>`;
+- отдаёт `watchItem({id})` голой проекцией DAO-потока (`ItemDao.watch()` → строка по id → модель): это сигнал изменения — без `RepositoryResult`, без subject'а, без похода в сеть. Подписчик на тик перечитывает данные через `fetchItem`; ошибка хранилища приходит ему ошибкой стрима, до `execute` она не доходит;
 - читает `RepositoryResult` через `result.hasData`/`match`, **никогда** не `result.data!` за пределами проверенной ветки;
-- `@disposeMethod` отменяет подписку и закрывает subject.
+- подписок и субъектов не держит, поэтому `@disposeMethod` ему не нужен.
 
 `lib/data/repository/item/item_repository_impl.dart` (TARGET):
 
 ```dart
-import 'dart:async';
-
 import 'package:collection/collection.dart';
-import 'package:dio/dio.dart';
 import 'package:injectable/injectable.dart';
-import 'package:rxdart/rxdart.dart';
 import 'package:nox_app/data/entity/item/item_entity.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/item/item_dao.dart';
 import 'package:nox_app/data/mapper/item/item_mapper.dart';
 import 'package:nox_app/data/remote/datasource/item_remote_data_source.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -1067,66 +1065,22 @@ import 'package:nox_app/domain/repository/item/item_repository.dart';
 
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
-  ItemRepositoryImpl(this._itemDao, this._itemMapper, this._itemRemote) {
-    _initSubscription();
-  }
+  ItemRepositoryImpl(this._itemDao, this._itemMapper, this._itemRemote);
 
   final ItemDao _itemDao;
   final ItemMapper _itemMapper;
   final ItemRemoteDataSource _itemRemote;
 
-  final _itemsStreamController = BehaviorSubject<RepositoryResult<List<ItemModel>>>();
-  StreamSubscription<List<ItemEntity>>? _itemsSubscription;
-
-  /// Subscribe ONCE to the DAO stream and feed mapped results into the subject.
-  Future<void> _initSubscription() async {
-    try {
-      final stream = await _itemDao.watch();
-      _itemsSubscription = stream.listen((entities) {
-        _itemsStreamController.add(
-          RepositoryResult<List<ItemModel>>.success(
-            data: _itemMapper.toListModel(entities: entities),
-          ),
-        );
-      });
-    } catch (e, stackTrace) {
-      logRepository.error(target: this, error: e, stackTrace: stackTrace);
-      _itemsStreamController.add(
-        RepositoryResult<List<ItemModel>>.error(exception: RepositoryException.internal),
-      );
-    }
-  }
-
-  // --- Streaming read (cache-first, single resource) -------------------------
+  // --- Change signal (a projection of the cache) -----------------------------
 
   @override
-  Stream<RepositoryResult<ItemModel>> watchItem({required String id}) async* {
-    // Cache-miss -> trigger a REST fetch; saveData re-emits via the DAO stream.
-    // A refresh failure becomes a RepositoryResult.error EMITTED INTO the stream
-    // (not a raw async* error) so the subscriber sees it via match(onError:),
-    // mirroring BaseRepositoryHelper.execute's coercive mapping.
-    if (!_itemsStreamController.hasValue) {
-      try {
-        await _refreshFromNetwork();
-      } catch (e, stackTrace) {
-        logRepository.error(target: this, error: e, stackTrace: stackTrace);
-        yield RepositoryResult<ItemModel>.error(
-          exception: e is DioException ? RepositoryException.internal : RepositoryException.unknown,
-        );
-        return;
-      }
-    }
-    // Derive a single-resource stream from the shared cache subject.
-    yield* _itemsStreamController.stream.map((result) {
-      return result.match(
-        onData: (items) {
-          final item = items.firstWhereOrNull((e) => e.id == id);
-          return item == null
-              ? RepositoryResult<ItemModel>.error(exception: RepositoryException.notFound)
-              : RepositoryResult<ItemModel>.success(data: item);
-        },
-        onError: (exception) => RepositoryResult<ItemModel>.error(exception: exception),
-      );
+  Stream<ItemModel?> watchItem({required String id}) {
+    // A bare projection of the store: no RepositoryResult, no subject, no
+    // network. Subscribers re-read through fetchItem on each tick; a storage
+    // error reaches them as a stream error.
+    return _itemDao.watch().map((List<ItemEntity> entities) {
+      final entity = entities.firstWhereOrNull((e) => e.id == id);
+      return entity == null ? null : _itemMapper.toModel(entity: entity);
     });
   }
 
@@ -1158,7 +1112,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
     });
   }
 
-  /// Network fetch + saveData; the DAO onSnapshots() stream re-emits to the subject.
+  /// Network fetch + saveData; the DAO stream then ticks for every watcher.
   /// An empty payload throws raw -> execute()'s catch-all maps it to unknown.
   Future<void> _refreshFromNetwork() async {
     final response = await _itemRemote.getItems(config: GetItemsConfig.firstPage());
@@ -1174,7 +1128,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
   @override
   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config}) {
     // NETWORK-ONLY here only because the frozen Item harness caches nothing:
-    // no DAO, no BehaviorSubject. Product lists are cache-first (013).
+    // no DAO. Product lists are cache-first (013).
     return execute<(List<ItemModel>, PageMetadata)>(() async {
       final response = await _itemRemote.getItems(config: config);
       final entity = response.data;
@@ -1215,23 +1169,13 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
   }
 
   @override
-  Future<void> clean() async {
-    // Full form: cancel the subscription, close the subject, wipe the store.
-    await _itemsSubscription?.cancel();
-    await _itemDao.cleanData();
-  }
-
-  @disposeMethod
-  Future<void> dispose() async {
-    await _itemsSubscription?.cancel();
-    await _itemsStreamController.close();
-  }
+  Future<void> clean() => _itemDao.cleanData();
 }
 ```
 
 **Заметки**
 
-- `watchItem({id})` реплеит последнее значение из общего `BehaviorSubject` (кэш-список) и форвардит живые обновления, фильтруя список по `id` через `result.match(onData:, onError:)`. Единственная подписка на DAO создаётся один раз в конструкторе. Для строго keyed/per-ID потоков используй map контроллеров-по-ключу и init-lock против гонок параллельной подписки.
+- `watchItem({id})` — голая проекция `ItemDao.watch()`: отдаёт сохранённое при подписке, затем каждую перемену store, сведённую к одной строке по `id` (`null` — строки нет). Это сигнал изменения: блок значение не читает, а на тик (`skip(1)` + `debounceTime`) перечитывает `fetchItem` — путь данных у загрузки и у обновления один, и он возвращает `RepositoryResult`. Сеть стрим не трогает: в store её ответ кладут `fetchItem`/`_refreshFromNetwork`, и тик приходит сам. Ошибка хранилища в стриме — ошибка стрима: до `execute` она не доходит и в `RepositoryResult` не превращается.
 - Чтение `RepositoryResult` — **только через `hasData`/`match`** в ветке, проверившей наличие данных; никогда `result.data!` «вслепую» (см. `03-domain-layer.md`).
 - callback `execute<TD>()` **сам возвращает уже-обёрнутый** `RepositoryResult<TD>` — `return RepositoryResult.success(data: …)` на успехе. Для конкретного доменного кода (например `notFound` при cache-miss, как в `fetchItem`) верни его прямо в callback'е: `return RepositoryResult.error(exception: RepositoryException.<code>)`. `execute` лишь перехватывает **необработанные** исключения по четырём веткам §5: доменное — насквозь, `SocketUnavailableException`→`connection`, `DioException` — по типу/статусу, любой другой `catch`→`unknown`. Атомарная мутация по id через per-ID DAO:
 
@@ -1257,10 +1201,10 @@ Future<RepositoryResult<void>> _mutateItem({
 
 Продуктовые пагинированные списки — **кэш-first**: и список чатов, и история сообщений пишут каждую полученную с сервера порцию в Sembast, а чтения `cachedOnly` и чтения без канала режут из DAO. Network-only остаётся ровно у двух вещей: у **замороженного верификационного среза `Item`** (harness не кэширует ничего по построению) и у операций, которые кэшировать нечего — one-shot команды без локальной проекции. Кэш-first — форма **по умолчанию**; network-only нужно обосновывать, а не наоборот.
 
-Что от carve-out'а осталось неизменным — **форма контракта**: метод `getItems({required GetItemsConfig config})` возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` и реализован прямо в `ItemRepositoryImpl` (в скелетной §8.0 и в полной §8.1 форме одинаково). Никакого отдельного `getItemsPage`/`watchItems` для списка — пагинированный список это **`getItems`**, независимо от того, кэш-first он или network-only.
+Что от carve-out'а осталось неизменным — **форма контракта**: метод `getItems({required GetItemsConfig config})` возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` и реализован прямо в `ItemRepositoryImpl` (в скелетной §8.0 и в полной §8.1 форме одинаково). Никакого отдельного `getItemsPage` для списка — страницы пагинированного списка читает **`getItems`**, независимо от того, кэш-first он или network-only; `watch*` кэшируемого списка (как `watchChats()` у чатов) — только сигнал изменения, данных страницам он не несёт.
 
 ```dart
-// Frozen Item slice: paginated list, network-only - NO DAO, NO BehaviorSubject.
+// Frozen Item slice: paginated list, network-only - NO DAO.
 @override
 Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config}) {
   return execute<(List<ItemModel>, PageMetadata)>(() async {
@@ -1277,7 +1221,7 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 }
 ```
 
-> **Как это устроено у чатов.** `ChatRepositoryImpl.getChats` без `cachedOnly` берёт страницу у `ChatRemoteDataSource` (поиск тоже идёт на сервер: в кэше лежит только пролистанное), пишет её в Sembast и отдаёт с `PageMetadata` из `has_more`; с `cachedOnly` или при мёртвом канале (`SocketUnavailableException`) отдаёт срез из DAO. `ChatsListBloc` читает первую страницу с `cachedOnly: true` и показывает её сразу, а страницу сервера запрашивает в фоне. История сообщений устроена так же: `MessageRepositoryImpl.getMessages` берёт окно у сервера (кроме чата, которого на сервере ещё нет, §6б), пишет его в store и режет ответ из DAO. Network-only остаётся в силе для замороженного `Item`-среза и для того, что действительно не кэшируется; форма возврата (`RepositoryResult<(List<Model>, PageMetadata)>`, никакого отдельного `getItemsPage`/`watchItems`) одинакова на обеих ветках. Контракт пагинации списка чатов **зафиксирован контрактом v0 (фаза 025)**: страничный запрос (`page`/`page_size`) с ответом `{chats, has_more}`; история сообщений — курсорный путь `before_seq`/`limit` с ответом `{messages, has_more}`. Канон вычисления `PageMetadata{hasMore, nextPage?}` — здесь, в §8 (`hasMore` с провода или сворачиванием offset-математики verification-среза; `nextPage = hasMore ? page + 1 : null` на страничном пути); `07-pagination.md` описывает presentation-сторону поверх этого канона (страничный флавор, реальный seq-курсорный путь треда в его §4.2, `PagingStateExt.applyPage`, проброс `result.exception` в `pagingState.error`). Правило: для продуктового пагинированного списка **заводи DAO** и кэш-first-путь, а network-only оставляй только там, где кэшировать нечего.
+> **Как это устроено у чатов.** `ChatRepositoryImpl.getChats` без `cachedOnly` берёт страницу у `ChatRemoteDataSource` (поиск тоже идёт на сервер: в кэше лежит только пролистанное), пишет её в Sembast и отдаёт с `PageMetadata` из `has_more`; с `cachedOnly` или при мёртвом канале (`SocketUnavailableException`) отдаёт срез из DAO. `ChatsListBloc` читает первую страницу с `cachedOnly: true` и показывает её сразу, а страницу сервера запрашивает в фоне. История сообщений устроена так же: `MessageRepositoryImpl.getMessages` берёт окно у сервера (кроме чата, которого на сервере ещё нет, §6б), пишет его в store и режет ответ из DAO. Network-only остаётся в силе для замороженного `Item`-среза и для того, что действительно не кэшируется; форма возврата страницы (`RepositoryResult<(List<Model>, PageMetadata)>`, никакого отдельного `getItemsPage`) одинакова на обеих ветках. Контракт пагинации списка чатов **зафиксирован контрактом v0 (фаза 025)**: страничный запрос (`page`/`page_size`) с ответом `{chats, has_more}`; история сообщений — курсорный путь `before_seq`/`limit` с ответом `{messages, has_more}`. Канон вычисления `PageMetadata{hasMore, nextPage?}` — здесь, в §8 (`hasMore` с провода или сворачиванием offset-математики verification-среза; `nextPage = hasMore ? page + 1 : null` на страничном пути); `07-pagination.md` описывает presentation-сторону поверх этого канона (страничный флавор, реальный seq-курсорный путь треда в его §4.2, `PagingStateExt.applyPage`, проброс `result.exception` в `pagingState.error`). Правило: для продуктового пагинированного списка **заводи DAO** и кэш-first-путь, а network-only оставляй только там, где кэшировать нечего.
 
 ---
 
@@ -1299,7 +1243,7 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 | `ApiClient` | `remote/api_client.dart` | `@LazySingleton(env: [Environment.dev])` (Dio + `initBase(address:)`, инжектирует `AppConfigRepository` и `ChannelHttpClient`) |
 | `ChannelHttpClient` | `remote/channel/channel_http_client.dart` | `@LazySingleton(env: [Environment.dev])` (инжектирует `NoxChannelApi` — провайдер `RegisterModule`, см. `02-dependency-injection.md`) |
 | `ChannelSocket` | `remote/channel/channel_socket.dart` | без DI — создаётся в `connectionFactory` `ChannelHttpClient` на каждое соединение |
-| `AuthInterceptor` | `remote/interceptor/auth_interceptor.dart` | без DI — создаётся в `ApiClient.initBase()` |
+| `AuthInterceptor` | `remote/interceptor/auth_interceptor.dart` | без DI — создаётся в `ApiClient.initBase(address:)` один раз |
 | `ItemRemoteDataSource` / `MockItemRemoteDataSource` | `remote/datasource/item_remote_data_source.dart`, `datasource/mock/...` | `@LazySingleton(as: ItemRemoteDataSource, env: [dev, prod, test])` |
 | `GetItemsApi` (mock-генератор, заморожен) | `remote/api/item/get_items_api.dart` | `@lazySingleton` |
 | `ItemRepositoryImpl` | `repository/item/item_repository_impl.dart` | `@LazySingleton(as: ItemRepository, env: [dev, prod, test])` |
@@ -1326,12 +1270,12 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] **Нет** транспортной иерархии `DaoException` / `ApiException` / `BaseDomainExceptionHelper`; есть **маркер** `BaseRepositoryException`, который реализует `RepositoryException` (enum `{unknown, internal, authentication, connection, unauthenticated, notFound, invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema}` + статический `fromWireCode(String)`, незнакомый код → `internal`) и любые feature-enum'ы; `RepositoryResult.error` всегда несёт подтип маркера. Единственный коэрсный механизм — `mixin BaseRepositoryHelper` с `execute<TD>(Function executionFunction)`; импл подмешивает **только** `with BaseRepositoryHelper` (без `on`-ограничения).
 - [ ] `BaseRepositoryHelper.execute<T>()` имеет **ровно четыре** `catch`-ветки, в этом порядке — `on BaseRepositoryException` (пробрасывается как есть, не понижается до `unknown`), `on SocketUnavailableException` → `connection`, `on DioException` → `_mapDioException` (таймауты/`connectionError` → `connection`; 401 → `unauthenticated`; 403 → `authentication`; 404 → `notFound`; иначе `internal`), общий `catch` → `RepositoryException.unknown`; **обязательно** логирует через `LogRepository` в каждой ветке (никакого `print`) перед возвратом `RepositoryResult.error(...)`. Тот же mixin даёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)`: payload, иначе `fromWireCode(error.code)`, иначе `StateError`. Callback `executionFunction` сам возвращает уже-обёрнутый `RepositoryResult`; конкретный доменный код (`notFound`/`unknown` при пустом payload) — внутри callback'а, не в catch.
 - [ ] `AppDatabase` env-scoped (интерфейс `db` + `close()` + `clearEntireDatabase()`; `Dev`/`Prod` = `databaseFactoryIo` с `VaultCodec` в папке данных приложения, `Test` = `databaseFactoryMemory`); `path_provider` — зависимость пакета; env-список в репозитории полный.
-- [ ] **Данные на диске (048, §6г)**: всё на диске — в папке данных приложения (`AppDataRoot`) и запечатано ключом локальной базы: база — `VaultCodec`, файлы — `SealedFile` (запись кусками, докачка с последнего целого куска, загрузка через поток расшифровки); картинки — из памяти (`LocalFileImage`), видео и «Открыть в…» — через временные копии `TempCopies`, «Сохранить» — открытый файл; копии пикера платформы удаляются только в их двух местах (`PickerCopies`); ключа нет при базе на диске — стирание и спаривание (сессия уходит целиком, ожидание одобрения 046 — с ней), ошибка сейфа — повтор без стирания; выход — после отзыва своего ключа (046) — стирает базу, файлы, копии и ключ, один раз и тогда, когда к нему присоединилось эхо отзыва.
+- [ ] **Данные на диске (048, §6г)**: всё на диске — в папке данных приложения (`AppDataRoot`) и запечатано ключом локальной базы, кроме собственных файлов Arti (`nox_tor_state/`, `nox_tor_cache/` — ключей в них нет, выход их стирает): база — `VaultCodec`, файлы — `SealedFile` (запись кусками, докачка с последнего целого куска, загрузка через поток расшифровки); картинки — из памяти (`LocalFileImage`), видео и «Открыть в…» — через временные копии `TempCopies`, «Сохранить» — открытый файл; копии пикера платформы удаляются только в их двух местах (`PickerCopies`); ключа нет при базе на диске — стирание и спаривание (сессия уходит целиком, ожидание одобрения 046 — с ней), ошибка сейфа — повтор без стирания; выход — после отзыва своего ключа (046) — стирает базу, файлы, копии и ключ, один раз и тогда, когда к нему присоединилось эхо отзыва.
 - [ ] `ItemDao` (PRIMARY) — **per-ID records store** `stringMapStoreFactory.store('items')`, ключ = `item.id`: `watch()` как `Stream<List<ItemEntity>> async*`, `getById(String)`, позиционные `saveData(List)`/`upsert(ItemEntity)`/`removeById(String)`/`cleanData()`, `_decode`/`_tryDecode` пропускают битую запись (`null`). DAO **не** оборачивает сбои в `StateError` — исключения Sembast летят в catch-all `execute()`. Cache-miss/not-found решает callback репозитория. Single-record collection store — альтернативный вариант.
-- [ ] **`ItemRepositoryImpl` (замороженный верификационный срез)** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, seam 016), без DAO/subject/dispose; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` сворачивается из offset-обёртки среза (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — **в самой `PageMetadata` полей `total`/`pageSize` нет**, только `{hasMore, nextPage?}`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `watchItem`/`fetchItem`/CRUD + `ItemDao` + ОДИН `BehaviorSubject` (подписка раз в конструкторе) + `@disposeMethod`, читает через `hasData`/`match` (не `result.data!`).
-- [ ] REST **построенное**: `ApiClient` (`remote/api_client.dart`, `@LazySingleton(env: [Environment.dev])`) с `initBase({required String address})` — base URL из **спаренного** адреса (`https`, не `http`), `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (отдельный от клиента сокета; каждое его соединение — канал нативного модуля с проверкой `/auth` и `/auth2`) и однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и любую ошибку, `401` включительно, только пробрасывает — выхода по ответу `/files` нет. Зовёт его только `LiveSessionStarter`; `AppConfig.apiUrl` источником живого адреса не является. Транспорт контракта v0 — WS-конверт (фаза 026); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
-- [ ] **Кэш-first — форма по умолчанию.** Список чатов и история сообщений — кэш-first (013): чтение без `cachedOnly` идёт на сервер и пишет порцию в Sembast, чтение `cachedOnly` и чтение без канала — из DAO; экран сначала показывает кэш, сервер спрашивается в фоне. Network-only (без DAO, без subject) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage`/`watchItems` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
-- [ ] **Очередь исходящих построена (027)**: store `outbox` (`local/chat/outbox_dao.dart`), где **ключ записи = `client_message_id`** контракта — повторная постановка физически не даёт дубля; `ordinal` назначается `max + 1` **внутри одной транзакции** с записью (сортировка по времени не годится); фильтрация и сортировка — в Dart по декодированным сущностям, не `Finder`'ом по camelCase-ключу (`field_rename: snake`); в `OutboxStatus` ровно `{pending, error}` — состояния `sending` на диске **нет**. `data/sync/outbox_service.dart` — **единственный отправитель**: проходы сериализованы цепочкой `Future _queue`, идут по `ordinal` по одной записи, запись удаляется **только после** персиста сообщения репозиторием; отказ классифицируется — `connection`/`rateLimited`/`internal`/`unknown`/нераспознанный повторяемы (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся у записи), прочие окончательны (`error`, проход идёт дальше). Экран очередь **проецирует**, а не хранит (`ChatThreadBloc.outgoing` из `watchQueue(chatId:)`).
+- [ ] **`ItemRepositoryImpl` (замороженный верификационный срез)** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, seam 016), без DAO; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` сворачивается из offset-обёртки среза (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — **в самой `PageMetadata` полей `total`/`pageSize` нет**, только `{hasMore, nextPage?}`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `ItemDao`, сигнал `watchItem` (голая проекция `ItemDao.watch()`, без `RepositoryResult` и без subject'а), cache-first `fetchItem` и CRUD в `execute`, читает через `hasData`/`match` (не `result.data!`).
+- [ ] REST **построенное**: `ApiClient` (`remote/api_client.dart`, `@LazySingleton(env: [Environment.dev])`) с `initBase({required String address})` — base URL из **спаренного** адреса (`https`, не `http`), `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (отдельный от клиента сокета; каждое его соединение — канал нативного модуля с проверкой `/auth` и `/auth2`) и однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и любую ошибку, `401` включительно, только пробрасывает — выхода по ответу `/files` нет. Зовёт его только `LiveSessionStarter`, с адресом из ссылки спаривания; адреса из сборки нет. Транспорт контракта v0 — WS-конверт (фаза 026); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
+- [ ] **Кэш-first — форма по умолчанию.** Список чатов и история сообщений — кэш-first (013): чтение без `cachedOnly` идёт на сервер и пишет порцию в Sembast, чтение `cachedOnly` и чтение без канала — из DAO; экран сначала показывает кэш, сервер спрашивается в фоне. `watch*` — голая проекция DAO, сигнал изменения: значение блок не читает, а перечитывает загруженное через `get*`. Network-only (без DAO) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата страницы на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
+- [ ] **Очередь исходящих построена (027)**: store `outbox` (`local/chat/outbox_dao.dart`), где **ключ записи = `client_message_id`** контракта — повторная постановка физически не даёт дубля; `ordinal` назначается `max + 1` **внутри одной транзакции** с записью (сортировка по времени не годится); фильтрация и сортировка — в Dart по декодированным сущностям, не `Finder`'ом по camelCase-ключу (`field_rename: snake`); в `OutboxStatus` ровно `{pending, error}` — состояния `sending` на диске **нет**. Доменная служба `OutboxService` (`lib/domain/service/outbox_service.dart`) с реализацией `OutboxServiceImpl` (`data/sync/outbox_service_impl.dart`, `@LazySingleton(as: OutboxService)`) — **единственный отправитель**: проходы сериализованы цепочкой `Future _queue`, идут по `ordinal` по одной записи, запись удаляется **только после** персиста сообщения репозиторием; отказ классифицируется — `connection`/`rateLimited`/`internal`/`unknown`/нераспознанный повторяемы (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся у записи), прочие окончательны (`error`, проход идёт дальше). Экран очередь **проецирует**, а не хранит (`ChatThreadBloc.outgoing` из `watchQueue(chatId:)`).
 - [ ] **Чат создаётся на устройстве (041)**: `createChat` не ходит на сервер — id `c_` + 32 hex из `Random.secure()`, строка с `creation: pending`; очередь создаёт ждущие чаты раньше сообщений и **удерживает** сообщения чата, которого нет на сервере (без попытки и без ошибки); у каждого ждущего чата своя пауза, проход не останавливается; исходы `name_taken` → `nameTaken` (переименование на устройстве), окончательный отказ → `failed` (`retryCreation`), другой id → `moveChat` + `adoptServerChat`; окно и файлы ждущего чата у сервера не запрашиваются.
 - [ ] **Настройки связи (§6в)**: одна JSON-запись `session.server_addresses` в защищённом хранилище за `ServerAddressesRepository` (все три окружения); поля `direct`/`public`/`onion` (слово сервера), `manualAddress`/`manualOnion` (правка; пустой `manualOnion` — onion-адреса нет), `useTor` (по умолчанию `false`), `lastGood`, `viaTorLast`; названное сервером значение заменяет правку того же поля, неназванное — правку оставляет; записи строго по одной; `watch()` без потери записи между подпиской и чтением; имена и удаление — только через `ConnectionStorage`, устаревшие `session.access_key` и `session.access_key_registered` стирает `sweepLegacy` при каждом запуске.
 - [ ] `build_runner` перезапущен один раз в корне пакета после изменений аннотаций.

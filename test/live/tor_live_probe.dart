@@ -14,7 +14,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';

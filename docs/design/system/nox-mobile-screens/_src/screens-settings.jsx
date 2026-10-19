@@ -52,8 +52,8 @@ const InfoBanner = ({ t, icon, title, message, action }) => (
 );
 
 // identity card (§9.4)
-// Phase 037 removed the Server owner badge: the machine holds one person, so a
-// mark that told the owner apart from an invited member tells nothing apart.
+// No role badge: the machine holds one person, so such a mark would tell
+// nothing apart.
 const IdentityCard = ({ t, editing = false }) => (
   <div style={{ margin: '8px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.m, boxShadow: elev(1, t.dark), padding: 16 }}>
     {/* name block */}
@@ -64,10 +64,8 @@ const IdentityCard = ({ t, editing = false }) => (
       </div>
     ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* The name is the only flexible child of this row now, beside the
-            fixed-width edit action. It used to share the width with the owner
-            badge, and two flexible children split it - capping the NAME at
-            half. */}
+        {/* The name is the only flexible child of this row, beside the
+            fixed-width edit action, so it takes all the width that is left. */}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1 }}>
           <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Nyx</span>
         </div>
@@ -75,8 +73,8 @@ const IdentityCard = ({ t, editing = false }) => (
       </div>
     )}
     <div style={{ height: 1, background: t.outlineVariant, margin: '16px 0' }} />
-    {/* id block - phase 032 removed the mask, the reveal and the account QR:
-        the id stopped being a secret, and Show QR leads to Devices. */}
+    {/* id block - the id is public: shown whole, no mask, no reveal. A device
+        is added with `Add a device` on Devices (7.8; on desktop the Devices pane). */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Your ID</div>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1, wordBreak: 'break-all' }}>{RAW_ID}</span>
@@ -92,7 +90,7 @@ const LogoutDialog = ({ t, loading = false }) => (
     <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
     <div style={{ position: 'relative', background: t.surfaceContainerHigh, borderRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: 24, maxWidth: 312 }}>
       <div style={{ ...ty('headlineSmall'), color: t.onSurface, marginBottom: 16 }}>Log out?</div>
-      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 24 }}>Your ID and local data will be removed from this device.</div>
+      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 24 }}>This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.</div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
         <TextButton t={t} label="Cancel" />
         {loading
@@ -178,7 +176,7 @@ const NotificationsScreen = ({ t, denied = false, on = true }) => (
     {denied && <InfoBanner t={t} icon="notifications_off" title="Notifications are blocked" message="Allow notifications in system settings to receive messages from your chats." action="Open settings" />}
     <div style={{ flex: 1, paddingTop: 4 }}>
       <SettingsGroup t={t}>
-        <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="Only for chats you're in" on={denied ? false : on} />
+        <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="For new messages in your chats" on={denied ? false : on} />
       </SettingsGroup>
     </div>
   </>

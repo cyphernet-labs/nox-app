@@ -12,7 +12,7 @@ import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';

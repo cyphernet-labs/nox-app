@@ -16,7 +16,7 @@ import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -81,7 +81,6 @@ void main() {
 
     const credentials = GreetingCredentials.unpaired();
     expect(credentials.unpaired, isTrue);
-    expect(credentials.label, isNull, reason: 'nothing claimed');
   });
 
   test('the device key survives a rollback, so a retry is the same install', () async {

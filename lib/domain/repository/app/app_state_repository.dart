@@ -3,7 +3,7 @@ import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Single reactive source of truth for the app lifecycle phase. In-memory
-/// projection of the session signals (no DAO). See `docs/app-state-flow-migration.md`.
+/// projection of the session signals (no DAO). See `docs/archive/app-state-flow-migration.md`.
 abstract class AppStateRepository {
   /// Replays the last resolved value to new subscribers, then forwards every
   /// subsequent resolution. Lazily triggers the first [fetchAppState] - once

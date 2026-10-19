@@ -314,7 +314,7 @@
       ]
     },
     "emptyStates": {
-      "description": "Empty-state fallback icons until the 3 illustrations ship (see illustrations/).",
+      "description": "Empty-state glyphs: the centre of the NoxEmptyState composition, which is the whole art of an empty state (no illustration ships; illustrations/ holds corpus sketches only).",
       "icons": [
         {
           "name": "forum",

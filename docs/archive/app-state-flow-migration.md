@@ -1,6 +1,6 @@
 # App-State Flow — Migration Guide
 
-> **Status in NOX: imported reference, not maintained.** This guide came from another project (Dart
+> **Status in NOX: archived imported reference, not maintained.** This guide came from another project (Dart
 > package `mouse_flutter`) as the input for NOX feature 009 and is kept as it arrived. Every file it
 > names (`lib/…`, `ExistLiveApp*`, `promts/migration/*`) is that project's file, even where a path
 > matches one in NOX; `promts/migration/` does not exist in this repository. NOX's own implementation: `lib/domain/model/app/app_state_type.dart`

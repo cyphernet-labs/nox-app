@@ -18,7 +18,7 @@ import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
 import 'package:nox_app/data/service/attachment_transfer_service_impl.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/outbox_service_impl.dart';
 import 'package:nox_app/data/sync/retry_ladder.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -210,7 +210,7 @@ void main() {
   late MockMessageRepository messages;
   late OutboxRepository outbox;
   late _FakePhase phase;
-  late OutboxService service;
+  late OutboxServiceImpl service;
   late _FakeFiles files;
   late AttachmentTransferServiceImpl transfers;
   late List<String> sentKeys;
@@ -273,7 +273,7 @@ void main() {
     files = _FakeFiles();
     transfers = AttachmentTransferServiceImpl();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
   });
 
   tearDown(() async {
@@ -353,7 +353,7 @@ void main() {
 
   test('nothing is sent while the channel is down, and the attempt is not burned', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     await enqueue(['a']);
 
     await service.flush();
@@ -366,7 +366,7 @@ void main() {
 
   test('catching up is not live: the drain waits for the replay to finish', () async {
     phase = _FakePhase(SessionPhase.catchingUp);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     await enqueue(['a']);
 
     await service.flush();
@@ -384,7 +384,7 @@ void main() {
     // would be a message the person is told failed, over a server that never
     // saw it. Their text waits; it is not lost and it is not blamed on them.
     phase = _FakePhase(SessionPhase.serverMismatch);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     await enqueue(['a', 'b']);
 
     await service.flush();
@@ -403,7 +403,7 @@ void main() {
     // arrives. A pass triggered by that transition would send into the very
     // machine the refusal is about.
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['a']);
 
@@ -418,7 +418,7 @@ void main() {
 
   test('the channel going live drains the queue with no one asking', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['written while offline']);
 
@@ -436,7 +436,7 @@ void main() {
     // The queue neither tries early - which would only grow the backoff - nor
     // counts the wait against the message; it goes out on the live edge, once.
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['written during the bring-up']);
 
@@ -458,7 +458,7 @@ void main() {
 
   test('start() twice does not open a second subscription (one live edge, one drain)', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     service.start();
     await enqueue(['once']);
@@ -792,7 +792,7 @@ void main() {
         files
           ..names = null
           ..failure = null;
-        service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+        service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
         await service.flush();
 
         expect(files.continuedFrom.last, sameAs(handle), reason: 'what the server has is not sent again (FR-003)');
@@ -928,7 +928,7 @@ void main() {
     files = _FakeFiles();
     transfers = AttachmentTransferServiceImpl();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+    service = OutboxServiceImpl(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['a']);
 
@@ -1091,7 +1091,7 @@ void main() {
         getIt<MessageDao>(),
         getIt<SessionRepository>(),
       );
-      service = OutboxService(outbox, messages, phase, files, transfers, chats);
+      service = OutboxServiceImpl(outbox, messages, phase, files, transfers, chats);
     });
 
     Future<ChatModel> createHere(String name) async => (await chats.createChat(name: name)).data!;
@@ -1186,7 +1186,7 @@ void main() {
 
       // The process restarts: the pause was in memory and is gone with it.
       await service.stop();
-      service = OutboxService(outbox, messages, phase, files, transfers, chats);
+      service = OutboxServiceImpl(outbox, messages, phase, files, transfers, chats);
       await service.flush();
 
       expect(server.sentIds, [chat.id, chat.id]);

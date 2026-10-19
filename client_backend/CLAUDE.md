@@ -96,9 +96,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   and `rsc.io/qr`. Adding any other requires written justification; "convenient"
   is not one.
 - **Why `ncruces/go-sqlite3` (047):** it is the one SQLite for Go that encrypts
-  page by page without CGO - SQLite compiled to WebAssembly and run in-process by
-  wazero, with the `adiantum` VFS that encrypts every page of the database and of
-  its WAL with the data key. `modernc.org/sqlite` has no encrypting VFS, and
+  page by page without CGO - SQLite compiled to WebAssembly and translated into
+  plain Go by `wasm2go` (`go-sqlite3-wasm`), with the `adiantum` VFS that
+  encrypts every page of the database and of its WAL with the data key. `modernc.org/sqlite` has no encrypting VFS, and
   writing one over it means rewriting SQLite's VFS layer; SQLCipher is CGO.
   Its own dependencies come with it: the Wasm build of SQLite
   (`go-sqlite3-wasm`), `julianday`, `lukechampine.com/adiantum` and `x/sys`. Bump it only
@@ -345,14 +345,17 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
-  one of the event-less lifecycles of invariant 3
+  a greeting reads the name and never writes it - `SetLabel` (`devices.go`,
+  behind `identity.setLabel`) is the one rename; one of the event-less
+  lifecycles of invariant 3
 - `internal/store/serverkey.go` — the machine's own RustSecureBox key pair on
   the single `server_identity` row. A pair another implementation made is
   rekeyed at start (050): `ServerKey` keeps the private key, writes the public
   key RustSecureBox gives for it and lets every device go. No owner: "can
   anybody reach this machine" is `countDevices`, asked by the service page's
-  link (`PageMachineLink`) and by the last device going away; the startup
-  line reads the device figure of `CountEverything` (`stats.go`) instead
+  link (`PageMachineLink`), by the last device going away and by the startup
+  line (`DeviceCount`); `CountEverything` (`stats.go`) gives the page its
+  figures and answers nothing else
 - `internal/store/pairing.go` — the two kinds of one-shot token and `Pair`:
   the machine link (at most one unspent - issuing one voids the others in the
   same transaction; minted by `noxd link`, by the page's buttons, and by the
@@ -816,13 +819,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   reached the server there, while the machine link has no device asking yet.
   Both carry the stored public address first and the onion address last when
   they are set (045).
-- **"Can anybody reach this machine" has ONE answer: the device count.** The
-  page's two states and the last device going away ask `countDevices`; the
-  startup line that says where a link is reads the same `COUNT(1) FROM
-  devices` through `CountEverything`. There is no owner marker beside it: a second
-  record of one fact is the shape that eventually disagrees with itself, and
-  here the disagreement would be a page that hides the link from somebody
-  locked out of their own machine.
+- **"Can anybody reach this machine" has ONE answer: the device count.** Only
+  `countDevices` gives it - to the page's two states, to the last device going
+  away and to the startup line that says where a link is (`DeviceCount`).
+  `CountEverything`'s device figure is a number the page shows, never the
+  answer. There is no owner marker beside it either: a second record of one
+  fact is the shape that eventually disagrees with itself, and here the
+  disagreement would be a page that hides the link from somebody locked out of
+  their own machine.
 - **Known narrow window:** the greeting reads the person from the
   store and writes it to the connection a few lines later, and the fan-out
   helpers match connections by `identity.UserID` - which is empty in between. A
@@ -1011,9 +1015,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **There is no revocation on the service page.** A lost device is revoked from
   a device the person holds - the one just added with a machine link included.
   The page hands out a way in; it does not judge which devices stay.
-- `users.label` is neither unique nor validated (owner, 2026-09-02): a
-  greeting may never be refused because of a name, since the client
-  retries a refused greeting forever.
+- `users.label` is neither unique nor validated beyond not being blank (owner,
+  2026-09-02): `identity.setLabel` trims a name and takes any that is not
+  empty after that, and it is the only
+  thing that renames anybody. The greeting carries no name (contract §3): a
+  `label` sent in it is an unknown field (invariant 11) and renames nobody -
+  a greeting that could rename would let a device with a stale cache push an
+  old name back over a rename made on another device.
 - No push, no `chat.markRead`, message `body` is open text — all gated
   by open questions; see contract §8 before touching.
 - Cyrillic never appears in code, comments, or commit messages.

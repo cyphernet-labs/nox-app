@@ -4,7 +4,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:nox_app/general/l10n_extension.dart';
-import 'package:nox_app/l10n/app_localizations.dart';
+import 'package:nox_app/presentation/helpers/device_platform_text.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
@@ -35,16 +35,6 @@ class AppPairRequestDialogWidget extends StatelessWidget {
   /// answer.
   final ValueChanged<bool>? onAnswer;
 
-  /// The family as the dialog names it.
-  static String platformName(AppLocalizations l10n, DevicePlatform platform) => switch (platform) {
-    DevicePlatform.ios => l10n.devicePlatformIos,
-    DevicePlatform.android => l10n.devicePlatformAndroid,
-    DevicePlatform.macos => l10n.devicePlatformMacos,
-    DevicePlatform.windows => l10n.devicePlatformWindows,
-    DevicePlatform.linux => l10n.devicePlatformLinux,
-    DevicePlatform.unknown => l10n.devicePlatformUnknown,
-  };
-
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -60,7 +50,7 @@ class AppPairRequestDialogWidget extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              l10n.pairRequestMessage(platformName(l10n, platform)),
+              l10n.pairRequestMessage(DevicePlatformText.of(l10n, platform)),
               textAlign: TextAlign.center,
               style: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurface),
             ),

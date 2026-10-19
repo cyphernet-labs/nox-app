@@ -105,7 +105,7 @@ class _FileViewPageState extends State<FileViewPage> {
     // No real local file (seeded / backend-TBD / stale path after restart) → the honest
     // UI-phase mock confirmation (there are no bytes to copy).
     if (path == null || path.isEmpty || !File(path).existsSync()) {
-      showAppSnackBar(context, text: context.l10n.savedToDownloads);
+      showAppSnackBar(context, text: context.l10n.fileSaved);
       return;
     }
     try {
@@ -118,7 +118,7 @@ class _FileViewPageState extends State<FileViewPage> {
       // any type, incl. large video/archive attachments).
       await getIt<LocalFilesService>().saveTo(path: path, destination: dest);
       if (!mounted) return;
-      showAppSnackBar(context, text: context.l10n.savedToDownloads);
+      showAppSnackBar(context, text: context.l10n.fileSaved);
     } catch (_) {
       // Any IO failure degrades gracefully — never a crash.
       if (!mounted) return;

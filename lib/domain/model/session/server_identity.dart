@@ -17,15 +17,14 @@ abstract class ServerIdentity with _$ServerIdentity {
     /// Whether THIS answer brought the person into being (contract §3).
     ///
     /// Nullable on purpose: the wire has three states, and the third one is
-    /// load-bearing. Absent means "outcome not stated" — an older server, or a
-    /// stage-2 frame that does not carry it — and neither default is free.
-    /// Assuming false steals the naming step from a newcomer; assuming true
-    /// sends a returning person through onboarding and overwrites the name they
-    /// were known by, which is the defect this field exists to remove.
+    /// load-bearing. Absent means "outcome not stated" — a greeting, which never
+    /// carries it, or an older server — and neither default is free. Assuming
+    /// false steals the naming step from a newcomer; assuming true sends a
+    /// returning person through onboarding and overwrites the name they were
+    /// known by, which is the defect this field exists to remove.
     ///
-    /// Describes the answer, not the person: it is never persisted, and the
-    /// onboarding decision it feeds is monotonic (a later greeting may declare
-    /// onboarding done, never undone).
+    /// Describes the answer, not the person: it is never persisted, and only
+    /// the pairing answer decides onboarding with it.
     bool? created,
   }) = _ServerIdentity;
 }

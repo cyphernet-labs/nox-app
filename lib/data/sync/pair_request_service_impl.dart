@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/mapper/device/device_platform_wire.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
@@ -87,7 +88,11 @@ class PairRequestServiceImpl with BaseRepositoryHelper implements PairRequestSer
   void _asked(Map<String, dynamic> data) {
     final id = data['request_id'];
     if (id is! String || id.isEmpty) return;
-    final request = PairRequest(requestId: id, platform: _platformOf(data['platform']), expiresAt: _instant(data['expires_at']));
+    final request = PairRequest(
+      requestId: id,
+      platform: DevicePlatformWire.parse(data['platform']),
+      expiresAt: _instant(data['expires_at']),
+    );
     final current = _requests.value;
     final at = current.indexWhere((r) => r.requestId == id);
     if (at >= 0) {
@@ -112,17 +117,6 @@ class PairRequestServiceImpl with BaseRepositoryHelper implements PairRequestSer
     if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) return;
     if (_requests.value.isNotEmpty) _requests.add(const <PairRequest>[]);
   }
-
-  /// One of the five families, and nothing else ever: the dialog shows a
-  /// word of the app's own for whatever this is.
-  static DevicePlatform _platformOf(Object? value) => switch (value) {
-    'ios' => DevicePlatform.ios,
-    'android' => DevicePlatform.android,
-    'macos' => DevicePlatform.macos,
-    'windows' => DevicePlatform.windows,
-    'linux' => DevicePlatform.linux,
-    _ => DevicePlatform.unknown,
-  };
 
   /// Unix seconds as an instant; null for anything that is not a number.
   static DateTime? _instant(Object? seconds) {

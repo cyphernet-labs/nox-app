@@ -12,12 +12,9 @@ import (
 // Identity is the person a connection speaks as. UserID is the public author
 // id carried on the wire (contract §3); Label is the current display name.
 //
-// Every identity is a paired one since feature 032. The anonymous shape that
-// used to exist here - a connection presenting no key, served an in-memory
-// person - was justified by "the contract forbids refusing such a greeting",
-// which misread contract §3: the rule that may not refuse is about the LABEL,
-// never about the key. §3 says the opposite for keys, and the whole point of
-// the phase is that an unproved connection gets nothing.
+// Every identity is a paired one: a connection presenting no key, or a key
+// nobody paired, is refused (contract §3) rather than served an in-memory
+// person - an unproved connection gets nothing.
 type Identity struct {
 	UserID string
 	Label  string
@@ -32,8 +29,9 @@ type Identity struct {
 // assignedLabelAttempts bounds the search for an unused generated name. There
 // is no UNIQUE index on users.label by owner decision, so this is politeness
 // rather than a constraint: running out of attempts hands back the last
-// candidate instead of failing, because a greeting may never be refused
-// because of a name (contract §3).
+// candidate instead of failing, because the server refuses nothing because of
+// a name (contract §2.1) - least of all the pairing that brings the person
+// into being.
 const assignedLabelAttempts = 8
 
 // ResolveIdentity finds the person a connection speaks as, from the PUBLIC KEY
@@ -52,10 +50,15 @@ const assignedLabelAttempts = 8
 // an unknown key: there is nothing to recognise it by, and serving it anyway
 // was the hole this phase exists to close.
 //
+// It never renames: the greeting carries no name (contract §3), and SetLabel -
+// identity.setLabel on the wire - is the only write of one. A greeting that
+// could rename would let a device with a stale cache push an old name back
+// over a rename made on another device, and the two would flip-flop forever.
+//
 // One immediate transaction on the single-connection write pool, so a device
 // reconnecting while another of the same person is greeting cannot interleave.
 // It writes NO events row: a person being recognised is not visible on the wire.
-func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, now int64) (Identity, error) {
+func (s *Store) ResolveIdentity(ctx context.Context, deviceKey string, now int64) (Identity, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return Identity{}, fmt.Errorf("begin resolve identity: %w", err)
@@ -79,18 +82,6 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 
 	if err := touchDevice(ctx, tx, deviceKey, now); err != nil {
 		return Identity{}, err
-	}
-
-	// A greeting without a label does NOT rename. The client states a name only
-	// when it has just changed one; a device carrying a stale cache would
-	// otherwise push the old name back over a rename made elsewhere, and the
-	// two devices of one person would flip-flop forever.
-	if label != "" && label != id.Label {
-		_, err = tx.ExecContext(ctx, "UPDATE users SET label = ? WHERE user_id = ?", label, id.UserID)
-		if err != nil {
-			return Identity{}, fmt.Errorf("update label: %w", err)
-		}
-		id.Label = label
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -121,8 +112,8 @@ func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity
 	return id, true, nil
 }
 
-func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Identity, error) {
-	assigned, err := assignedLabelTx(ctx, tx, label)
+func insertUser(ctx context.Context, tx *sql.Tx, now int64) (Identity, error) {
+	assigned, err := assignedLabelTx(ctx, tx)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -190,19 +181,11 @@ func touchDevice(ctx context.Context, tx *sql.Tx, deviceKey string, now int64) e
 	return nil
 }
 
-func (s *Store) assignedLabel(ctx context.Context, tx *sql.Tx, label string) (string, error) {
-	return assignedLabelTx(ctx, tx, label)
-}
-
-// assignedLabelTx returns the stated label, or mints User<random> per the
-// design spec. The counter this replaces lived in process memory, so it both
-// repeated names after a restart and reset to User1 - random satisfies "survives
-// a restart" and "not handed to two people" at once, and does not tell every
-// newcomer how many people are on the server.
-func assignedLabelTx(ctx context.Context, tx *sql.Tx, label string) (string, error) {
-	if label != "" {
-		return label, nil
-	}
+// assignedLabelTx mints the name a new person starts with, User<random> per
+// the design spec. Random rather than a counter: it survives a restart, is not
+// handed out twice when it can be helped, and does not tell a newcomer how
+// many people were here before.
+func assignedLabelTx(ctx context.Context, tx *sql.Tx) (string, error) {
 	var candidate string
 	for attempt := 0; attempt < assignedLabelAttempts; attempt++ {
 		candidate = fmt.Sprintf("User%d", 1000+randomBelow(9000))
@@ -215,7 +198,7 @@ func assignedLabelTx(ctx context.Context, tx *sql.Tx, label string) (string, err
 			return candidate, nil
 		}
 	}
-	// Exhausting the attempts is not a failure: a greeting may never be refused
+	// Exhausting the attempts is not a failure: a pairing may never be refused
 	// because of a name, and labels are not unique by owner decision.
 	return candidate, nil
 }

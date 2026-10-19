@@ -33,7 +33,7 @@
 Экран выбирает ветку по `constraints.maxWidth >= Constants.railBreakpoint` (как все responsive-экраны NOX):
 
 - **`_narrow` (iOS / Android)** — полноэкранный feed; прозрачный AppBar (без surface-заливки и без splash-hairline) с back-стрелкой и actions `Flashlight` / `Switch camera`; прицел + затемняющая маска `#000` @ 55% (brand-fixed); нижняя `Enter manually`-pill поверх feed. Источник: `nox-mobile-screens/screens/2-2-qr-scan.md`. Действия `Flashlight`/`Switch camera` gracefully no-op на устройстве без вспышки/второй камеры.
-- **`_wide` (macOS — единственный десктопный таргет с камерой)** — оконный `TitleBar` (`NOX — Scan QR`) + центрированный viewfinder 300×300 с brand-белыми углами на обычном `surface`-фоне (без полноэкранной маски), заголовок `Scan a QR code`, helper `Point your webcam at a code, or enter the ID manually.` с `Enter manually`-`TextButton`. Действий `Flashlight` / `Switch camera` НЕТ. Источник: `nox-desktop-screens/screens/06-qr.md`.
+- **`_wide` (macOS — единственный десктопный таргет с камерой)** — оконный `TitleBar` (`NOX — Scan QR`) + центрированный viewfinder 300×300 с brand-белыми углами на обычном `surface`-фоне (без полноэкранной маски), заголовок `Scan a QR code`, helper `Point your webcam at the code, or paste the pairing link.` с `Enter manually`-`TextButton`. Действий `Flashlight` / `Switch camera` НЕТ. Источник: `nox-desktop-screens/screens/06-qr.md`.
 - **Windows / Linux** — камеры нет: кнопка `Scan QR` на 2.1 скрыта, 2.2 недостижим (единый capability-флаг `QrScannerCapability`, FR-016/017 фичи 010); вместо неё на 2.1 — `Use a QR image`.
 
 ## Состояния
@@ -88,11 +88,11 @@
 | Permission-denied message | `To scan a QR code, allow camera access in system settings.` |
 | Permission-denied action | `Open settings` |
 | Camera-unavailable title | `Camera unavailable` |
-| Camera-unavailable message | `No camera is available on this device. Enter your ID manually instead.` |
+| Camera-unavailable message | `No camera is available on this device. Paste the pairing link instead.` |
 | Camera-unavailable action | `Enter manually` |
 | Snackbar inline-error | `This QR code is invalid. Try another one.` |
 | Desktop title (`_wide`) | `Scan a QR code` |
-| Desktop helper (`_wide`) | `Point your webcam at a code, or enter the ID manually.` |
+| Desktop helper (`_wide`) | `Point your webcam at the code, or paste the pairing link.` |
 
 ## Принятые решения (Q1–Q9)
 

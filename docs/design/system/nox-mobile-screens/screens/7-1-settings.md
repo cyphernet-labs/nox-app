@@ -22,7 +22,7 @@ App bar (Settings). Identity card as an account header: ringed initials avatar, 
 - There is no QR action in the card. Adding a device happens on **7.8 Devices**, reached by its own row, where an invite is minted with a real one-shot token.
 - **Connection** (feature 045), directly under Devices with the `lan` glyph, opens **7.10 Connection**: the server address, the onion address and Use Tor.
 - Editing: name becomes an inline TextField with counter. No availability spinner: names are not unique and, on a one-person server, there is nobody to collide with.
-- Log out → confirm AlertDialog (destructive action tinted error); confirming revokes this device's key over a live connection (with none, the wipe goes on at once and the orphaned key is left to be revoked from another device, 7.8), then wipes the session and every bit of local data; shows a loading state.
+- Log out → confirm AlertDialog (destructive action tinted error); confirming revokes this device's key over a live connection (with none, the wipe goes on at once and the orphaned key is left to be revoked from another device, 7.8), then wipes the session and every bit of local data. Until that ends the dialog stays up and modal, with a spinner in place of its Log out button and both buttons off; a logout that fails closes the dialog and says “Could not log out. Please try again.” in a snackbar, with nothing wiped.
 
 ## Navigation
 - Rows → Devices (7.8) / Connection (7.10) / 7.2 / 7.3 / 7.4 / Terms / About.

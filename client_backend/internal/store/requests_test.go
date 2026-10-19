@@ -166,7 +166,7 @@ func TestAllowPairsTheDeviceAndARepeatAnswersWithTheIdentity(t *testing.T) {
 		t.Fatalf("repeat after Allow = %+v, want the identity and the allowed request", res)
 	}
 	// And the device greets as the person.
-	if id, err := s.ResolveIdentity(ctx, "dev-new", "", 240); err != nil || id.UserID != person.UserID {
+	if id, err := s.ResolveIdentity(ctx, "dev-new", 240); err != nil || id.UserID != person.UserID {
 		t.Fatalf("the allowed device greets as %+v (%v)", id, err)
 	}
 }

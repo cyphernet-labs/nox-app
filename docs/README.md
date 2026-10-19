@@ -35,8 +35,8 @@
 | Документ | Назначение |
 |---|---|
 | [vision.md](vision.md) | Видение, цели, целевая аудитория, отличия от Signal, объём MVP. **Черновик направления** |
-| [requirements.md](requirements.md) | Функциональные требования (учётная запись, сообщения, файлы, звонки, уведомления, платформы). **Черновик направления** |
-| [artifacts.md](artifacts.md) | Ссылки на опубликованные страницы. Главная — NOX Architecture, единственный документ о технике NOX: провод, вход и защита канала, Tor, спаривание и ключи, данные на диске, переписка между людьми |
+| [requirements.md](requirements.md) | Функциональные требования (учётная запись, сообщения, файлы, уведомления, безопасность, платформы) и что не входит в эту итерацию. **Черновик направления** |
+| [artifacts.md](artifacts.md) | Ссылки на опубликованные страницы. Главная — NOX Architecture, единственный документ о технике NOX: провод, вход и защита канала, Tor, спаривание и ключи, данные на диске, переписка между людьми; там же модель угроз — темы 1–4 (вход и канал, Tor, спаривание, данные на диске) |
 | [design/spec/](design/spec/README.md) | Спецификация UI/UX: верхнеуровневые требования, карта экранов, спецификации экранов, дизайн-система |
 | [design/system/](design/system/) | Корпуса дизайна: токены (`nox-handoff/`), каталог виджетов (`nox-handoff-2/`), экраны мобильной и десктопной сборок (`nox-mobile-screens/`, `nox-desktop-screens/`), ассеты (`nox-assets/`), иконки приложения (`nox-app-icons/`) |
 | [blueprints/](blueprints/README.md) | Архитектурные блюпринты: `mobile/` — обязательный референс Flutter-клиента (слои, паттерны, DI, скаффолдинг), `client-backend/` — клиентского сервера на Go |
@@ -59,7 +59,7 @@
 |---|---|
 | [../deploy/README.md](../deploy/README.md) | Установка клиентского сервера и tor на машину человека — скриптом на Linux, macOS и Windows или вручную |
 | [client-backend/demo-runbook.md](client-backend/demo-runbook.md) | Стенд одной командой, смоук по проводу и сценарий показа |
-| [client-backend/security-rework-testing.md](client-backend/security-rework-testing.md) | Как поставить сервер, запустить приложение на нескольких устройствах и по шагам проверить переделку безопасности |
+| [client-backend/security-rework-testing.md](client-backend/security-rework-testing.md) | Как поставить сервер, запустить приложение на нескольких устройствах и по шагам проверить трек безопасности 044–050 |
 
 ### Архив
 
@@ -70,10 +70,13 @@
 | [presentation-refactor-review.md](presentation-refactor-review.md) | Обзор presentation-слоя и бэклог R1–R28: паритет mobile↔desktop, выносы виджетов, оптимизации | **Закрыт** фичей 021 |
 | [roadmap-phase2.md](roadmap-phase2.md) | Дорожная карта фазы 2 (сборка приложения на моках) | Закрыт 2026-08-28; снимок на июль 2026 |
 | [archive/roadmap-phase1.md](archive/roadmap-phase1.md) | Трекер фазы 1 (UI, 17 экранов на мок-данных) | Закрыт |
-| [app-state-flow-migration.md](app-state-flow-migration.md) | Доменно-нейтральное описание подсистемы app-state, импортированное из другого проекта; вход для фичи 009. **Его enum не совпадает с NOX** (`selectProfileType`/`authorizedGuest` против нашего `registrationPending`) — читать как референс, не копировать | Справочный, не ведётся |
+| [archive/app-state-flow-migration.md](archive/app-state-flow-migration.md) | Доменно-нейтральное описание подсистемы app-state, импортированное из другого проекта; вход для фичи 009. На английском, в том виде, в каком пришло. **Его enum не совпадает с NOX** (`selectProfileType`/`authorizedGuest` против нашего `registrationPending`) — читать как референс, не копировать | Справочный, не ведётся |
+| [archive/client-backend-connect/](archive/client-backend-connect/) | Подключение приложения к клиентскому серверу в редакции 2026-08: спаривание, формат ссылки, транспорт, установка — бриф (`.md` + `.pdf`) и рабочий solution-документ. Действующие решения — NOX Architecture, темы 1–3 | Не ведётся |
 
-Техника NOX — провод, канал и криптография, Tor, ключи, данные на диске — описывается в NOX Architecture ([artifacts.md](artifacts.md)); транспорт и аутентификация клиентского сервера — также в [client-backend/architecture/](client-backend/architecture/). Ещё не созданы:
+Техника NOX — провод, канал и криптография, Tor, ключи, данные на диске — описывается в NOX Architecture ([artifacts.md](artifacts.md)); транспорт и аутентификация клиентского сервера — также в [client-backend/architecture/](client-backend/architecture/). Отдельных документов для модели угроз и ADR нет:
 
-- Нефункциональные требования (производительность, доступность, ресурсы)
-- Модель угроз
-- ADR — решения по продукту и архитектуре
+- модель угроз и решения о технике — в NOX Architecture: техника — темы 0–8, модель угроз — темы 1–4;
+- решения по продукту — в [design/spec/overview.md](design/spec/overview.md#принятые-решения), «Принятые решения»;
+- открытые вопросы — в реестре [client-backend/open-questions.md](client-backend/open-questions.md).
+
+Ещё не созданы нефункциональные требования (производительность, доступность, ресурсы).

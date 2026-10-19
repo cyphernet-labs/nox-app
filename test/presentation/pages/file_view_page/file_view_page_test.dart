@@ -246,7 +246,7 @@ void main() {
       await save(tester, () => dest.existsSync() && dest.lengthSync() == data.length);
 
       expect(dest.readAsBytesSync(), data, reason: 'what the person can open, not what the device keeps');
-      expect(find.text(l10nEn.savedToDownloads), findsOneWidget);
+      expect(find.text(l10nEn.fileSaved), findsOneWidget);
     });
 
     testWidgets("Save writes the person's own file, picked in the composer, as it is", (tester) async {

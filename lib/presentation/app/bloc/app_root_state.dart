@@ -4,7 +4,7 @@ part of 'app_root_bloc.dart';
 /// every stream emission; `appliedAppState` is the value currently applied to the
 /// navigator (released by [ApplyAppState]); `isReady` flips true on the first
 /// emission carrying data. The two-phase split holds the first navigation behind
-/// the splash reveal (see `docs/app-state-flow-migration.md` §5.1).
+/// the splash reveal (see `docs/archive/app-state-flow-migration.md` §5.1).
 @freezed
 abstract class AppRootState with _$AppRootState {
   const factory AppRootState({

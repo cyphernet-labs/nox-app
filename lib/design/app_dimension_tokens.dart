@@ -92,6 +92,7 @@ final class AppSizeTokens {
   double get avatarSm => AppSpacingTokens.s40; // chat list row
   double get avatarMd => AppSpacingTokens.s48;
   double get avatarLg => AppSpacingTokens.s56; // chat card / identity card
+  double get avatarXl => AppSpacingTokens.s72; // chat card in the desktop side sheet
 
   // File-type glyph boxes (the rounded square behind the type icon).
   double get fileGlyphSm => AppSpacingTokens.s44; // chat-card file list

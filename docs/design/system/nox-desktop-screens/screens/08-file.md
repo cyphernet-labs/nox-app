@@ -21,13 +21,14 @@ Heavier scrim + centered lightbox (520): header (type icon, name, download, clos
 
 ## Navigation
 - Close / scrim → back to the thread.
-- Download → writes the plain file where the person chose (phase 048: the copy on the device is sealed).
+- Download → writes the plain file where the person chose in the system save dialog (phase 048: the copy on the device is sealed), then the snackbar “File saved”.
 
 ## Copy (EN)
 - Size: 2.4 MB
 - Progress: Downloading… 64%
 - Open error: Couldn't open this file. Free up some space and try again.
 - Action: Download
+- Saved (snackbar): File saved
 
 ## Design-system components
 - ChatsDesktop (base)

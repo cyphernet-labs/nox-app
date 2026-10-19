@@ -1,25 +1,17 @@
-# NOX — Empty-state illustrations
+# NOX — Empty-state sketches
 
-**Status: placeholders.** `empty-chats.svg`, `empty-messages.svg`, `empty-files.svg` here are
-striped placeholders so layouts can be wired up; design-system.md §11 still lists real art as an
-order. The app draws none of them: its empty state is the `NoxEmptyState` composition — the icon below
-(`onSurfaceVariant`, 56) in a 132 outlined box with two brand accents, over the heading and the
-message (`../../nox-handoff-2/spec/primitives.md`). The three SVGs ship in `assets/svg/illustrations/`
-and nothing references them.
-
-## Spec (design-system.md §10)
-- Style: light line / "brushstroke" spot illustrations in the logo spirit — thin contour
-  (`onSurfaceVariant`) + one or two brand accents (`brand/teal` #12B4B4 + `brand/gold` #F4C20C),
-  **transparent** background.
-- Size: ~120–160 tall, centered, above the empty-state heading.
-- One asset must read on **both** light and dark.
-- Format: **SVG**.
+**Status: corpus sketches only.** `empty-chats.svg`, `empty-messages.svg` and `empty-files.svg` stay
+here as sketches of the design corpus. No illustration is ordered and none ships in the app bundle:
+the art of an empty state is the `NoxEmptyState` composition (`AppEmptyContentWidget` in the app) —
+the glyph below (`onSurfaceVariant`, 56) in a 132 outlined box (radius 20, 1.5 `outlineVariant`)
+with two brand dots inside it (`brand/teal` 14 top-right, `brand/gold` 10 bottom-left), over the
+heading and the message. See `design-system.md` §10 and `../../nox-handoff-2/spec/primitives.md`.
 
 ## The three
-| File | Screen | Icon the app draws |
+| File | Screen | Glyph the app draws in the composition |
 |---|---|---|
-| empty-chats.svg | 5.1 no chats | `forum_outlined` |
-| empty-messages.svg | 5.2 no messages | `chat_bubble_outline` |
+| empty-chats.svg | 5.1 no chats (and the empty thread pane on desktop) | `forum` (outlined) |
+| empty-messages.svg | 5.2 no messages | `chat_bubble` (outlined) |
 | empty-files.svg | 5.4 no files | `folder_open` |
 
-Icon color: `onSurfaceVariant`.
+Glyph color: `onSurfaceVariant`.

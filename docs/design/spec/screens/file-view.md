@@ -52,7 +52,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 ## Взаимодействия
 
 - **Открытие экрана** → если файл не в кэше, запускается auto-скачивание; прогресс отображается линейным баром с %.
-- **Тап на `Save` в AppBar** → файл записывается **открытым** (расшифрованным, фаза 048) в место, выбранное в системном диалоге сохранения, + snackbar `Saved to Downloads`. Отменённый диалог ничего не пишет; сбой записи — snackbar `Could not download file. Check your connection and try again.`.
+- **Тап на `Save` в AppBar** → файл записывается **открытым** (расшифрованным, фаза 048) в место, выбранное в системном диалоге сохранения, + snackbar `File saved`: файл лежит там, куда человек его сохранил. Отменённый диалог ничего не пишет; сбой записи — snackbar `Could not download file. Check your connection and try again.`.
 - **Тап на back** → возврат туда, откуда открыли.
 - **Long-press на icon / filename** — no-op на этом этапе.
 - **Share** — отсутствует на этом этапе.
@@ -76,7 +76,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | AppBar back tooltip | `Back` |
 | AppBar title | filename (динамически) |
 | Save tooltip | `Save` |
-| Snackbar после Save | `Saved to Downloads` |
+| Snackbar после Save | `File saved` (место выбрал человек в системном диалоге) |
 | Прогресс скачивания | `Downloading… {percent}%` |
 | Inline-error (network) | `Could not download file. Check your connection and try again.` |
 | Inline-error action | `Try again` |

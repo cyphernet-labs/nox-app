@@ -15,7 +15,7 @@ import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_creation.dart';
@@ -24,10 +24,6 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/file/file_repository.dart';
-import 'package:nox_app/domain/service/attachment_transfer_service.dart';
-import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/id/chat_id.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,21 +50,20 @@ class _QuietServer implements ChatRemoteDataSource {
 }
 
 /// Counts the requests to drain, and drains nothing.
-class _CountingOutbox extends OutboxService {
-  _CountingOutbox()
-    : super(
-        getIt<OutboxRepository>(),
-        getIt<MessageRepository>(),
-        getIt<SessionPhaseService>(),
-        getIt<FileRepository>(),
-        getIt<AttachmentTransferService>(),
-        getIt<ChatRepository>(),
-      );
-
+class _CountingOutbox implements OutboxService {
   int flushes = 0;
 
   @override
   Future<void> flush() async => flushes++;
+
+  @override
+  void start() {}
+
+  @override
+  Future<void> discard({required String clientMessageId}) async {}
+
+  @override
+  Future<void> stop() async {}
 }
 
 @GenerateMocks([ChatRepository])

@@ -45,7 +45,7 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 
 	anna := dialAs(t, ts, srv, dev)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "three-paths")
 
 	// Path 1 - the echo of her own send.
@@ -113,24 +113,29 @@ func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 	anna := dialAs(t, ts, srv, dev)
 	anna.expectGreeting()
 	var before identity
-	mustUnmarshal(t, anna.hello(1, `,"label":"Anna"`)["identity"], &before)
+	mustUnmarshal(t, anna.hello(1, ``)["identity"], &before)
 	chatID := seedChat(t, anna, "rename")
-	sendText(t, anna, 3, chatID, "old-1", "written as Anna")
+	anna.setLabel(3, "Anna")
+	sendText(t, anna, 4, chatID, "old-1", "written as Anna")
+
+	// The rename goes through identity.setLabel on the live connection - no
+	// reconnect - and what that connection writes next carries the new name.
+	anna.setLabel(5, "Anna2")
+	sendText(t, anna, 6, chatID, "new-1", "written as Anna2")
 
 	renamed := dialAs(t, ts, srv, dev)
 	renamed.expectGreeting()
 	var after identity
-	mustUnmarshal(t, renamed.hello(1, `,"label":"Anna2"`)["identity"], &after)
+	mustUnmarshal(t, renamed.hello(1, ``)["identity"], &after)
 	if after.ID != before.ID {
 		t.Fatalf("identity changed from %q to %q on a rename", before.ID, after.ID)
 	}
 	if after.Label != "Anna2" {
 		t.Fatalf("label = %q, want Anna2", after.Label)
 	}
-	sendText(t, renamed, 3, chatID, "new-1", "written as Anna2")
 
-	page := renamed.expectOKAfter(4, fmt.Sprintf(
-		`{"id":4,"cmd":"messages.list","data":{"chat_id":%q,"limit":10}}`, chatID))
+	page := renamed.expectOKAfter(2, fmt.Sprintf(
+		`{"id":2,"cmd":"messages.list","data":{"chat_id":%q,"limit":10}}`, chatID))
 	var msgs []protocol.Message
 	mustUnmarshal(t, page["messages"], &msgs)
 	if len(msgs) != 2 {
@@ -151,6 +156,50 @@ func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 	}
 	if labels["new-1"] != "Anna2" {
 		t.Fatalf("the new signature = %q, want Anna2", labels["new-1"])
+	}
+}
+
+// A label in the greeting is a field the contract does not have (§3), and like
+// any field the server does not know it is ignored (invariant 11). It renames
+// nobody - neither in the store nor in the identity the connection signs its
+// messages with - so a device with a stale cache cannot push an old name back
+// over a rename made on another device.
+func TestALabelInTheGreetingIsIgnored(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := firstDevice(t, ts, srv)
+
+	named := dialAs(t, ts, srv, dev)
+	named.expectGreeting()
+	named.hello(1, ``)
+	named.setLabel(2, "Anna")
+
+	stale := dialAs(t, ts, srv, dev)
+	stale.expectGreeting()
+	var greeted identity
+	mustUnmarshal(t, stale.hello(1, `,"label":"Mallory"`)["identity"], &greeted)
+	if greeted.Label != "Anna" {
+		t.Fatalf("the greeting answered label %q, want the stored Anna", greeted.Label)
+	}
+
+	// Nor did it reach the identity the connection speaks as: what it writes
+	// is signed with the stored name.
+	chatID := seedChat(t, stale, "stale")
+	echo := stale.expectOKAfter(3, fmt.Sprintf(
+		`{"id":3,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"s-1","body":{"type":"text","text":"hi"}}}`,
+		chatID))
+	var msg protocol.Message
+	mustUnmarshal(t, echo["message"], &msg)
+	if msg.AuthorLabel != "Anna" {
+		t.Fatalf("the message is signed %q, want Anna", msg.AuthorLabel)
+	}
+
+	// And the store holds the name it held: the next greeting reads it back.
+	back := dialAs(t, ts, srv, dev)
+	back.expectGreeting()
+	var after identity
+	mustUnmarshal(t, back.hello(1, ``)["identity"], &after)
+	if after.Label != "Anna" {
+		t.Fatalf("after a greeting that stated a label the name is %q, want Anna", after.Label)
 	}
 }
 
@@ -245,10 +294,9 @@ func ownerOf(t *testing.T, srv *Server, d *device) string {
 // A greeting from a connection whose key nobody paired is refused - and writes
 // nothing on its way to the refusal.
 //
-// The rule "the server may not refuse a greeting" (contract §3) is about the
-// LABEL; taken for a key rule it once handed any connection that simply
-// omitted the field a full session: the whole journal replayed, live events
-// streamed, and the ability to post.
+// Nothing in a greeting stands in for a paired key: serving a connection that
+// merely greeted would hand it a full session - the whole journal replayed,
+// live events streamed, and the ability to post.
 func TestGreetingFromAnUnpairedKeyIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
 	pairedDevice(t, ts, srv) // somebody owns the server, and has history

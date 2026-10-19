@@ -20,6 +20,7 @@ Brand-fixed dark canvas (#0C2424, NOT themed). Centered logo (168) + NOX wordmar
 - Paired, the name not yet set → Set username (2.3).
 - Not paired → Login (2.1).
 - Local data whose key is gone (a database the key does not open, or a database with no key) → that data is wiped, and Login (2.1).
+- No route to Error (3.1): nothing at start-up ends on the error screen.
 
 ## Copy (EN)
 - Wordmark: NOX

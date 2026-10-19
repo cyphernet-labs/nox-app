@@ -174,7 +174,7 @@ const QRDesktop = ({ t, denied = false }) => (
           <div style={{ ...ty('titleLarge'), color: t.onSurface }}>Scan a QR code</div>
           <Viewfinder size={300} />
           <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, textAlign: 'center', maxWidth: 340 }}>
-            Point your webcam at a code, or <span style={{ color: t.primary }}>enter the ID manually</span>.
+            Point your webcam at the code, or <span style={{ color: t.primary }}>paste the pairing link</span>.
           </div>
         </div>
       )}

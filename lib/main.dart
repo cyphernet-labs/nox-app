@@ -5,7 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
+import 'package:nox_app/design/font_licenses.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor.dart';
@@ -20,6 +21,7 @@ void main() {
   runZonedGuarded<Future<void>>(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      registerFontLicenses();
       // Before anything asks for a folder - the secure store's own file among
       // them: on Windows the data lives in the local application data, which a
       // roaming profile does not carry (phase 048).
