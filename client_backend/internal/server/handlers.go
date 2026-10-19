@@ -47,10 +47,15 @@ var deviceChatIDPattern = regexp.MustCompile(`^c_[0-9a-f]{32}$`)
 // greeting has nothing left to prove - and nothing in it can name another
 // key. Fields an older client still sends are ignored, never
 // believed.
+//
+// There is no name either. A person is named by identity.setLabel alone
+// (§8A), so a `label` sent here is an unknown field like any other
+// (invariant 11) and renames nobody: a greeting that could rename would let a
+// device with a stale cache push an old name back over a rename made on
+// another device, and two devices of one person would flip-flop.
 type helloRequest struct {
 	Schema int    `json:"schema"`
 	Since  *int64 `json:"since"`
-	Label  string `json:"label"`
 }
 
 type helloReply struct {
@@ -110,14 +115,14 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 
 	// The person is found by the key the channel proved - the only key a
-	// connection has. A key nobody paired gets nothing: the label rule of §3,
-	// "a greeting may not be refused", is about the NAME and never covered
-	// keys, and reading it that way once handed a full session to anybody.
+	// connection has - and a key nobody paired gets nothing: nothing in a
+	// greeting stands in for a paired key, and serving one that merely
+	// greeted would hand a full session to anybody.
 	//
 	// Resolve BEFORE registering with the hub: this writes, and invariant 4
 	// forbids a write transaction straddling hub registration. Failing here
 	// also avoids the unregister dance below.
-	id, err := c.srv.store.ResolveIdentity(c.ctx, c.deviceKey, strings.TrimSpace(req.Label), time.Now().Unix())
+	id, err := c.srv.store.ResolveIdentity(c.ctx, c.deviceKey, time.Now().Unix())
 	if errors.Is(err, store.ErrDeviceUnknown) {
 		// Revoked, or a store rebuilt from nothing. The device cannot tell them
 		// apart and must not: both mean "this is not my server any more".

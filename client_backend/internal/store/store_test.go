@@ -912,20 +912,25 @@ func person(t *testing.T, s *Store, name string) Identity {
 	ctx := context.Background()
 	deviceKey := "dev-" + name
 
-	if id, err := s.ResolveIdentity(ctx, deviceKey, name, 1); err == nil {
-		return id
+	id, err := s.ResolveIdentity(ctx, deviceKey, 1)
+	if errors.Is(err, ErrDeviceUnknown) {
+		if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
+			t.Fatalf("EnsureServerIdentity: %v", err)
+		}
+		if _, err := pairID(ctx, s, issueLink(t, s, 1), deviceKey, "test", 1); err != nil {
+			t.Fatalf("Pair(%s): %v", name, err)
+		}
+		id, err = s.ResolveIdentity(ctx, deviceKey, 1)
 	}
-	if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	if _, err := pairID(ctx, s, issueLink(t, s, 1), deviceKey, "test", 1); err != nil {
-		t.Fatalf("Pair(%s): %v", name, err)
-	}
-	// State the chosen name the way onboarding does.
-	id, err := s.ResolveIdentity(ctx, deviceKey, name, 1)
 	if err != nil {
 		t.Fatalf("ResolveIdentity(%s): %v", name, err)
 	}
+	// State the chosen name the way onboarding does: identity.setLabel, the
+	// one write of a name.
+	if err := s.SetLabel(ctx, id.UserID, name); err != nil {
+		t.Fatalf("SetLabel(%s): %v", name, err)
+	}
+	id.Label = name
 	return id
 }
 

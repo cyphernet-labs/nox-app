@@ -107,12 +107,12 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "files")
 
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	bob.hello(1, ``)
 
 	payload := randomPayload(t, 200000)
 	fileID, token := uploadBegin(t, anna, 10, "report.pdf", len(payload), "application/pdf")
@@ -273,7 +273,7 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 	}()
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
-	c.hello(1, `,"label":"Anna"`)
+	c.hello(1, ``)
 	chatID := seedChat(t, c, "restart-files")
 	payload := []byte("survives restarts")
 	fileID, token := uploadBegin(t, c, 3, "keep.bin", len(payload), "application/octet-stream")
@@ -290,7 +290,7 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 	defer closeAll2()
 	c2 := dialWS(t, ts2, srv2)
 	c2.expectGreeting()
-	c2.hello(1, `,"label":"Anna"`)
+	c2.hello(1, ``)
 	sent := c2.expectOKAfter(2, fmt.Sprintf(
 		`{"id":2,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"r1","attachment":{"file_id":%q}}}`, chatID, fileID))
 	var msg protocol.Message
@@ -310,7 +310,7 @@ func TestStoryTwoDownloadWithResume(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "dl")
 	payload := randomPayload(t, 262144)
 	fileID, token := uploadBegin(t, anna, 3, "movie.bin", len(payload), "application/octet-stream")
@@ -322,7 +322,7 @@ func TestStoryTwoDownloadWithResume(t *testing.T) {
 
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	bob.hello(1, ``)
 
 	// Full download, byte-identical (SC-001).
 	dl := downloadBegin(t, bob, 2, fileID)
@@ -399,7 +399,7 @@ func TestStoryThreeChatFilesPanel(t *testing.T) {
 
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
-	c.hello(1, `,"label":"Anna"`)
+	c.hello(1, ``)
 	chatID := seedChat(t, c, "panel")
 
 	var fileIDs []string
@@ -456,7 +456,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
-	c.hello(1, `,"label":"Anna"`)
+	c.hello(1, ``)
 	chatID := seedChat(t, c, "sweep")
 
 	// Bound file seeded with an OLD created_at: it must survive the sweep

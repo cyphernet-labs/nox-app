@@ -193,14 +193,24 @@ func (s *Store) ServerIdentity(ctx context.Context) (ServerIdentity, error) {
 // countDevices is the ONE spelling of "can anybody still reach this machine".
 //
 // Not scoped to a person: this machine holds one, so every device is theirs.
-// The machine link, the service page and the last device going away all ask
-// this one question, and nothing else answers it.
+// The machine link, the service page, the last device going away and the
+// startup line all ask this one question, and nothing else answers it.
 func countDevices(ctx context.Context, q rowQuerier) (int, error) {
 	var devices int
 	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
 		return 0, fmt.Errorf("count devices: %w", err)
 	}
 	return devices, nil
+}
+
+// DeviceCount asks countDevices on the read pool, for the asker that has no
+// transaction of its own: the startup line that says where a link is while no
+// device can reach the machine. The page asks the same question through
+// PageMachineLink, in the transaction that reads its link, so the two cannot
+// tell different stories. CountEverything's device figure is for the page's
+// numbers only.
+func (s *Store) DeviceCount(ctx context.Context) (int, error) {
+	return countDevices(ctx, s.read)
 }
 
 type rowQuerier interface {

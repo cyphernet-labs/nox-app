@@ -493,7 +493,7 @@ func resolveSolePerson(ctx context.Context, tx *sql.Tx, now int64) (Identity, er
 		// chat and message they had is theirs again (FR-004).
 		return soleUser(ctx, tx)
 	case 0:
-		id, err := insertUser(ctx, tx, "", now)
+		id, err := insertUser(ctx, tx, now)
 		if err != nil {
 			return Identity{}, err
 		}

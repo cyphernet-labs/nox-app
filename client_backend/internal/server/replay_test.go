@@ -42,7 +42,7 @@ func TestStoryTwoKillReconnectCatchup(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "catchup")
 	sendText(t, anna, 3, chatID, "a1", "first")
 

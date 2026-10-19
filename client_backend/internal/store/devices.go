@@ -170,6 +170,8 @@ func (s *Store) DeviceOwner(ctx context.Context, deviceKey string) (string, bool
 
 // SetLabel renames a person. Contract §8A: names are not unique and the server
 // neither enforces nor reports uniqueness, so there is nothing here to refuse.
+// It is the only write of a name once the person exists: the greeting carries
+// none (§3), and ResolveIdentity only reads it.
 func (s *Store) SetLabel(ctx context.Context, userID, label string) error {
 	if _, err := s.write.ExecContext(ctx,
 		"UPDATE users SET label = ? WHERE user_id = ?", label, userID); err != nil {

@@ -187,6 +187,21 @@ func (c *wsClient) hello(id int, extra string) map[string]json.RawMessage {
 	return data
 }
 
+// setLabel names the person this connection speaks as, the one way anybody is
+// named (contract §8A identity.setLabel): the greeting carries no name. Every
+// OTHER live connection of the person is sent identity.updated, so a test that
+// reads another connection's frames by position names the person before that
+// connection greets.
+func (c *wsClient) setLabel(id int, label string) {
+	c.t.Helper()
+	data := c.expectOKAfter(id, fmt.Sprintf(`{"id":%d,"cmd":"identity.setLabel","data":{"label":%q}}`, id, label))
+	var got string
+	mustUnmarshal(c.t, data["label"], &got)
+	if got != label {
+		c.t.Fatalf("identity.setLabel answered %q, want %q", got, label)
+	}
+}
+
 // ensurePaired pairs this connection's device unless the server knows it
 // already - on ANOTHER connection with the same key, the way the app pairs and
 // then reconnects. A greeting sent after it finds the key paired.
@@ -333,31 +348,38 @@ func TestStoryOneLiveExchange(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	helloData := anna.hello(1, `,"label":"Anna"`)
+	helloData := anna.hello(1, ``)
 
 	var ident identity
 	mustUnmarshal(t, helloData["identity"], &ident)
 	// The author id is the person, not the name: a rename must not rewrite who
 	// owns the history, and a name must not double as credentials.
-	if ident.Label != "Anna" {
-		t.Fatalf("identity label = %q, want Anna", ident.Label)
-	}
 	if !regexp.MustCompile(`^u_[0-9a-f]{16}$`).MatchString(ident.ID) {
 		t.Fatalf("identity id = %q, want the u_<16 hex> shape", ident.ID)
 	}
+	// Named before the second device greets. The rename's identity.updated goes
+	// out after the reply, so bob may still catch it: bob reads the journal's
+	// frames only.
+	anna.setLabel(2, "Anna")
 
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	var bobIdent identity
+	mustUnmarshal(t, bob.hello(1, ``)["identity"], &bobIdent)
+	// One person on the machine, so the second device greets under the same
+	// id and the name the first one gave.
+	if bobIdent.ID != ident.ID || bobIdent.Label != "Anna" {
+		t.Fatalf("bob greets as %+v, want %s named Anna", bobIdent, ident.ID)
+	}
 
-	createData := anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"smoke"}}`)
+	createData := anna.expectOKAfter(3, `{"id":3,"cmd":"chat.create","data":{"name":"smoke"}}`)
 	var chat protocol.Chat
 	mustUnmarshal(t, createData["chat"], &chat)
 	if chat.CreatedByLabel != "Anna" || chat.Name != "smoke" {
 		t.Fatalf("chat = %+v", chat)
 	}
 
-	seq, name, evData := bob.expectEvent()
+	seq, name, evData := bob.expectJournalEvent()
 	if name != protocol.EventChatCreated || seq != 1 {
 		t.Fatalf("bob got event %s seq %d, want chat.created seq 1", name, seq)
 	}
@@ -368,10 +390,10 @@ func TestStoryOneLiveExchange(t *testing.T) {
 	}
 
 	sendFrame := fmt.Sprintf(
-		`{"id":3,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"a1","body":{"type":"text","text":"hello"}}}`,
+		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"a1","body":{"type":"text","text":"hello"}}}`,
 		chat.ChatID)
 	before := time.Now()
-	sendData := anna.expectOKAfter(3, sendFrame)
+	sendData := anna.expectOKAfter(4, sendFrame)
 
 	var echo protocol.Message
 	mustUnmarshal(t, sendData["message"], &echo)
@@ -379,7 +401,7 @@ func TestStoryOneLiveExchange(t *testing.T) {
 		t.Fatalf("echo = %+v", echo)
 	}
 
-	seq, name, evData = bob.expectEvent()
+	seq, name, evData = bob.expectJournalEvent()
 	latency := time.Since(before)
 	if name != protocol.EventMessageNew || seq != 2 {
 		t.Fatalf("bob got event %s seq %d, want message.new seq 2", name, seq)
@@ -393,10 +415,10 @@ func TestStoryOneLiveExchange(t *testing.T) {
 		t.Fatalf("event message_id = %s, want %s", evMsgID, echo.MessageID)
 	}
 	// Contract §5: client_message_id belongs to the AUTHOR - the person, not the
-	// device. A stage-2 server holds exactly one person until invite-user
-	// arrives (Q15), so the second connection is another device of the same
-	// person and legitimately receives the key: that is what lets a restarted
-	// send settle its queue entry instead of showing twice.
+	// device. The machine holds exactly one person, so the second connection is
+	// another device of the same person and legitimately receives the key: that
+	// is what lets a restarted send settle its queue entry instead of showing
+	// twice.
 	if _, present := evData["client_message_id"]; !present {
 		t.Fatal("the author's other device lost its own client_message_id")
 	}
@@ -596,7 +618,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		huge := strings.Repeat("a", 200000) // above max_frame_bytes 131072
-		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"label":"`+huge+`"}}`))
+		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"padding":"`+huge+`"}}`))
 		waitClosed(t, c, websocket.StatusMessageTooBig)
 		assertHealthy(t, ts)
 	})
@@ -618,8 +640,8 @@ func TestStoryOneDefaultLabelFallback(t *testing.T) {
 	}
 
 	// A second device of the same person is the SAME person. There is no other
-	// kind of second connection on a stage-2 server: a nameless one is refused,
-	// and inviting a new PERSON is still blocked on Q15.
+	// kind of second connection: a key nobody paired is refused, and the machine
+	// belongs to one person.
 	c2 := dialWS(t, ts, srv)
 	c2.expectGreeting()
 	var ident2 identity

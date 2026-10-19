@@ -182,3 +182,51 @@ func TestAKeyOfAnotherImplementationIsRekeyedAndEveryDeviceLetGo(t *testing.T) {
 		t.Fatal("the device paired after the rekey is not the same person")
 	}
 }
+
+// "Can anybody reach this machine" has one answer, countDevices, and the
+// startup line asks it through DeviceCount the way the page asks it through
+// PageMachineLink. The person outliving their last device is the case that
+// tells a device count from anything else: the person is still there, and
+// nobody can reach the machine.
+func TestDeviceCountIsWhatThePageCounts(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	devices := func(now int64) int {
+		t.Helper()
+		got, err := s.DeviceCount(ctx)
+		if err != nil {
+			t.Fatalf("DeviceCount: %v", err)
+		}
+		page, err := s.PageMachineLink(ctx, now)
+		if err != nil {
+			t.Fatalf("PageMachineLink: %v", err)
+		}
+		if got != page.Devices {
+			t.Fatalf("DeviceCount = %d, the page counts %d", got, page.Devices)
+		}
+		return got
+	}
+
+	if n := devices(50); n != 0 {
+		t.Fatalf("a fresh machine counts %d devices, want 0", n)
+	}
+	pairFirst(t, s, "dev-phone")
+	if _, err := pairID(ctx, s, issueLink(t, s, 150), "dev-desktop", "test", 150); err != nil {
+		t.Fatalf("pair the second device: %v", err)
+	}
+	if n := devices(160); n != 2 {
+		t.Fatalf("two paired devices count as %d", n)
+	}
+
+	for _, key := range []string{"dev-phone", "dev-desktop"} {
+		if _, err := s.RevokeDevice(ctx, key, 200); err != nil {
+			t.Fatalf("RevokeDevice(%s): %v", key, err)
+		}
+	}
+	if n := devices(210); n != 0 {
+		t.Fatalf("after the last device went away the machine counts %d, want 0", n)
+	}
+	if people, err := countPeople(ctx, s.read); err != nil || people != 1 {
+		t.Fatalf("people = %d (%v), want the person who outlived their devices", people, err)
+	}
+}
