@@ -1,4 +1,5 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/mapper/device/device_platform_wire.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
@@ -7,7 +8,6 @@ import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 
@@ -43,8 +43,8 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
 
       // Which row is "this device" is known only here: the server sees a key,
       // not a person holding a phone.
-      final seed = await _session.deviceSecret();
-      final own = seed.hasData ? await DeviceKeys.publicKey(seed.data!) : null;
+      final pair = await _session.deviceKey();
+      final own = pair.data?.publicKey;
 
       final raw = reply.data?['devices'];
       final devices = <DeviceModel>[];
@@ -55,7 +55,7 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
           devices.add(
             DeviceModel(
               deviceKey: key,
-              platform: entry['platform'] as String? ?? '',
+              platform: DevicePlatformWire.parse(entry['platform']),
               pairedAt: _seconds(entry['created_at']),
               lastSeenAt: _seconds(entry['last_seen_at']),
               isCurrent: own != null && key == own,
@@ -79,22 +79,21 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
   @override
   Future<RepositoryResult<DeviceInvite>> inviteDevice() {
     return execute<DeviceInvite>(() async {
-      // Always asked for, on every server: a server that cannot offer onion -
-      // Tor off, tor not connected - answers with an ordinary link, and one
-      // older than 039 skips a field it does not know (contract §2.1). Only the
-      // server knows which of these it is right now.
-      final reply = await _socket.send('device.invite', const <String, dynamic>{'onion': true});
+      // Nothing to ask for: the link names every address this machine has to
+      // offer (contract §8A, phase 045).
+      final reply = await _socket.send('device.invite', const <String, dynamic>{});
       if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
       final link = reply.data?['link'] as String? ?? '';
       if (link.isEmpty) throw RepositoryException.internal;
-      // The card promises "works from anywhere" only when both halves say so:
-      // the reply's flag - absent on a pre-039 server, which reads as false -
-      // and the link itself, which is what the other device will actually hold.
-      // The contract names both. Erring the other way sends a person to the
-      // office with a link that works only at home and nothing to say why.
-      final onion = reply.data?['onion'] == true && (PairingLink.tryParse(link)?.carriesOnion ?? false);
+      // The card promises more than the home network only when the server
+      // says the link carries it - its onion address, which the link itself
+      // shows as well, or its public address, which a link writes like any
+      // other. Erring the other way sends a person to the office with a link
+      // that works only at home and nothing to say why.
+      final onion = reply.data?['onion'] == true && PairingLink.tryParse(link)?.onionServiceKey != null;
+      final public = reply.data?['public'] == true;
       return RepositoryResult<DeviceInvite>.success(
-        data: DeviceInvite(link: link, onion: onion),
+        data: DeviceInvite(link: link, onion: onion, public: public),
       );
     });
   }

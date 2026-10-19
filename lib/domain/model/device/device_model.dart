@@ -1,3 +1,5 @@
+import 'package:nox_app/domain/model/device/pair_request.dart';
+
 /// One authorised device of this person, as the revoke list shows it.
 class DeviceModel {
   const DeviceModel({
@@ -14,8 +16,8 @@ class DeviceModel {
 
   /// The OS family, and nothing finer. Enough to recognise one's own tablet
   /// among three; the exact model would be a fingerprint the server has no
-  /// reason to hold.
-  final String platform;
+  /// reason to hold. One of the app's own words, never wire text.
+  final DevicePlatform platform;
 
   final DateTime pairedAt;
   final DateTime lastSeenAt;

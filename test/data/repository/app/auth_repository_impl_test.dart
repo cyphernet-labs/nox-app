@@ -1,33 +1,50 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
+import 'package:nox_app/domain/model/connection/tor_status.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../utils/fake_session_repository.dart';
 import 'auth_repository_impl_test.mocks.dart';
 
 @GenerateMocks([
@@ -45,6 +62,13 @@ void main() {
   provideDummy<RepositoryResult<String>>(const RepositoryResult<String>.success(data: ''));
   provideDummy<RepositoryResult<String?>>(const RepositoryResult<String?>.success(data: null));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
+  provideDummy<RepositoryResult<PendingPairing?>>(const RepositoryResult<PendingPairing?>.success(data: null));
+  provideDummy<RepositoryResult<SessionModel?>>(const RepositoryResult<SessionModel?>.success(data: null));
+  provideDummy<RepositoryResult<DeviceKeyPair>>(
+    const RepositoryResult<DeviceKeyPair>.success(
+      data: DeviceKeyPair(privateKey: '', publicKey: ''),
+    ),
+  );
 
   late MockSessionRepository session;
   late MockAppStateRepository appState;
@@ -86,6 +110,12 @@ void main() {
       session.adoptServerIdentity(authorId: anyNamed('authorId'), label: anyNamed('label')),
     ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.discardSignIn()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+    when(session.readPendingPairing()).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.success(data: null));
+    when(session.outlivedItsInstall()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+    when(session.readSession()).thenAnswer((_) async => const RepositoryResult<SessionModel?>.success(data: kTestSession));
+    when(session.serverAddress()).thenAnswer((_) async => const RepositoryResult<String?>.success(data: '10.0.0.5:9000'));
+    when(session.savePendingPairing(any)).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+    when(session.clearPendingPairing()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(
       appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')),
     ).thenAnswer((_) async => RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
@@ -93,23 +123,71 @@ void main() {
 
   tearDown(() async => getIt.reset());
 
-  // A link the Go server actually produced, captured from a live noxd.
-  const link = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+  // The contract's `minimal` vector: one IPv4 address, shared with the Go
+  // server that issues it.
+  const link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+  const serverKey = 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=';
 
-  test('signing in remembers which server the link named', () async {
+  test('signing in remembers which server the link named - its address and its key', () async {
     // Without this the app pairs with the server a person presented and then
-    // sends their messages to the address baked into the build.
+    // sends their messages to the address baked into the build - or checks
+    // the connection against nothing at all.
     await repository.signIn(identifier: link);
-    verify(session.saveServer(address: '127.0.0.1:8080', serverFingerprint: anyNamed('serverFingerprint'))).called(1);
+    verify(session.saveServer(address: '192.168.1.20:8443', serverKey: serverKey)).called(1);
   });
 
   test('a link that will not parse is refused before anything is stored', () async {
-    final result = await repository.signIn(identifier: 'not a pairing link');
+    for (final broken in [
+      'not a pairing link',
+      'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo',
+    ]) {
+      final result = await repository.signIn(identifier: broken);
+
+      expect(result.hasData, isFalse);
+      expect(result.exception, RepositoryException.invalidRequest, reason: broken);
+    }
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+    verifyNever(session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')));
+  });
+
+  test('a link from a newer server asks for an update, before anything is stored', () async {
+    final result = await repository.signIn(identifier: 'nox://pair/BKCapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODw');
 
     expect(result.hasData, isFalse);
-    expect(result.exception, RepositoryException.invalidRequest);
-    verifyNever(session.saveServer(address: anyNamed('address'), serverFingerprint: anyNamed('serverFingerprint')));
-    verifyNever(session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')));
+    expect(result.exception, RepositoryException.unsupportedSchema, reason: 'apart from a broken link: the person updates the app');
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+  });
+
+  test('a link with no direct address and nothing typed has nowhere to start, and stores nothing', () async {
+    final onionOnly = PairingLink(
+      serverKey: PairingLink.parse(link).serverKey,
+      token: PairingLink.parse(link).token,
+      addresses: [OnionLinkAddress(PairingLink.parse(link).serverKey)],
+    ).encode();
+
+    final result = await repository.signIn(identifier: onionOnly);
+
+    expect(result.exception, RepositoryException.connection);
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+  });
+
+  test('a link with no direct address starts at the address typed on the connection screen (phase 045)', () async {
+    when(
+      session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
+    ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+    final onionOnly = PairingLink(
+      serverKey: PairingLink.parse(link).serverKey,
+      token: PairingLink.parse(link).token,
+      addresses: [OnionLinkAddress(PairingLink.parse(link).serverKey)],
+    ).encode();
+
+    await repository.signIn(
+      identifier: onionOnly,
+      connection: const ConnectionSettings(serverAddress: '10.8.0.2:8443'),
+    );
+
+    verify(session.saveServer(address: '10.8.0.2:8443', serverKey: serverKey)).called(1);
+    expect((await getIt<ServerAddressesRepository>().read()).data!.manualAddress, isNull, reason: 'no edit of anything');
   });
 
   test('FR-004: signing in never states a label, so a known name cannot be overwritten', () async {
@@ -232,7 +310,7 @@ void main() {
     await repository.logout();
 
     expect(tor.wipes, 1);
-    expect(tor.target, isNull);
+    expect(tor.status.state, TorState.stopped);
   });
 
   test('a failed clear() leaves the Tor client alone, like everything else', () async {
@@ -254,6 +332,339 @@ void main() {
     verify(appState.fetchAppState(sessionExpired: true)).called(1);
   });
 
+  // Logging out is revoking this device's own key, then wiping (contract §8A,
+  // phase 046 SC-006): the key stops being a way in, rather than merely being
+  // forgotten here.
+  group('logout revokes this device\'s own key first (SC-006)', () {
+    const pair = DeviceKeyPair(
+      privateKey: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+      publicKey: 'cHVibGljLWtleS1vZi10aGlzLWRldmljZS0zMmJ5dGU=',
+    );
+    late _RecordingDevices devices;
+    late _FixedPhase phase;
+    late List<String> order;
+
+    setUp(() {
+      order = <String>[];
+      devices = _RecordingDevices(order);
+      phase = _FixedPhase(SessionPhase.live);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<DeviceRepository>(devices);
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      when(session.deviceKey()).thenAnswer((_) async => const RepositoryResult<DeviceKeyPair>.success(data: pair));
+      when(session.clear()).thenAnswer((_) async {
+        order.add('clear');
+        return const RepositoryResult<bool>.success(data: true);
+      });
+      when(chats.clean()).thenAnswer((_) async => order.add('chats'));
+    });
+
+    test('connected: the revoke of this very key goes out before anything is wiped', () async {
+      await repository.logout();
+
+      expect(devices.revoked, [pair.publicKey]);
+      expect(order, ['revoke', 'clear', 'chats']);
+    });
+
+    for (final offline in [SessionPhase.disconnected, SessionPhase.connecting, SessionPhase.serverMismatch]) {
+      test('${offline.name}: nothing is sent, and the wipe does not wait for a connection', () async {
+        phase.value = offline;
+
+        final result = await repository.logout();
+
+        expect(result.data, isTrue);
+        expect(devices.revoked, isEmpty, reason: 'the orphaned key is revoked from another device');
+        verify(session.clear()).called(1);
+      });
+    }
+
+    test('a forced logout revokes nothing: the server already refused this key', () async {
+      await repository.logout(forced: true);
+
+      expect(devices.revoked, isEmpty);
+    });
+
+    test('a revoke the server refuses does not stop the wipe', () async {
+      devices.fail = true;
+
+      final result = await repository.logout();
+
+      expect(result.data, isTrue);
+      expect(order, ['revoke', 'clear', 'chats']);
+    });
+
+    test('the echo of its own revoke joins the logout under way: one wipe, and no "session expired"', () async {
+      // The server tells every connection of the revoked key, this one
+      // included, and that event is the forced logout's trigger.
+      final answer = Completer<void>();
+      devices.hold = answer.future;
+
+      final voluntary = repository.logout();
+      await pumpEventQueue();
+      final echo = repository.logout(forced: true);
+      answer.complete();
+
+      expect((await voluntary).data, isTrue);
+      expect((await echo).data, isTrue);
+      verify(session.clear()).called(1);
+      verifyNever(appState.fetchAppState(sessionExpired: true));
+      verify(appState.fetchAppState(sessionExpired: false)).called(1);
+    });
+
+    test('the local data and its key go last, after the revoke and the stores (phase 048)', () async {
+      final vault = _ScriptedVault(<LocalDataOpening>[], order: order);
+      getIt.registerSingleton<DeviceVault>(vault);
+
+      await repository.logout();
+
+      expect(order, ['revoke', 'clear', 'chats', 'forget']);
+    });
+
+    test('the joined echo wipes the local data once: one key forgotten (phase 048)', () async {
+      // Run apart, the echo's wipe would close and delete the database under
+      // the voluntary one's feet, and forget a key that one was still using.
+      final vault = _ScriptedVault(<LocalDataOpening>[]);
+      getIt.registerSingleton<DeviceVault>(vault);
+      final answer = Completer<void>();
+      devices.hold = answer.future;
+
+      final voluntary = repository.logout();
+      await pumpEventQueue();
+      final echo = repository.logout(forced: true);
+      answer.complete();
+      await voluntary;
+      await echo;
+
+      expect(vault.forgets, 1);
+      verify(session.clear()).called(1);
+    });
+
+    test('once a logout is over, the next one is its own', () async {
+      await repository.logout();
+      await repository.logout(forced: true);
+
+      verify(session.clear()).called(2);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+  });
+
+  group('a session paired before phase 044 (T038, FR-025)', () {
+    test('is retired once, through the forced logout: the full wipe and the pairing screen', () async {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isTrue);
+      verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+
+    test('a session with its server key is left alone', () async {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+      verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+    });
+
+    test('a keychain that cannot be read wipes nothing', () async {
+      // Still locked after a reboot, say: a valid session as likely as an old
+      // one, and a transient failure never logs anybody out.
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+      verifyNever(chats.clean());
+    });
+  });
+
+  group('a session the start cannot carry for other reasons', () {
+    setUp(() {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+    });
+
+    test('a session that outlived its install - a keychain the app was deleted from - is retired', () async {
+      when(session.outlivedItsInstall()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isTrue);
+      verify(session.clear()).called(1);
+    });
+
+    test('a sign-in that never landed - a server, no identifier, no wait - is rolled back without a word', () async {
+      when(session.readSession()).thenAnswer((_) async => const RepositoryResult<SessionModel?>.success(data: null));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verify(session.discardSignIn()).called(1);
+      verifyNever(session.clear());
+      verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+    });
+
+    test('a wait for approval on record, or a store that does not answer, rolls nothing back', () async {
+      when(session.readSession()).thenAnswer((_) async => const RepositoryResult<SessionModel?>.success(data: null));
+      when(session.readPendingPairing()).thenAnswer(
+        (_) async => RepositoryResult<PendingPairing?>.success(
+          data: PendingPairing(link: 'nox://pair/x', waitUntil: DateTime.utc(2030)),
+        ),
+      );
+      await repository.retireLegacySession();
+      when(
+        session.readPendingPairing(),
+      ).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.error(exception: RepositoryException.unknown));
+      await repository.retireLegacySession();
+
+      verifyNever(session.discardSignIn());
+    });
+  });
+
+  group('a session whose device key another check made (phase 050, FR-019)', () {
+    setUp(() {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+      // A build with a live channel: only there does a session carry a device key.
+      getIt
+        ..allowReassignment = true
+        ..registerSingleton<LiveIdentityHandshake>(MockLiveIdentityHandshake());
+    });
+
+    test('a build with no live channel never asks: its sessions carry no device key', () async {
+      // The mock flavors pair without a key, so "no key" there is every
+      // session - retiring it would log the person out at every launch.
+      await getIt.unregister<LiveIdentityHandshake>();
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.predatesSecureBox());
+      verifyNever(session.clear());
+    });
+
+    test('is retired once, through the forced logout: the full wipe and the pairing screen', () async {
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isTrue);
+      verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+
+    test('RustSecureBox or the keychain failing to answer wipes nothing', () async {
+      when(session.predatesSecureBox()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+    });
+  });
+
+  group('the local data at the start (phase 048)', () {
+    late _ScriptedVault vault;
+
+    void useVault(List<LocalDataOpening> answers) {
+      vault = _ScriptedVault(answers);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<DeviceVault>(vault);
+      repository.unreadablePause = (_) => Duration.zero;
+    }
+
+    test('a key that opens its database changes nothing', () async {
+      useVault([LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+      verifyNever(files.clean());
+      expect(vault.forgets, 0);
+    });
+
+    test('a new key clears what no key opens any more, and nothing else', () async {
+      useVault([LocalDataOpening.created]);
+      final copies = Directory(await AppDataRoot.pathOf(AppDataRoot.outboxFolder));
+      await Directory('${copies.path}/left-behind').create(recursive: true);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      verify(files.clean()).called(1);
+      expect(copies.existsSync(), isFalse);
+      verifyNever(session.clear());
+    });
+
+    test('a key that is gone with its data still here: the data goes, and the device pairs again (FR-011)', () async {
+      useVault([LocalDataOpening.lost]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isTrue);
+      expect(vault.forgets, greaterThanOrEqualTo(1), reason: 'a key that opens nothing is no key');
+      verify(session.clear()).called(1);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+
+    test('a store that does not answer is asked again, and never costs the data', () async {
+      useVault([LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      expect(vault.asked, 3);
+      verifyNever(session.clear());
+      verifyNever(files.clean());
+      expect(vault.forgets, 0);
+    });
+
+    test('where a lasting failure is a key gone for good, it costs the data after the limit, and not before', () async {
+      repository.unreadableLimit = 3;
+      when(session.resetSecureStore()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+      useVault([LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.unreadable, LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isTrue);
+      expect(vault.asked, 3, reason: 'asked as often as the limit, then given up');
+      // The store is rebuilt before the session is emptied: a store that
+      // fails every call could empty nothing.
+      verifyInOrder([session.resetSecureStore(), session.clear()]);
+    });
+
+    test('with no limit, a store that keeps failing is asked again and again', () async {
+      repository.unreadableLimit = null;
+      useVault([for (var i = 0; i < 8; i++) LocalDataOpening.unreadable, LocalDataOpening.open]);
+
+      final result = await repository.openLocalData();
+
+      expect(result.data, isFalse);
+      expect(vault.asked, 9);
+      verifyNever(session.clear());
+    });
+
+    test('the pause before asking again grows, and stays short', () {
+      final pause = AuthRepositoryImpl(session, appState, chats, messages, sync, outbox, files).unreadablePause;
+      expect([for (var i = 1; i <= 7; i++) pause(i).inSeconds], [2, 4, 8, 16, 30, 30, 30]);
+    });
+
+    test('logout drops the key with the data it sealed (FR-012)', () async {
+      useVault([]);
+
+      await repository.logout();
+
+      expect(vault.forgets, 1);
+    });
+  });
+
   /// Sign-in with a live channel present: the branch the app actually takes on
   /// the stage flavor, and the one no test used to reach — every case above
   /// runs the no-handshake fallback, so the server-decided outcome and its
@@ -262,95 +673,302 @@ void main() {
   group('signIn with a live channel', () {
     late MockLiveIdentityHandshake handshake;
 
+    /// Any presentation of a link, whatever it waits for.
+    Future<IdentityHandshake> pairing() => handshake.pair(
+      link: anyNamed('link'),
+      platform: anyNamed('platform'),
+      waitUntil: anyNamed('waitUntil'),
+      onPending: anyNamed('onPending'),
+    );
+
     setUp(() {
       handshake = MockLiveIdentityHandshake();
       getIt.allowReassignment = true;
       getIt.registerSingleton<LiveIdentityHandshake>(handshake);
       when(appState.currentState).thenReturn(AppStateType.authorized);
+      when(session.deviceKey()).thenAnswer(
+        (_) async => const RepositoryResult<DeviceKeyPair>.success(
+          data: DeviceKeyPair(privateKey: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=', publicKey: 'cHVibGljLWtleQ=='),
+        ),
+      );
       when(
-        session.deviceSecret(),
-      ).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
-      when(
-        session.saveServer(address: anyNamed('address'), serverFingerprint: anyNamed('serverFingerprint')),
+        session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
       ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     });
 
     test('claiming a server brings the person into being, so naming is ahead', () async {
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
 
       final result = await repository.signIn(identifier: link);
 
       expect(result.data, isTrue);
       verifyNever(session.setOnboardingComplete());
-      // Without this mark a reconnect during naming reports the person's own
-      // brand-new row back as "already known" and ends onboarding mid-typing.
-      verify(session.noteOnboardingStartedHere()).called(1);
     });
 
     test('a device added to an existing person skips onboarding entirely', () async {
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       final result = await repository.signIn(identifier: link);
 
       expect(result.data, isTrue);
       verify(session.setOnboardingComplete()).called(1);
-      verifyNever(session.noteOnboardingStartedHere());
     });
 
-    test('a version-2 link reaches the handshake whole, its onion part included (FR-020)', () async {
-      const v2 =
-          'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+    test('every address of the link is stored in order, the onion one kept for later (FR-019)', () async {
+      // The contract's `full` vector: an IPv4 address, a name and an onion
+      // service. Pairing starts at the first direct address; the onion one is
+      // for the connection through Tor once this device is paired.
+      const full =
+          'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
+      (getIt<TorService>() as FakeTorService).supported = true;
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
-      final result = await repository.signIn(identifier: v2);
+      final result = await repository.signIn(identifier: full);
 
       expect(result.data, isTrue);
+      verify(session.saveServer(address: '192.168.1.20:8443', serverKey: serverKey)).called(1);
+      final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+      expect(stored.direct, ['192.168.1.20:8443', 'nox.example.org:8443']);
+      expect(stored.onion, '${'a' * 56}.onion:443', reason: 'derived from the service key by the Tor module');
+      expect(stored.useTor, isFalse, reason: 'off unless the person ticked it');
+      expect(stored.manualAddress, isNull);
+      expect(stored.manualOnion, isNull);
       final handed =
           verify(
-                handshake.pair(link: captureAnyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+                handshake.pair(
+                  link: captureAnyNamed('link'),
+                  platform: anyNamed('platform'),
+                  waitUntil: anyNamed('waitUntil'),
+                  onPending: anyNamed('onPending'),
+                ),
               ).captured.single
               as PairingLink;
-      expect(handed.carriesOnion, isTrue);
-      // The direct address is still the one stored and tried first.
-      verify(session.saveServer(address: '192.168.1.10:8080', serverFingerprint: anyNamed('serverFingerprint'))).called(1);
+      expect(handed.directAddresses, ['192.168.1.20:8443', 'nox.example.org:8443']);
     });
 
-    test('only the PUBLIC key is presented - the seed never leaves', () async {
+    group('what the person set on the connection screen (phase 045)', () {
+      const full =
+          'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
+      final linkOnion = '${'a' * 56}.onion:443';
+      final typedOnion = '${'b' * 56}.onion:443';
+
+      setUp(() {
+        (getIt<TorService>() as FakeTorService).supported = true;
+        when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      });
+
+      test('the link\'s own values, unchanged, are no edits, and Use Tor is stored as ticked', () async {
+        await repository.signIn(
+          identifier: full,
+          connection: ConnectionSettings(serverAddress: '192.168.1.20:8443', onionAddress: linkOnion, useTor: true),
+        );
+
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.manualAddress, isNull);
+        expect(stored.manualOnion, isNull);
+        expect(stored.useTor, isTrue);
+        expect(stored.effectiveOnion, linkOnion);
+      });
+
+      test('a changed field is a hand edit, the session still starting at the link\'s own address', () async {
+        await repository.signIn(
+          identifier: full,
+          connection: ConnectionSettings(serverAddress: '10.8.0.2:8443', onionAddress: typedOnion),
+        );
+
+        verify(session.saveServer(address: '192.168.1.20:8443', serverKey: serverKey)).called(1);
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.manualAddress, '10.8.0.2:8443');
+        expect(stored.manualOnion, typedOnion);
+        expect(stored.effectiveOnion, typedOnion);
+        expect(stored.candidates('192.168.1.20:8443').first, '10.8.0.2:8443', reason: 'the edit is tried first');
+      });
+
+      test('an emptied onion field means no onion address, even though the link carried one', () async {
+        await repository.signIn(
+          identifier: full,
+          connection: const ConnectionSettings(serverAddress: '192.168.1.20:8443', useTor: true),
+        );
+
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.manualOnion, '');
+        expect(stored.effectiveOnion, isNull);
+      });
+
+      test('an onion address typed for a link without one is a hand edit too', () async {
+        await repository.signIn(
+          identifier: link,
+          connection: ConnectionSettings(serverAddress: '192.168.1.20:8443', onionAddress: typedOnion, useTor: true),
+        );
+
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.onion, isNull);
+        expect(stored.manualOnion, typedOnion);
+        expect(stored.useTor, isTrue);
+      });
+    });
+
+    test('the device key is read before anything is presented, and an unreadable one rolls back', () async {
+      // The channel opens with it; a keychain that cannot give it up is a
+      // failed attempt, never a pairing with a key nobody will find again.
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+        session.deviceKey(),
+      ).thenAnswer((_) async => const RepositoryResult<DeviceKeyPair>.error(exception: RepositoryException.unknown));
 
-      await repository.signIn(identifier: link);
+      final result = await repository.signIn(identifier: link);
 
-      final presented = verify(
-        handshake.pair(link: anyNamed('link'), deviceKey: captureAnyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).captured.single;
-      expect(presented, 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=', reason: 'the public half of the pinned vector');
-      expect(presented, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
+      expect(result.hasData, isFalse);
+      verifyNever(pairing());
+      verify(session.discardSignIn()).called(1);
     });
 
-    test('the two refusals stay apart, because each says a different thing to do next', () async {
-      // Get a new invite; this one is not usable at all. Two answers, two next
-      // actions - collapsing them would tell somebody the wrong thing to do.
-      const expectations = <PairRefusal, RepositoryException>{
+    test('the refusals stay apart, because each says a different thing to do next', () async {
+      // Get a new invite; this one is not usable at all; the other device said
+      // no (phase 046). Three answers, three next actions - collapsing them
+      // would tell somebody the wrong thing to do.
+      const expectations = <PairRefusal, BaseRepositoryException>{
         PairRefusal.expired: RepositoryException.notFound,
         PairRefusal.notUsable: RepositoryException.authentication,
+        PairRefusal.declined: PairingException.declined,
       };
       for (final entry in expectations.entries) {
-        when(
-          handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-        ).thenThrow(PairingRefused(reason: entry.key));
+        when(pairing()).thenThrow(PairingRefused(reason: entry.key));
 
         final refused = await repository.signIn(identifier: link);
         expect(refused.exception, entry.value, reason: '${entry.key.name} must stay distinguishable');
       }
-      expect(expectations.values.toSet(), hasLength(2), reason: 'no two refusals may share an answer');
+      expect(expectations.values.toSet(), hasLength(PairRefusal.values.length), reason: 'no two refusals may share an answer');
+    });
+
+    group('an invite that waits for approval (phase 046)', () {
+      const anna = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false);
+      final waitUntil = DateTime.utc(2026, 10, 10, 12, 30);
+
+      /// Answers the pairing the way the handshake does for an invite: it
+      /// reports the wait, then ends the way [answer] does.
+      void waitsFor(Future<IdentityHandshake> Function() answer) {
+        when(pairing()).thenAnswer((invocation) async {
+          final onPending = invocation.namedArguments[#onPending] as void Function(PairingPending)?;
+          onPending?.call(PairingPending(requestId: 'r_1', waitUntil: waitUntil));
+          return answer();
+        });
+      }
+
+      test('the wait is said while it lasts, and remembered with the link, the settings and the deadline', () async {
+        final answer = Completer<IdentityHandshake>();
+        waitsFor(() => answer.future);
+        final states = <bool>[];
+        final sub = repository.watchAwaitingApproval().listen(states.add);
+        addTearDown(sub.cancel);
+        const settings = ConnectionSettings(serverAddress: '192.168.1.20:8443', useTor: true);
+
+        final signingIn = repository.signIn(identifier: link, connection: settings);
+        await pumpEventQueue();
+
+        expect(states.last, isTrue, reason: 'the screen says it waits');
+        final saved = verify(session.savePendingPairing(captureAny)).captured.single as PendingPairing;
+        expect(saved, PendingPairing(link: link, waitUntil: waitUntil, connection: settings));
+        verifyNever(session.clearPendingPairing());
+
+        answer.complete(anna);
+        expect((await signingIn).data, isTrue);
+        expect(states.last, isFalse);
+        verify(session.clearPendingPairing()).called(1);
+      });
+
+      test('Deny is its own answer, and the attempt is undone', () async {
+        waitsFor(() => throw const PairingRefused(reason: PairRefusal.declined));
+
+        final result = await repository.signIn(identifier: link);
+
+        expect(result.exception, PairingException.declined);
+        verify(session.discardSignIn()).called(1);
+        verify(session.clearPendingPairing()).called(1);
+      });
+
+      test('a withdrawn request is its own answer too, with nothing to explain', () async {
+        waitsFor(() => throw const PairingCancelled());
+
+        final result = await repository.signIn(identifier: link);
+
+        expect(result.exception, PairingException.cancelled);
+        verify(session.discardSignIn()).called(1);
+      });
+
+      test('the same link remembered from before goes on to its first deadline (FR-011)', () async {
+        final first = DateTime.utc(2026, 10, 10, 12, 0);
+        when(session.readPendingPairing()).thenAnswer(
+          (_) async => RepositoryResult<PendingPairing?>.success(
+            data: PendingPairing(link: link, waitUntil: first),
+          ),
+        );
+        when(pairing()).thenAnswer((_) async => anna);
+
+        await repository.signIn(identifier: link);
+
+        verify(
+          handshake.pair(link: anyNamed('link'), platform: anyNamed('platform'), waitUntil: first, onPending: anyNamed('onPending')),
+        ).called(1);
+      });
+
+      test('another link remembered from before starts a deadline of its own', () async {
+        when(session.readPendingPairing()).thenAnswer(
+          (_) async => RepositoryResult<PendingPairing?>.success(
+            data: PendingPairing(
+              // The same server, another token: another invite.
+              link: link.replaceFirst('AAECAwQFBgcICQoLDA0O', 'EBESExQVFhcYGRobHB0e'),
+              waitUntil: DateTime.utc(2026),
+            ),
+          ),
+        );
+        when(pairing()).thenAnswer((_) async => anna);
+
+        await repository.signIn(identifier: link);
+
+        verify(
+          handshake.pair(link: anyNamed('link'), platform: anyNamed('platform'), waitUntil: null, onPending: anyNamed('onPending')),
+        ).called(1);
+      });
+
+      test('Cancel is handed to the handshake that waits', () async {
+        when(handshake.cancelPairing()).thenAnswer((_) async {});
+
+        await repository.cancelPairing();
+
+        verify(handshake.cancelPairing()).called(1);
+      });
+
+      group('after a restart', () {
+        test('nothing remembered, nothing to resume', () async {
+          expect((await repository.pendingPairing()).data, isNull);
+          verifyNever(session.discardSignIn());
+        });
+
+        test('a wait still within its time is handed back, to go on with', () async {
+          final pending = PendingPairing(link: link, waitUntil: DateTime.now().add(const Duration(minutes: 3)));
+          when(session.readPendingPairing()).thenAnswer((_) async => RepositoryResult<PendingPairing?>.success(data: pending));
+
+          expect((await repository.pendingPairing()).data, pending);
+          verifyNever(session.discardSignIn());
+        });
+
+        test('a wait whose time ran out meanwhile is undone like any failed sign-in', () async {
+          final lapsed = PendingPairing(link: link, waitUntil: DateTime.now().subtract(const Duration(seconds: 1)));
+          when(session.readPendingPairing()).thenAnswer((_) async => RepositoryResult<PendingPairing?>.success(data: lapsed));
+
+          expect((await repository.pendingPairing()).data, isNull);
+          verify(session.discardSignIn()).called(1);
+        });
+
+        test('a keychain that cannot be read resumes nothing and undoes nothing', () async {
+          when(
+            session.readPendingPairing(),
+          ).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.error(exception: RepositoryException.unknown));
+
+          expect((await repository.pendingPairing()).hasData, isFalse);
+          verifyNever(session.discardSignIn());
+        });
+      });
     });
 
     test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity, and waits only briefly', () async {
@@ -358,9 +976,7 @@ void main() {
       // the server. Without a second greeting it keeps speaking as whoever
       // greeted then, and a message sent on it comes back looking like a
       // stranger's on the sender's own screen.
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
       when(
         handshake.greet(within: anyNamed('within')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
@@ -373,9 +989,7 @@ void main() {
     test('a greeting that fails after pairing does not undo the pairing', () async {
       // The pairing landed and the token is spent. Rolling back here would burn
       // it for nothing - an ordinary reconnect is enough.
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
       when(handshake.greet(within: anyNamed('within'))).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
@@ -385,9 +999,7 @@ void main() {
     });
 
     test('a pairing that never answers rolls back, keeping the device key', () async {
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenThrow(const IdentityHandshakeTimeout());
+      when(pairing()).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
 
@@ -406,15 +1018,14 @@ void main() {
       final logs = <String>[];
       final logger = _CapturingLog(logs);
       getIt.registerSingleton<LogRepository>(logger);
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenThrow(const FormatException('Invalid character', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
+      when(pairing()).thenThrow(const FormatException('Invalid character', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
 
       await repository.signIn(identifier: link);
 
       final written = logs.join('\n');
       expect(written, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
-      expect(written, isNot(contains(link.split('#').last)));
+      expect(written, isNot(contains(link.substring(PairingLink.prefix.length))));
+      expect(written, isNot(contains(PairingLink.parse(link).token)));
     });
 
     test('a sign-in that works says nothing at all in the log', () async {
@@ -430,9 +1041,7 @@ void main() {
       // broken harness.
       final logs = <String>[];
       getIt.registerSingleton<LogRepository>(_CapturingLog(logs));
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_person_7', label: 'Anna', created: true));
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_person_7', label: 'Anna', created: true));
 
       await repository.signIn(identifier: link);
 
@@ -443,9 +1052,7 @@ void main() {
       // An older server, or a frame without the field. Guessing false steals a
       // newcomer's naming step; guessing true overwrites a returning person's
       // name.
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
+      when(pairing()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
 
       final result = await repository.signIn(identifier: link);
 
@@ -497,4 +1104,73 @@ class _RecordingPrefetch implements AttachmentPrefetchService {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A vault that answers what a test says, in order, and counts what it was
+/// asked.
+class _ScriptedVault extends DeviceVault {
+  _ScriptedVault(this.answers, {this.order}) : super(FakeSessionRepository());
+
+  final List<LocalDataOpening> answers;
+  int asked = 0;
+  int forgets = 0;
+
+  /// Where a forget is recorded among the other steps of a logout, if given.
+  final List<String>? order;
+
+  @override
+  Future<LocalDataOpening> open() async {
+    asked++;
+    return answers.isEmpty ? LocalDataOpening.open : answers.removeAt(0);
+  }
+
+  @override
+  Future<void> forget() async {
+    forgets++;
+    order?.add('forget');
+  }
+}
+
+/// Records each revoke - the key, and when, among the other steps of a
+/// logout - and answers it as told.
+class _RecordingDevices implements DeviceRepository {
+  _RecordingDevices(this.order);
+
+  final List<String> order;
+  final List<String> revoked = <String>[];
+
+  /// Holds the answer until it completes.
+  Future<void>? hold;
+
+  /// Answers with a refusal.
+  bool fail = false;
+
+  @override
+  Future<RepositoryResult<bool>> revoke({required String deviceKey}) async {
+    order.add('revoke');
+    revoked.add(deviceKey);
+    await hold;
+    return fail
+        ? const RepositoryResult<bool>.error(exception: RepositoryException.internal)
+        : const RepositoryResult<bool>.success(data: true);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A connection that stands where it is told.
+class _FixedPhase implements SessionPhaseService {
+  _FixedPhase(this.value);
+
+  SessionPhase value;
+
+  @override
+  SessionPhase get phase => value;
+
+  @override
+  Stream<SessionPhase> watchPhase() => Stream<SessionPhase>.value(value);
+
+  @override
+  Future<void> reconnect() async {}
 }

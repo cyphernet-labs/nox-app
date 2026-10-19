@@ -9,11 +9,19 @@
     <!-- Notifications (7.2). Android 13+ (API 33) POST_NOTIFICATIONS runtime permission;
          permission_handler reads its status to drive the "blocked" banner + Open settings. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Nothing of NOX goes into a backup or onto a new phone (phase 048): not
+         the auto backup, not the device-to-device transfer, which Android 12
+         and later keep doing under allowBackup="false" unless the extraction
+         rules exclude it too. A restored or new phone is paired again, and the
+         conversation comes back from the server. -->
     <application
         android:label="NOX"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round">
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

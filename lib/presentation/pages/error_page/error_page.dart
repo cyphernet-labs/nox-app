@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -12,7 +13,8 @@ import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.da
 
 /// 3.1 Universal error screen — parameterized icon/title/message + `Try again`.
 /// Modes: [ErrorPageMode.embedded] (back arrow) and [ErrorPageMode.blocking] (no
-/// back; last in the stack — system back is suppressed). On a wide window the body
+/// back; last in the stack — the system back leaves the app instead of going past
+/// the error: on Android it goes to the background). On a wide window the body
 /// sits under a faux window title bar with a larger icon. `demo: true` adds a dev
 /// control to switch mode while previewing from the gallery; the real screen is
 /// constructed with fixed [ErrorPageParams].
@@ -60,6 +62,15 @@ class _AppErrorPageState extends State<AppErrorPage> {
     if (mounted) setState(() => _retrying = false);
   }
 
+  /// The system back on a blocking error: there is nothing behind it to go back
+  /// to, so on Android the app goes to the background - the way back behaves on
+  /// the last screen of any app - rather than doing nothing. Elsewhere there is
+  /// no system back to answer.
+  void _leaveApp(bool didPop, Object? result) {
+    if (didPop || defaultTargetPlatform != TargetPlatform.android) return;
+    SystemNavigator.pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -75,8 +86,9 @@ class _AppErrorPageState extends State<AppErrorPage> {
         if (wide) {
           // Desktop respects ErrorPageMode just like mobile (R1): embedded gets a back
           // affordance (top-left, over the body — mirrors the mobile app-bar back), and
-          // blocking suppresses the system back via PopScope (a fatal error must not be
-          // escapable on ANY platform). The branded titlebar is kept in both cases.
+          // blocking keeps the system back from going past the error (a fatal error
+          // must not be escapable on ANY platform). The branded titlebar is kept in
+          // both cases.
           final Widget content = _mode == ErrorPageMode.embedded
               ? Stack(
                   children: [
@@ -101,7 +113,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
               ],
             ),
           );
-          return _mode == ErrorPageMode.blocking ? PopScope(canPop: false, child: scaffold) : scaffold;
+          return _mode == ErrorPageMode.blocking ? PopScope(canPop: false, onPopInvokedWithResult: _leaveApp, child: scaffold) : scaffold;
         }
         if (_mode == ErrorPageMode.embedded) {
           return Scaffold(
@@ -115,8 +127,12 @@ class _AppErrorPageState extends State<AppErrorPage> {
             body: body,
           );
         }
-        // Blocking: no back affordance; system back is suppressed (last in the stack).
-        return PopScope(canPop: false, child: Scaffold(body: body));
+        // Blocking: no back affordance; the system back leaves the app (last in the stack).
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: _leaveApp,
+          child: Scaffold(body: body),
+        );
       },
     );
   }

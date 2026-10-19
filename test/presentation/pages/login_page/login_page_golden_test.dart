@@ -18,9 +18,6 @@ LoginPage _login({required bool scannerAvailable, LoginStatus? status}) {
 }
 
 void main() {
-  // The screen watches the session phase since feature 036 - a server that
-  // fails to prove who it is has to say so here, where the person is holding
-  // the link - and that service comes from the container.
   setUpAll(() async {
     await configureDependencies(Environment.test);
   });
@@ -45,17 +42,13 @@ void main() {
   goldenTest('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));
   goldenTestDesktop('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));
 
-  // The link parsed, and the machine at the address it carries is not the one
-  // it names (036). Apart from the two above because the next action differs
-  // again: not "scan it again", not "check your connection" - the server behind
-  // this link is the wrong one.
-  goldenTest('login_page_pin_refused', () => _login(scannerAvailable: true, status: LoginStatus.errorServerMismatch));
-  goldenTestDesktop('login_page_pin_refused', () => _login(scannerAvailable: true, status: LoginStatus.errorServerMismatch));
+  // A link of a version newer than this build (044, FR-017). Apart from the bad
+  // link because the next action differs: not "scan it again" - the link is
+  // fine - but "update the app".
+  goldenTest('login_page_newer_version', () => _login(scannerAvailable: true, status: LoginStatus.errorNewerVersion));
+  goldenTestDesktop('login_page_newer_version', () => _login(scannerAvailable: true, status: LoginStatus.errorNewerVersion));
 
-  // A version-1 link whose server did not answer, or a different machine
-  // answered at its address (040). Apart from both of the above because the
-  // cause is where the device is: neither the link nor the network is wrong,
-  // and the sentence is two lines long where the others are one.
-  goldenTest('login_page_home_only', () => _login(scannerAvailable: true, status: LoginStatus.errorHomeNetworkOnly));
-  goldenTestDesktop('login_page_home_only', () => _login(scannerAvailable: true, status: LoginStatus.errorHomeNetworkOnly));
+  // The refusals about the SERVER - an expired or rejected token, a server out
+  // of reach and why - moved to the connection screen with phase 045, which
+  // pairs; this screen only reads the link.
 }

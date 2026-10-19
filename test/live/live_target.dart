@@ -1,23 +1,41 @@
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_tor/channel.dart';
 
-/// Where a live probe dials, and the key it insists on finding there.
+/// Where a live probe dials, the key it insists on finding there, and the
+/// device key it proves itself with (phase 044).
 ///
-/// Both come out of ONE `--dart-define=link=<pairing link>` - the line a fresh
-/// `noxd` prints - because the address and the fingerprint are two halves of
-/// one fact and passing them separately is how they come to disagree.
+/// The first two come out of ONE `--dart-define=link=<pairing link>` - the
+/// version-3 link a fresh `noxd` shows on its service page once its password
+/// is in (its log names the page and never the link, phases 045 and 047), or
+/// the first line `noxd link` prints - because the address and the server key
+/// are two halves of one fact and passing them separately is how they come to
+/// disagree. The device key is new for every run, as a fresh install
+/// has; [pair] makes it known to the server with the link's token.
 ///
-/// Since the transport is TLS there is no such thing as a probe that "just
-/// connects": without a fingerprint there is nothing to check the server
-/// against, so a probe with no link skips rather than dialling blind.
+/// Every connection is a channel of the native module, so these probes need
+/// the library built from this tree's Rust crate. Without a link there is
+/// nothing to check the server against, so a probe skips rather than dialling
+/// blind - but only when none was passed at all: one passed empty or unreadable
+/// is a command that failed to make it, and fails the probe.
 class LiveTarget {
-  const LiveTarget._(this.link);
+  LiveTarget._(this.link) : devicePrivateKey = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256)));
 
   static const String _define = String.fromEnvironment('link');
 
+  /// Whether `--dart-define=link=` was passed at all, empty included.
+  static const bool _given = bool.hasEnvironment('link');
+
   final PairingLink link;
+
+  /// This run's device key seed.
+  final Uint8List devicePrivateKey;
 
   /// The target, or null when nothing was passed or it will not parse.
   static LiveTarget? fromDefine() {
@@ -26,24 +44,48 @@ class LiveTarget {
   }
 
   /// Says why it is skipping, and returns null, so a probe body reads as one
-  /// early return.
+  /// early return. Only a link never passed skips: `noxd link` against a
+  /// locked server, or none, says why on stderr and prints nothing, so a
+  /// `link="$(noxd link | head -1)"` comes out empty - and a skip there would
+  /// read as a pass.
   static LiveTarget? orSkip() {
-    final target = fromDefine();
-    if (target == null) {
-      stdout.writeln('SKIP: pass --dart-define=link=<pairing link printed by noxd>');
+    if (!_given) {
+      stdout.writeln('SKIP: pass --dart-define=link=<a machine link: noxd\'s service page, or `noxd link`>');
+      return null;
     }
+    if (_define.isEmpty) fail('link= was passed empty - did `noxd link` fail?');
+    final target = fromDefine();
+    if (target == null) fail('link= is not a pairing link this build reads: ${PairingLink.refusalOf(_define)?.name}');
     return target;
   }
 
-  /// A client pinned to this server, shared by both transports of the probe
-  /// exactly as the app shares one.
-  PinnedHttpClient client() => PinnedHttpClient()..pinTo(link.serverFingerprint);
+  /// A channel client bound to this server and this run's device key, shared
+  /// by both transports of the probe exactly as the app shares one.
+  ChannelHttpClient client() =>
+      ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, devicePrivateKey: devicePrivateKey);
+
+  /// The link's first direct address - what the connection screen shows in
+  /// its address field (phase 045). These probes dial it directly.
+  String get address => link.directAddresses.first;
 
   /// The command channel.
-  Uri get socketUrl => Uri.parse('wss://${link.authority}/ws');
+  Uri get socketUrl => Uri.parse('wss://$address/ws');
 
   /// The base for attachment bytes.
-  String get restUrl => 'https://${link.authority}';
+  String get restUrl => 'https://$address';
+
+  /// Pairs this run's device key by the link's token, over [socket], and
+  /// stops it again. The server knows a device only by the key its channel
+  /// proves, and a key it does not know may do nothing but pair - so a probe
+  /// pairs first and then starts its socket again, greeting as a device the
+  /// server has. Spends the link: a machine link pairs once, and an invite
+  /// would only open a request that waits for Allow (phase 046).
+  Future<void> pair(NoxSocketClient socket) async {
+    await socket.start(url: socketUrl, credentialsProvider: () async => const GreetingCredentials.unpaired());
+    final reply = await socket.pair(token: link.token, platform: 'macos');
+    expect(reply.ok, isTrue, reason: 'pair: ${reply.errorCode}');
+    await socket.stop();
+  }
 
   /// Lets a probe reach a real server.
   ///
@@ -51,6 +93,6 @@ class LiveTarget {
   /// request with a mock, so the suite cannot touch the network by accident -
   /// and a probe that dials a live `noxd` fails with `Unsupported operation:
   /// Mocked response` before a single byte leaves the process. Reaching the
-  /// network is the whole point of these four files, so they lift it.
+  /// network is the whole point of these files, so they lift it.
   static void letTheNetworkThrough() => HttpOverrides.global = null;
 }

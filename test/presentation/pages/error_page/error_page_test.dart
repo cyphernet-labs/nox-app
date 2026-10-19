@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
@@ -34,6 +35,50 @@ void main() {
     expect(find.byTooltip(l10nEn.tooltipBack), findsNothing);
     expect(find.text(l10nEn.errorGeneralTitle), findsOneWidget);
   });
+
+  /// Records what the app asks of the platform, so a test sees whether the
+  /// system back sent it to the background.
+  List<String> recordPlatformCalls(WidgetTester tester) {
+    final calls = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      calls.add(call.method);
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    return calls;
+  }
+
+  testWidgets(
+    'the system back on a blocking error sends the app to the background on Android',
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+    (tester) async {
+      final calls = recordPlatformCalls(tester);
+      await pumpApp(tester, AppErrorPage(params: ErrorPageParams.fatal(mode: ErrorPageMode.blocking)));
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+
+      expect(calls, contains('SystemNavigator.pop'));
+      expect(find.text(l10nEn.errorGeneralTitle), findsOneWidget, reason: 'nothing goes past the error');
+    },
+  );
+
+  testWidgets(
+    'away from Android a blocking error does not close the app on back',
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    (tester) async {
+      // A desktop embedder answers SystemNavigator.pop by quitting; there is no
+      // system back there to answer, and nothing may quit the app on its behalf.
+      final calls = recordPlatformCalls(tester);
+      await pumpApp(tester, AppErrorPage(params: ErrorPageParams.fatal(mode: ErrorPageMode.blocking)));
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+
+      expect(calls.where((m) => m == 'SystemNavigator.pop'), isEmpty);
+      expect(find.text(l10nEn.errorGeneralTitle), findsOneWidget);
+    },
+  );
 
   testWidgets('Try again shows a spinner while onRetry runs', (tester) async {
     final completer = Completer<void>();

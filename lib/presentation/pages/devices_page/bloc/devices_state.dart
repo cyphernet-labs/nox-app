@@ -34,13 +34,11 @@ abstract class DevicesState with _$DevicesState {
   /// The link of the invite on screen, or null.
   String? get inviteLink => invite?.link;
 
-  /// The invite on screen works only on the home network: the server could not
-  /// put its onion address in it (FR-019), so the card has to say so. False
-  /// when there is no invite - there is nothing to say it about.
-  bool get inviteHomeOnly {
-    final shown = invite;
-    return shown != null && !shown.onion;
-  }
+  /// The invite on screen works only on the home network: its link carries
+  /// neither the server's onion address nor its public one (phase 045), so the
+  /// card has to say so. False when there is no invite - there is nothing to
+  /// say it about.
+  bool get inviteHomeOnly => invite?.homeOnly ?? false;
 
   /// Whether a revoke the person asked for did not happen. The screen shows one
   /// notice, so which device it was does not reach the widget - only the fact,

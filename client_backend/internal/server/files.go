@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -44,7 +45,7 @@ const (
 	defaultPreemptWait = 5 * time.Second
 	// defaultContinuationWait bounds the same wait for a continuation. It
 	// runs on the connection's read loop, which is also where pongs are
-	// read, and the direct path's ping gives up after 5 s - so a second, and
+	// read, and a ping gives up when its pong is late - so a second, and
 	// never a reason to refuse.
 	defaultContinuationWait = time.Second
 )
@@ -283,6 +284,58 @@ func (c *client) handleChatFiles(cmd protocol.Command) {
 
 // --- HTTP surface (contract §1/§7) ---
 
+// admitTransfer answers whether the request's connection belongs to a paired
+// device, and refuses it itself when not (044, FR-006a). A transfer needs
+// BOTH: a paired key on the connection and a live transfer token - a token
+// alone was a bearer credential that worked for whoever held it.
+//
+// Asked BEFORE the token is looked at, so a stranger who somehow holds one can
+// neither spend it nor learn whether it is live. The key is looked up on every
+// request, not once per connection, so a request on a connection that outlived
+// its device's revocation is refused.
+//
+// An admitted transfer stays registered under its key until the handler calls
+// done, and revoking the device cuts it there and then (dropDevice): a
+// transfer has no time limit, and a lost phone halfway through a download
+// would otherwise go on reading for as long as it liked. It is registered
+// BEFORE the key is looked up, and the order is what closes the gap between
+// the two. A revocation deletes the row and only then walks the registry, so
+// either the walk finds this transfer and cuts it, or the walk came first -
+// and the deletion before it, which the lookup then sees.
+//
+// 401 for a stranger, and still 404 for a bad token from a paired device: the
+// 404 is how a client of 043 knows to ask for a new pass, and that must not
+// change. A store that cannot answer is a 500 - the device did nothing wrong.
+//
+// A 401 ends the connection (endWithAnswer). The door has ended a stranger's
+// already; a 401 that is still to be decided here is a device revoked between
+// the door's question and this one, whose connection would otherwise be kept
+// for its next request.
+func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) (done func(), ok bool) {
+	conn, ok := channelConnFrom(r.Context())
+	if !ok {
+		endWithAnswer(w, r)
+		http.Error(w, "the connection proved no device key", http.StatusUnauthorized)
+		return nil, false
+	}
+	key := conn.peer.deviceKey()
+	done = s.trackTransfer(key, conn)
+	_, paired, err := s.store.DeviceOwner(r.Context(), key)
+	if err != nil {
+		done()
+		s.logger.Error("transfer device lookup failed", "err", err)
+		http.Error(w, "storage failure", http.StatusInternalServerError)
+		return nil, false
+	}
+	if !paired {
+		done()
+		endWithAnswer(w, r)
+		http.Error(w, "the connection's device is not paired", http.StatusUnauthorized)
+		return nil, false
+	}
+	return done, true
+}
+
 // handlePutFile receives attachment bytes for a one-shot upload token
 // (contract §7, 043). The token names the file and the offset its bytes
 // begin at; the body carries the file from there to its end, and whatever
@@ -290,6 +343,11 @@ func (c *client) handleChatFiles(cmd protocol.Command) {
 // to continue from. All token failures are 404 alike: existence is not
 // disclosed to guessers.
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
+	done, ok := s.admitTransfer(w, r)
+	if !ok {
+		return
+	}
+	defer done()
 	fileID, offset, ok := s.tokens.consume(r.PathValue("token"), opUpload)
 	if !ok {
 		http.NotFound(w, r)
@@ -333,7 +391,7 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	up, err := s.blob.Resume(fileID, offset)
+	up, err := s.blob.Resume(fileID, offset, size)
 	if errors.Is(err, blob.ErrShortPart) {
 		// The bytes this token was issued after are no longer all on disk.
 		http.NotFound(w, r)
@@ -665,6 +723,11 @@ func (s *stallWriter) finish() {
 // the client continues with Range from what it has and If-Range with the
 // Last-Modified of its first response (contract §7).
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
+	done, ok := s.admitTransfer(w, r)
+	if !ok {
+		return
+	}
+	defer done()
 	// The mux routes HEAD through GET patterns; a HEAD would burn the
 	// one-shot token without delivering a byte (an accidental curl -I
 	// would kill the link). Reject it before consuming.
@@ -682,24 +745,44 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	f, err := s.blob.Open(fileID)
+	// The plaintext of the file, opened chunk by chunk as the range asks for
+	// them (047): ServeContent seeks and reads it as it would a plain file.
+	f, err := s.blob.Open(fileID, info.Attachment.Size)
+	if errors.Is(err, blob.ErrCorrupt) {
+		s.logger.Error("attachment bytes do not open", "file", fileID)
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	defer func() { _ = f.Close() }()
-	stat, err := f.Stat()
-	if err != nil {
-		s.logger.Error("blob stat failed", "err", err, "file", fileID)
-		http.Error(w, "storage failure", http.StatusInternalServerError)
-		return
-	}
 	// A reader that stops must not pin the goroutine and the fd forever, and
 	// one that reads slowly must not be cut: the deadline measures silence.
 	sw := newStallWriter(w, s.stallTimeout)
 	defer sw.finish()
 	sw.Header().Set("Content-Type", info.Attachment.Mime)
-	http.ServeContent(sw, r, "", stat.ModTime(), f)
+	http.ServeContent(sw, r, "", f.ModTime(), &servedFile{Reader: f, logger: s.logger, fileID: fileID})
+}
+
+// servedFile is a file being served, and says so in the log when a chunk of it
+// does not open part-way through: by then the status line has gone out, and
+// the client sees only a body that ends early.
+type servedFile struct {
+	*blob.Reader
+	logger *slog.Logger
+	fileID string
+	logged bool
+}
+
+func (f *servedFile) Read(p []byte) (int, error) {
+	n, err := f.Reader.Read(p)
+	if errors.Is(err, blob.ErrCorrupt) && !f.logged {
+		f.logged = true
+		f.logger.Error("attachment bytes do not open", "file", f.fileID)
+	}
+	return n, err
 }
 
 // sweepOrphans removes uploads never bound to a message within a day

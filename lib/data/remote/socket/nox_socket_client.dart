@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/channel/channel_failure.dart';
 import 'package:nox_app/data/remote/socket/server_addresses_parser.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
@@ -14,9 +15,9 @@ import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/connection/server_addresses.dart';
 import 'package:nox_app/domain/model/session/server_identity.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// The client half of the contract-v0 envelope: one socket, greeted once,
 /// carrying correlated commands out and journal events in.
@@ -132,10 +133,9 @@ class NoxSocketClient {
   /// meantime makes the attempt that was choosing a stale one.
   int _attempt = 0;
 
-  /// Asked at every greeting rather than handed once at start: the login
-  /// derivation and the device id are read fresh so a sign-in or a logout in
-  /// the same process greets as the right person, and the label is stated only
-  /// on the greeting that follows a rename.
+  /// Asked at every greeting rather than handed once at start, so a sign-in or
+  /// a logout in the same process greets as the right person - or, unpaired,
+  /// holds the connection for `pair` without greeting at all.
   Future<GreetingCredentials?> Function()? _credentialsProvider;
 
   /// Raised when the server turns out to be a different world than the one this
@@ -168,13 +168,9 @@ class NoxSocketClient {
   ServerLimits? limits;
 
   /// Where the server can be found, as the last greeting stated it (contract
-  /// §3, phase 039). Null before a greeting, and from a server older than 039.
+  /// §3, phases 039 and 045). Null before a greeting, and from a server older
+  /// than 039.
   ServerAddresses? addresses;
-
-  /// Whether the server reads what phase 039 added to the wire,
-  /// `device.setAccessKey` among it. The greeting carrying `addresses` is that
-  /// flag (contract §2.1).
-  bool get supportsAccessKeys => addresses != null;
 
   /// The address of the current connection; null between connections.
   Uri? get currentUrl => _connection == null ? null : _dialled;
@@ -182,6 +178,15 @@ class NoxSocketClient {
   Stream<SessionPhase> get phase => _phase.stream;
   SessionPhase get currentPhase => _phase.value;
   Stream<ServerEvent> get events => _events.stream;
+
+  /// One event per connection this client opens, before its channel is
+  /// verified.
+  ///
+  /// A pairing waiting for approval presents its token again on each (phase
+  /// 046): the event that carries the outcome reaches only the connections
+  /// open when the request closed, and the repeat is how a device that was
+  /// away for that moment still learns it.
+  Stream<void> get connectionOpened => _opened.stream;
 
   /// Opens the connection and keeps it open until [stop]. Safe to call twice.
   ///
@@ -267,19 +272,22 @@ class NoxSocketClient {
     }
   }
 
-  /// Presents a pairing token, which is the ONE command allowed before the
-  /// greeting: an unpaired device has nothing to sign the challenge with, so
-  /// waiting for a handshake would make pairing impossible rather than awkward.
+  /// Presents a pairing token - with [cancelPairing], one of the two commands
+  /// allowed before the greeting: the server does not know this device's key
+  /// yet, so a greeting would be refused, and waiting for one would make
+  /// pairing impossible rather than awkward. The key itself is not in the command - the server
+  /// takes it from the connection, whose check - POST /auth and POST /auth2 -
+  /// this device has just passed with it (phases 044, 050). And nothing goes out before the channel has
+  /// verified the server's key: a machine with another key never sees the
+  /// token.
   ///
   /// Sent through [_sendOnce] with the greeting flag for exactly that reason —
   /// not because it is a greeting, but because it shares the one property that
   /// matters here: it must not wait for one.
   ///
-  /// [accessKey] - the public half of this device's onion access key - goes
-  /// with every pairing (phase 040): a server that does not know the field
-  /// skips it, and one that does registers the key in the same transaction,
-  /// so a device that paired through Tor keeps its way in once the invite's
-  /// one-time key is gone (contract §2.1, §8A).
+  /// No onion access key goes with it since phase 045: the onion address is
+  /// open to whoever knows it, and a pairing through Tor is as allowed as one
+  /// at home (contract §8A).
   ///
   /// A connection lost under the pairing does not lose the pairing: the token
   /// is presented again on the next connection, within ONE budget for the
@@ -288,8 +296,27 @@ class NoxSocketClient {
   /// identity (contract §8A) - and it is what keeps a dial that ran out its
   /// time through Tor, or a network change mid-pairing, from sending the
   /// person off to try again by hand.
-  Future<CommandReply> pair({required String token, required String deviceKey, required String platform, String? accessKey}) async {
-    final data = <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform, 'access_key': ?accessKey};
+  ///
+  /// The reply is the identity this device now speaks as, or - for an invite
+  /// since phase 046 - a request that waits for the device that issued it,
+  /// or the outcome that request closed with. Reading it is the caller's.
+  Future<CommandReply> pair({required String token, required String platform}) =>
+      _beforeGreeting('pair', <String, dynamic>{'token': token, 'platform': platform});
+
+  /// Withdraws the request this device opened with an invite and still waits
+  /// on (contract §8A, phase 046): the token is spent, and the device that
+  /// issued the invite stops being asked. The other command allowed before a
+  /// greeting, and for the same reason as [pair]: the device asking is not
+  /// paired - being paired is what it was waiting for.
+  ///
+  /// The reply is `{}` whether or not a request was left to withdraw, so a
+  /// repeat after a lost reply is as good as the first.
+  Future<CommandReply> cancelPairing({required String token}) => _beforeGreeting('pair.cancel', <String, dynamic>{'token': token});
+
+  /// Sends one of the commands allowed before a greeting, presenting it again
+  /// on the next connection when the one carrying it goes away - within ONE
+  /// budget for the whole attempt (see [pair]).
+  Future<CommandReply> _beforeGreeting(String cmd, Map<String, dynamic> data) async {
     final waited = Stopwatch()..start();
     var slow = false;
     // The slow budget from the moment the slow path shows, and kept: between
@@ -302,18 +329,21 @@ class NoxSocketClient {
     while (true) {
       final connection = await _awaitConnection(left: left);
       try {
-        return await _sendOnce(isGreeting: true, via: connection, 'pair', data, left: left);
+        return await _sendOnce(isGreeting: true, via: connection, cmd, data, left: left);
       } on SocketUnavailableException {
-        if (!_started || left() <= Duration.zero) rethrow;
-        logRepository.debug(target: this, message: 'socket: the connection carrying pair went away, presenting it again');
+        // A refusal for good - another server behind the onion address - is
+        // not a loss to wait out: no connection comes after it until the
+        // channel is started again (phase 045).
+        if (!_started || left() <= Duration.zero || _phase.value.isTerminal) rethrow;
+        logRepository.debug(target: this, message: 'socket: the connection carrying $cmd went away, presenting it again');
       }
     }
   }
 
-  /// [via] pins the command to one connection: the greeting answers a
-  /// challenge that only that connection's server session knows, so it must
-  /// never wait for - or go out on - the next one. [left] is what remains of a
-  /// budget the caller spans over several sends.
+  /// [via] pins the command to one connection: the greeting belongs to the
+  /// connection it answers, so it must never wait for - or go out on - the
+  /// next one. [left] is what remains of a budget the caller spans over
+  /// several sends.
   Future<CommandReply> _sendOnce(
     String cmd,
     Map<String, dynamic> data, {
@@ -386,10 +416,13 @@ class NoxSocketClient {
       final connection = _connection;
       if (connection != null) return connection;
       if (!_started) throw const SocketUnavailableException('no connection');
+      // Terminal: nothing will open until the channel is started again - a
+      // pairing waiting here would sit out its whole budget for nothing.
+      if (_phase.value.isTerminal) throw const SocketUnavailableException('refused for good');
       final wait = remaining();
       if (wait <= Duration.zero) throw const SocketUnavailableException('no connection');
       try {
-        await _opened.stream.first.timeout(wait);
+        await Rx.merge<Object?>([_opened.stream, _phase.stream.where((phase) => phase.isTerminal)]).first.timeout(wait);
       } on TimeoutException {
         // Looked at again: the slow path may have shown meanwhile.
       }
@@ -455,52 +488,81 @@ class NoxSocketClient {
         (raw) => _onRawFrame(raw, epoch),
         onError: (Object e) {
           if (epoch != _connectionEpoch) return;
-          if (e is ServerPinRefusedException) {
-            _refusedByPin(target);
+          // The channel's own verdict, found inside whatever the WebSocket
+          // wrapped it in. Every kind but one is a failed attempt like a drop:
+          // the network, a timeout, TLS, a peer that does not speak the
+          // channel or a machine in the middle (`protocol`), Tor. None of
+          // them is ever a reason to log out.
+          final failure = channelFailureOf(e) ?? (_timedOut(e) ? ChannelFailure.timeout : null);
+          if (failure == ChannelFailure.wrongServer) {
+            _wrongServer(target);
             return;
           }
-          _onDropped('stream error: ${e.runtimeType}');
+          _reportFailed(target, failure);
+          _onDropped('stream error: ${failure?.name ?? e.runtimeType}');
         },
         onDone: () {
-          if (epoch == _connectionEpoch) _onDropped('closed by peer');
+          if (epoch != _connectionEpoch) return;
+          _reportFailed(target, null);
+          _onDropped('closed by peer');
         },
         cancelOnError: false,
       );
-    } on ServerPinRefusedException {
-      _refusedByPin(target);
     } catch (e) {
+      _reportFailed(target, null);
       _onDropped('connect failed: ${e.runtimeType}');
     }
   }
 
-  /// The machine at [url] presented a key the pairing link did not name.
+  /// Tells the target provider an attempt ended before a greeting, and why
+  /// when the channel said (phase 045). Never allowed to cost the reconnect.
+  void _reportFailed(Uri url, ChannelFailure? failure) {
+    try {
+      _targets?.reportFailed(url, failure);
+    } on Object catch (e, st) {
+      logRepository.error(target: this, error: 'failure report failed: ${e.runtimeType}', stackTrace: st);
+    }
+  }
+
+  /// A dial that ran out its own time - the WebSocket's connect timeout -
+  /// rather than one the channel refused.
+  static bool _timedOut(Object error) {
+    Object? current = error;
+    for (var depth = 0; depth < 4 && current != null; depth++) {
+      if (current is TimeoutException) return true;
+      current = current is WebSocketChannelException ? current.inner : null;
+    }
+    return false;
+  }
+
+  /// The machine at [url] proved a key other than the one the pairing link
+  /// named (phase 044: the channel's `wrongServer`).
   ///
-  /// At an ONION address that is not this person's server (FR-030): nobody can
-  /// answer there without the server's own keys, so the store was rebuilt or
-  /// the machine replaced. Terminal, and terminal in a very particular way: no
-  /// reconnect ladder, because nothing about the answer will change on its
-  /// own; and NOT through [onUnauthenticated], which ends in a forced logout
-  /// that wipes every message on the device. Sending a bad certificate down
-  /// that path would let anyone able to stand in the middle erase this
-  /// person's data on every device they own, by presenting one.
+  /// At an ONION address that is not this person's server (FR-011): nobody
+  /// can answer there without the onion service's keys, so the server was
+  /// reinstalled or the machine replaced. Terminal, and terminal in a very
+  /// particular way: no reconnect ladder, because nothing about the answer
+  /// will change on its own - until the channel is started again (Try again,
+  /// a relaunch) or the person pairs anew; and NOT through
+  /// [onUnauthenticated], which ends in a forced logout
+  /// that wipes every message on the device (FR-012). Sending a stranger's
+  /// key down that path would let anyone able to answer at the address erase
+  /// this person's data on every device they own.
   ///
-  /// At a DIRECT address it means "not home" (FR-005): addresses are reused,
-  /// and on another network the same one is somebody else's machine. The
-  /// address is reported and the socket goes on to the next path.
-  void _refusedByPin(Uri url) {
+  /// At a DIRECT address it means "not home": addresses are reused, and on
+  /// another network the same one is somebody else's machine. Nothing is
+  /// shown; the address is reported and the socket goes on to the next path.
+  void _wrongServer(Uri url) {
     if (isOnionUrl(url)) {
-      logRepository.debug(
-        target: this,
-        message: 'socket: the server behind the onion address presented a key the pairing link did not name',
-      );
+      logRepository.debug(target: this, message: 'socket: the server behind the onion address proved another key');
       unawaited(_teardown(SessionPhase.serverMismatch));
       return;
     }
     logRepository.debug(target: this, message: 'socket: a direct address answered with another key, so it does not lead home now');
     try {
-      _targets?.reportPinRefused(url);
+      _targets?.reportWrongServer(url);
     } on Object catch (e, st) {
-      logRepository.error(target: this, error: 'pin refusal report failed: ${e.runtimeType}', stackTrace: st);
+      logRepository.error(target: this, error: 'wrong-server report failed: ${e.runtimeType}', stackTrace: st);
     }
     _onDropped('another key at a direct address');
   }
@@ -534,12 +596,10 @@ class NoxSocketClient {
     }
     final frame = ServerFrame.parse(json);
     switch (frame) {
-      case SrvGreeting(:final challenge):
-        // Answered on the connection that asked, over its own challenge: a
-        // signature made over one connection's challenge is useless on the
-        // next, which is what makes replay pointless.
+      case SrvGreeting():
+        // Answered on the connection that asked: the greeting belongs to it.
         final connection = _connection;
-        if (connection != null) unawaited(_greet(connection: connection, epoch: epoch, challenge: challenge));
+        if (connection != null) unawaited(_greet(connection: connection, epoch: epoch));
       case CommandReply(:final id):
         _pending.remove(id)?.complete(frame);
       case ServerEvent():
@@ -560,15 +620,16 @@ class NoxSocketClient {
   /// would ask the server to replay its ENTIRE journal, which is exactly what
   /// happens after the epoch wipe puts a device back to zero.
   ///
-  /// Bound to the [connection] whose [challenge] it answers. Every await below
-  /// can outlive that connection - a network change, a Tor circuit that
-  /// drops, a restart - and from then on the greeting has nothing left to
-  /// say: it is dropped without a word. Sent on the next connection instead,
-  /// a signature over the old challenge reads as a forged one, the server
-  /// answers `unauthenticated`, and that is the forced logout that wipes the
-  /// device. Its failure branches would tear down and retry a connection that
-  /// is not theirs.
-  Future<void> _greet({required SocketConnection connection, required int epoch, required String challenge}) async {
+  /// No key, no signature (phase 044): the connection already proved this
+  /// device in its check (POST /auth2, phase 050), before the server could
+  /// greet at all.
+  ///
+  /// Bound to the [connection] that greeted. Every await below can outlive
+  /// that connection - a network change, a Tor circuit that drops, a restart -
+  /// and from then on the greeting has nothing left to say: it is dropped
+  /// without a word. Its failure branches would otherwise tear down and retry
+  /// a connection that is not theirs.
+  Future<void> _greet({required SocketConnection connection, required int epoch}) async {
     bool stale() => epoch != _connectionEpoch || !identical(_connection, connection);
     try {
       final since = await _syncRepository.getCursor();
@@ -583,52 +644,24 @@ class NoxSocketClient {
       if (stale()) return;
       if (credentials == null) {
         // The provider could not tell who we are - a transient storage failure.
-        // Greeting anyway would send an unsigned hello, which the server
-        // refuses; wait and re-read instead.
+        // Greeting anyway could greet for a session that is not there; wait
+        // and re-read instead.
         await _teardown(SessionPhase.disconnected);
         _scheduleRetry();
         return;
       }
       if (credentials.unpaired) {
-        // Held open, NOT torn down: this is the window `pair` runs in, and it
-        // is the one command allowed before a greeting. Nothing else can be
-        // sent - every other command waits on the greeting that will not come
-        // until pairing has happened.
+        // Held open, NOT torn down: this is the window `pair` runs in - and,
+        // while a request waits for approval (phase 046), `pair.cancel` and
+        // the outcome event. Nothing else can be sent - every other command
+        // waits on the greeting that will not come until pairing has happened. A greeting now would be refused as
+        // `unauthenticated`: the server does not know this device's key yet.
         logRepository.debug(target: this, message: 'socket: not paired yet, holding the connection open for pairing');
         return;
-      }
-      String? deviceKey;
-      String? signature;
-      final seed = credentials.deviceSeed;
-      if (seed != null && seed.isNotEmpty && challenge.isNotEmpty) {
-        try {
-          deviceKey = await DeviceKeys.publicKey(seed);
-          signature = await DeviceKeys.signChallenge(seed: seed, challenge: challenge);
-        } on Object catch (e) {
-          if (stale()) return;
-          // Fail CLOSED. Greeting unsigned would ask the server to accept us
-          // without proof - and if it ever did, this path would be the way in.
-          // A challenge that will not decode is a broken peer; tear down and
-          // let the reconnect ladder retry.
-          logRepository.debug(target: this, message: 'socket: could not sign the challenge: ${e.runtimeType}');
-          await _teardown(SessionPhase.disconnected);
-          _scheduleRetry();
-          return;
-        }
-        if (stale()) return;
       }
       final reply = await _sendOnce(isGreeting: true, via: connection, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
-        // Stated only after a rename: a greeting that repeats a cached name
-        // would push it back over a rename made from another device.
-        'label': ?credentials.label,
-        // The public half and a signature over the challenge - never the seed.
-        // Both are always present here: a device that has not paired yet does
-        // not reach this point at all, because there is no anonymous greeting
-        // any more and the server refuses one.
-        'device_key': ?deviceKey,
-        'signature': ?signature,
       });
       if (stale()) return;
       if (!reply.ok) {
@@ -637,10 +670,13 @@ class NoxSocketClient {
         // a blip: the contract marks both non-repeatable (§2.1). Retrying would
         // spin forever against a server that will never accept us.
         if (reply.errorCode == 'unauthenticated') {
-          // Revoked, or a server whose store was rebuilt. The device cannot
-          // tell those apart and must not: both mean "this is not my server any
-          // more". Retrying would spin forever against a peer that will keep
-          // refusing, so the session is torn down and the app is told.
+          // The server does not know the key this connection proved: revoked,
+          // or a server whose store was rebuilt. The device cannot tell those
+          // apart and must not: both mean "this is not my server any more".
+          // The ONE answer during a session that ends in a forced logout
+          // (FR-013) - a channel that would not open never does. Retrying
+          // would spin forever against a peer that will keep refusing, so the
+          // session is torn down and the app is told.
           //
           // Only the CALLBACK is guarded, because only it can fail: `_teardown`
           // absorbs its own errors by construction, and that invariant is
@@ -862,8 +898,8 @@ class NoxSocketClient {
     // reached by a teardown that then closes the socket, so `onDone` arrives
     // right behind them - and without this guard it restarted the very ladder
     // those phases exist to stop. Latent for `unsupported` since it was
-    // introduced; reachable in practice as of the pin refusal, which is
-    // triggered by a live network rather than by a rare protocol mismatch.
+    // introduced; reachable in practice as of the refused server key, which
+    // is triggered by a live network rather than by a rare protocol mismatch.
     if (_phase.value.isTerminal) return;
     if (_phase.value != SessionPhase.disconnected) logRepository.debug(target: this, message: 'socket: dropped $reason');
     unawaited(_teardown(SessionPhase.disconnected));
@@ -953,28 +989,19 @@ class NoxSocketClient {
   }
 }
 
-/// What a greeting states about who is connecting (contract §3). Every field is
-/// optional by contract: a connection presenting none of them is served as a
-/// one-off, which is what keeps hand tools and the live probe working.
+/// What a greeting states (contract §3). Who is greeting is not among it (044):
+/// the connection proved the device's key before the greeting, and the server
+/// knows the device by that. Nor is a name: a name travels only in
+/// `identity.setLabel`.
 class GreetingCredentials {
-  const GreetingCredentials({this.deviceSeed, this.label, this.unpaired = false});
+  const GreetingCredentials() : unpaired = false;
 
-  /// This install has not paired yet, so there is nothing to greet with.
+  /// This install has not paired yet, so there is nothing to greet as.
   ///
   /// The connection is still needed - `pair` is the one command allowed before
   /// a greeting - so the socket stays open and simply does not greet. Greeting
-  /// anyway would be an unsigned hello, which the server refuses, and the
-  /// refusal reads as a revocation.
-  const GreetingCredentials.unpaired() : deviceSeed = null, label = null, unpaired = true;
-
-  /// This device's key seed. The socket derives the public half for
-  /// `device_key` and signs the challenge with it — the seed itself never
-  /// reaches the wire, and neither does anything derived from a login
-  /// identifier, which no longer exists.
-  final String? deviceSeed;
-
-  /// Present only on the greeting that follows a rename.
-  final String? label;
+  /// anyway would be refused, and the refusal reads as a revocation.
+  const GreetingCredentials.unpaired() : unpaired = true;
 
   /// See [GreetingCredentials.unpaired].
   final bool unpaired;

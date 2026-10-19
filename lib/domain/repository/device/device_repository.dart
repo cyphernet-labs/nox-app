@@ -12,11 +12,13 @@ abstract interface class DeviceRepository {
   /// a success: the caller asked for a state and that state holds.
   Future<RepositoryResult<bool>> revoke({required String deviceKey});
 
-  /// Mints an invite and returns the link to show. Lives ten minutes.
+  /// Mints an invite and returns the link to show. Lives ten minutes, and
+  /// pairs a device only once this one answers Allow (phase 046).
   ///
-  /// Always asks for the onion invite (FR-019): only the server knows whether
-  /// it can give one right now. [DeviceInvite.onion] says whether it did, so the
-  /// screen can say when the link works only on the home network.
+  /// The link names every address the server has to offer (phase 045):
+  /// [DeviceInvite.onion] and [DeviceInvite.public] say whether it carries
+  /// the onion or the public address, so the screen can say when it works
+  /// only on the home network.
   Future<RepositoryResult<DeviceInvite>> inviteDevice();
 
   /// Fires when the set of devices has changed on the server — today, when

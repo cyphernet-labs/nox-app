@@ -50,4 +50,45 @@ void main() {
   test('an onion address without a port gets the service port, and letters are folded', () {
     expect(ServerAddressesParser.parse({'onion': '${'A' * 56}.ONION'})!.onion, '${'a' * 56}.onion:443');
   });
+
+  test('the public address is read when it is host:port, and dropped otherwise (phase 045)', () {
+    expect(ServerAddressesParser.parse({'public': 'nox.example.org:8443'})!.public, 'nox.example.org:8443');
+    expect(ServerAddressesParser.parse({'public': '[2001:db8::7]:8443'})!.public, '[2001:db8::7]:8443');
+    for (final bad in ['nox.example.org', 'host:0', 42, '', onion, 'a/b:1']) {
+      expect(ServerAddressesParser.parse({'public': bad})!.public, isNull, reason: '$bad');
+    }
+    expect(ServerAddressesParser.parse({'direct': <String>[]})!.public, isNull, reason: 'absent when the server has none');
+  });
+
+  test('an address on port 443 is kept - the default a Uri drops is still the port the server named', () {
+    final parsed = ServerAddressesParser.parse({
+      'direct': ['203.0.113.7:443', '[2001:db8::7]:443', 'nox.example.org:443'],
+      'public': 'nox.example.org:443',
+    })!;
+
+    expect(parsed.direct, ['203.0.113.7:443', '[2001:db8::7]:443', 'nox.example.org:443']);
+    expect(parsed.public, 'nox.example.org:443');
+    for (final public in ['203.0.113.7:443', '[2001:db8::7]:443']) {
+      expect(ServerAddressesParser.parse({'public': public})!.public, public);
+    }
+  });
+
+  test('a port is ASCII digits and nothing else', () {
+    final parsed = ServerAddressesParser.parse({
+      'direct': ['10.0.0.1:0x1bb', '10.0.0.2:+443', '10.0.0.3: 443', '10.0.0.4:000443', '10.0.0.5:-443', '10.0.0.6:443'],
+      'public': 'nox.example.org:0x1bb',
+    })!;
+
+    expect(parsed.direct, ['10.0.0.6:443']);
+    expect(parsed.public, isNull);
+  });
+
+  test('an onion name is never a direct address - it goes through Tor or nowhere', () {
+    expect(
+      ServerAddressesParser.parse({
+        'direct': [onion, '10.0.0.1:443'],
+      })!.direct,
+      ['10.0.0.1:443'],
+    );
+  });
 }

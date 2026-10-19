@@ -25,11 +25,11 @@ class AppInviteCardWidget extends StatelessWidget {
   /// What this particular link is and how long it lasts.
   final String message;
 
-  /// The link reaches the server only from the home network: the server could
-  /// not put its onion address in it (FR-019). Said on the card itself, under
-  /// the message, because the person decides here where to carry the link -
-  /// and one carried to an office would otherwise fail with nothing to explain
-  /// why.
+  /// The link reaches the server only from the home network: it carries
+  /// neither the server's onion address nor its public one (phase 045). Said
+  /// on the card itself, under the message, because the person decides here
+  /// where to carry the link - and one carried to an office would otherwise
+  /// fail with nothing to explain why.
   final bool homeOnly;
 
   /// "Hide", never "Cancel": nothing here revokes anything. The token stays

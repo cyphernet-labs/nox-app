@@ -14,13 +14,14 @@ App bar (back + Language). Three single-select option cards - the same ones Appe
 
 ## Behavior
 - Single-select. System follows the OS locale and falls back to English if the OS is neither EN nor UK.
-- Applies immediately.
+- Applies immediately. A choice that fails to save goes back to the previous language and says “Could not save. Try again.” in a snackbar.
 
 ## Navigation
 - Back → Settings (7.1).
 
 ## Copy (EN)
 - Options: System · English · Українська
+- Save error (snackbar): Could not save. Try again.
 
 ## Design-system components
 - AppBar (title)

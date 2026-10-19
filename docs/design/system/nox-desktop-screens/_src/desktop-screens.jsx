@@ -247,7 +247,7 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
           </div>
         )}
         <SettingsGroup t={t}>
-          <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="Only for chats you're in" on={detailState !== 'denied'} />
+          <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="For new messages in your chats" on={detailState !== 'denied'} />
         </SettingsGroup>
       </div>
     );

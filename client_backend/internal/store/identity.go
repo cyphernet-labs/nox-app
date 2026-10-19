@@ -12,12 +12,9 @@ import (
 // Identity is the person a connection speaks as. UserID is the public author
 // id carried on the wire (contract §3); Label is the current display name.
 //
-// Every identity is a paired one since feature 032. The anonymous shape that
-// used to exist here - a connection presenting no key, served an in-memory
-// person - was justified by "the contract forbids refusing such a greeting",
-// which misread contract §3: the rule that may not refuse is about the LABEL,
-// never about the key. §3 says the opposite for keys, and the whole point of
-// the phase is that an unproved connection gets nothing.
+// Every identity is a paired one: a connection presenting no key, or a key
+// nobody paired, is refused (contract §3) rather than served an in-memory
+// person - an unproved connection gets nothing.
 type Identity struct {
 	UserID string
 	Label  string
@@ -32,8 +29,9 @@ type Identity struct {
 // assignedLabelAttempts bounds the search for an unused generated name. There
 // is no UNIQUE index on users.label by owner decision, so this is politeness
 // rather than a constraint: running out of attempts hands back the last
-// candidate instead of failing, because a greeting may never be refused
-// because of a name (contract §3).
+// candidate instead of failing, because the server refuses nothing because of
+// a name (contract §2.1) - least of all the pairing that brings the person
+// into being.
 const assignedLabelAttempts = 8
 
 // ResolveIdentity finds the person a connection speaks as, from the PUBLIC KEY
@@ -52,10 +50,15 @@ const assignedLabelAttempts = 8
 // an unknown key: there is nothing to recognise it by, and serving it anyway
 // was the hole this phase exists to close.
 //
+// It never renames: the greeting carries no name (contract §3), and SetLabel -
+// identity.setLabel on the wire - is the only write of one. A greeting that
+// could rename would let a device with a stale cache push an old name back
+// over a rename made on another device, and the two would flip-flop forever.
+//
 // One immediate transaction on the single-connection write pool, so a device
 // reconnecting while another of the same person is greeting cannot interleave.
 // It writes NO events row: a person being recognised is not visible on the wire.
-func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, now int64) (Identity, error) {
+func (s *Store) ResolveIdentity(ctx context.Context, deviceKey string, now int64) (Identity, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return Identity{}, fmt.Errorf("begin resolve identity: %w", err)
@@ -79,18 +82,6 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 
 	if err := touchDevice(ctx, tx, deviceKey, now); err != nil {
 		return Identity{}, err
-	}
-
-	// A greeting without a label does NOT rename. The client states a name only
-	// when it has just changed one; a device carrying a stale cache would
-	// otherwise push the old name back over a rename made elsewhere, and the
-	// two devices of one person would flip-flop forever.
-	if label != "" && label != id.Label {
-		_, err = tx.ExecContext(ctx, "UPDATE users SET label = ? WHERE user_id = ?", label, id.UserID)
-		if err != nil {
-			return Identity{}, fmt.Errorf("update label: %w", err)
-		}
-		id.Label = label
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -121,8 +112,8 @@ func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity
 	return id, true, nil
 }
 
-func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Identity, error) {
-	assigned, err := assignedLabelTx(ctx, tx, label)
+func insertUser(ctx context.Context, tx *sql.Tx, now int64) (Identity, error) {
+	assigned, err := assignedLabelTx(ctx, tx)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -140,35 +131,21 @@ func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Ident
 // insertDevice authorises a key for a person. Called only from pairing: a
 // greeting can no longer bring a device into existence, which is the whole
 // point - an unknown key is refused, not enrolled.
-func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform, accessKey string, now int64) error {
-	// An empty access key is NULL, and COALESCE keeps the one the device
-	// already had: re-pairing without a key must not take its onion access
-	// away, and re-pairing with one replaces it - one key per device (039).
-	var access any
-	if accessKey != "" {
-		taken, err := accessKeyTaken(ctx, tx, deviceKey, accessKey)
-		if err != nil {
-			return err
-		}
-		if taken {
-			return ErrAccessKeyTaken
-		}
-		access = accessKey
-	}
+func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform string, now int64) error {
 	_, err := tx.ExecContext(ctx,
 		// The row is refreshed but NEVER re-bound to another person. Rebinding
 		// looks like the fix for "the reply and the row must say the same
-		// thing", and it is a device takeover: device_key is public - it rides
-		// every greeting and device.list lists it - so anyone able to issue an
-		// invite for themselves could name somebody else's key and walk off
-		// with their paired device. The other way to make the two agree is to
-		// refuse the pair, and that is what Pair does (see deviceOwnerOf below).
-		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at, access_key) VALUES (?, ?, ?, ?, ?, ?)
+		// thing", and it is a device takeover: device_key is public -
+		// device.list lists it - and a pairing that ever got a key other than
+		// the one its channel proved would let anyone able to issue an invite
+		// for themselves walk off with somebody else's paired device. The other
+		// way to make the two agree is to refuse the pair, and that is what
+		// Pair does (see deviceOwnerOf below).
+		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (device_key) DO UPDATE SET
 		     platform = excluded.platform,
-		     last_seen_at = excluded.last_seen_at,
-		     access_key = COALESCE(excluded.access_key, devices.access_key)`,
-		deviceKey, userID, platform, now, now, access)
+		     last_seen_at = excluded.last_seen_at`,
+		deviceKey, userID, platform, now, now)
 	if err != nil {
 		return fmt.Errorf("insert device: %w", err)
 	}
@@ -204,19 +181,11 @@ func touchDevice(ctx context.Context, tx *sql.Tx, deviceKey string, now int64) e
 	return nil
 }
 
-func (s *Store) assignedLabel(ctx context.Context, tx *sql.Tx, label string) (string, error) {
-	return assignedLabelTx(ctx, tx, label)
-}
-
-// assignedLabelTx returns the stated label, or mints User<random> per the
-// design spec. The counter this replaces lived in process memory, so it both
-// repeated names after a restart and reset to User1 - random satisfies "survives
-// a restart" and "not handed to two people" at once, and does not tell every
-// newcomer how many people are on the server.
-func assignedLabelTx(ctx context.Context, tx *sql.Tx, label string) (string, error) {
-	if label != "" {
-		return label, nil
-	}
+// assignedLabelTx mints the name a new person starts with, User<random> per
+// the design spec. Random rather than a counter: it survives a restart, is not
+// handed out twice when it can be helped, and does not tell a newcomer how
+// many people were here before.
+func assignedLabelTx(ctx context.Context, tx *sql.Tx) (string, error) {
 	var candidate string
 	for attempt := 0; attempt < assignedLabelAttempts; attempt++ {
 		candidate = fmt.Sprintf("User%d", 1000+randomBelow(9000))
@@ -229,7 +198,7 @@ func assignedLabelTx(ctx context.Context, tx *sql.Tx, label string) (string, err
 			return candidate, nil
 		}
 	}
-	// Exhausting the attempts is not a failure: a greeting may never be refused
+	// Exhausting the attempts is not a failure: a pairing may never be refused
 	// because of a name, and labels are not unique by owner decision.
 	return candidate, nil
 }
@@ -263,4 +232,22 @@ func (s *Store) EnsureJournal(ctx context.Context) error {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
 	return nil
+}
+
+// RotateJournal gives the store a new identity and returns it (047). A
+// restored backup is exactly the case the identity exists for: the devices
+// may have seen more than the backup holds, and a new journal_id is what makes
+// each of them drop its cached world and read the conversation again
+// (contract §3). Everything else stays, the machine's key and the paired
+// devices included, so nobody pairs again.
+func (s *Store) RotateJournal(ctx context.Context) (string, error) {
+	id := "j_" + randomID()
+	res, err := s.write.ExecContext(ctx, "UPDATE journal SET journal_id = ? WHERE id = 1", id)
+	if err != nil {
+		return "", fmt.Errorf("rotate journal: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return "", fmt.Errorf("rotate journal: the store has no journal to rotate")
+	}
+	return id, nil
 }

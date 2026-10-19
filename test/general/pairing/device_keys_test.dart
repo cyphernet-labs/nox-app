@@ -1,42 +1,37 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 
 void main() {
-  // The vector is the one pinned in contract §3, produced by signing in Dart
-  // and verifying in Go before either side was written. It is here so that a
-  // swapped library, a changed prefix or a base64-vs-raw slip is caught by a
-  // test rather than by a device that silently stops connecting.
-  const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
-  const publicKey = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+  // The probe of the shared vectors (specs/050-rust-secure-box/contracts/
+  // rsb-vectors.json, of whichever implementation they name): 32 bytes of
+  // 0x01 and the public key RustSecureBox gives for it - the app's module and
+  // the server's WebAssembly copy alike. A library that is not the vectors' or
+  // a base64-vs-raw slip is caught here rather than by a device the server no
+  // longer recognises.
+  final vectors = jsonDecode(File('specs/050-rust-secure-box/contracts/rsb-vectors.json').readAsStringSync()) as Map<String, dynamic>;
+  final probeRow = vectors['probe'] as Map<String, dynamic>;
+  List<int> unhex(String text) => [for (var i = 0; i < text.length; i += 2) int.parse(text.substring(i, i + 2), radix: 16)];
+  final probe = base64.encode(unhex(probeRow['private_key'] as String));
+  final probePublic = base64.encode(unhex(probeRow['public_key'] as String));
 
-  test('the public key derived from a seed matches the pinned vector', () async {
-    expect(await DeviceKeys.publicKey(seed), publicKey);
+  test('the public key of a private one is RustSecureBox\'s, as the vectors pin it', () {
+    expect(DeviceKeys.publicKeyOf(probe), probePublic);
   });
 
-  test('signing the challenge matches the pinned vector', () async {
-    // "probe" is what the vector's message is, minus the prefix the signer adds.
-    final challenge = base64.encode(utf8.encode('probe'));
-    final signature = await DeviceKeys.signChallenge(seed: seed, challenge: challenge);
-    expect(signature, 'puHNSjLy6sqx5MEgiAuZiz6Zuyjohrz0EIEjkdQ9iazgyIEeUvGbK+UAIhHjpscFPCMBN7rpbfeoXr1UZXQZBQ==');
+  test('a generated pair is two 32-byte keys, new every time, and one pair', () {
+    final first = DeviceKeys.generate();
+    final second = DeviceKeys.generate();
+    expect(base64.decode(first.privateKey), hasLength(32));
+    expect(base64.decode(first.publicKey), hasLength(32));
+    expect(first.privateKey, isNot(second.privateKey));
+    expect(DeviceKeys.publicKeyOf(first.privateKey), first.publicKey);
   });
 
-  test('a different challenge produces a different signature', () async {
-    final one = await DeviceKeys.signChallenge(seed: seed, challenge: base64.encode(utf8.encode('a')));
-    final two = await DeviceKeys.signChallenge(seed: seed, challenge: base64.encode(utf8.encode('b')));
-    expect(one, isNot(two));
-  });
-
-  test('a generated seed is 32 bytes and differs every time', () async {
-    final first = await DeviceKeys.generateSeed();
-    final second = await DeviceKeys.generateSeed();
-    expect(base64.decode(first).length, 32);
-    expect(first, isNot(second));
-  });
-
-  test('the same seed always yields the same public key', () async {
-    final seed = await DeviceKeys.generateSeed();
-    expect(await DeviceKeys.publicKey(seed), await DeviceKeys.publicKey(seed));
+  test('the same private key always yields the same public key', () {
+    final pair = DeviceKeys.generate();
+    expect(DeviceKeys.publicKeyOf(pair.privateKey), DeviceKeys.publicKeyOf(pair.privateKey));
   });
 }

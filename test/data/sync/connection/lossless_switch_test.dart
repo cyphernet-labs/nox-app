@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,7 +21,7 @@ import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/data/service/session_phase_service_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/outbox_service_impl.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
@@ -28,7 +29,6 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -41,7 +41,8 @@ import 'fake_direct_prober.dart';
 
 /// Twenty switches between the direct path and Tor, each with a message going
 /// out and one coming in while the connection is being replaced (phase 040,
-/// FR-004, SC-005). Nothing may be lost and nothing may arrive twice.
+/// FR-004, SC-005; phase 045, US1 scenario 4: Tor by `Use Tor`, with no access
+/// key). Nothing may be lost and nothing may arrive twice.
 ///
 /// Everything on the client side is the real thing - socket, path selector,
 /// journal applier, outgoing queue, message repository - over a server that
@@ -200,7 +201,7 @@ void main() {
   late _Network network;
   late ConnectionPathSelector selector;
   late SyncService sync;
-  late OutboxService outbox;
+  late OutboxServiceImpl outbox;
 
   Future<void> waitUntil(FutureOr<bool> Function() done, {required String reason}) async {
     for (var i = 0; i < 1000; i++) {
@@ -232,18 +233,16 @@ void main() {
     tor = FakeTorService()..supported = true;
     network = _Network();
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const [_link], onion: _onion);
-    await getIt<AccessKeyRepository>().deviceKey();
-    await getIt<AccessKeyRepository>().markRegistered(true);
+    await getIt<ServerAddressesRepository>().setUseTor(true);
     selector = ConnectionPathSelector.forTest(
       prober,
       tor,
       getIt<ServerAddressesRepository>(),
-      getIt<AccessKeyRepository>(),
       network,
       _Lifecycle(),
       socket,
       recheckEvery: const Duration(hours: 1),
-    )..begin(linkAddress: _link, fingerprint: 'pin');
+    )..begin(linkAddress: _link, serverKey: Uint8List(32), devicePrivateKey: Uint8List(32));
     sync = SyncService(
       socket,
       getIt<SyncRepository>(),
@@ -264,7 +263,7 @@ void main() {
       getIt<ChatDao>(),
       getIt<SessionRepository>(),
     );
-    outbox = OutboxService(
+    outbox = OutboxServiceImpl(
       getIt<OutboxRepository>(),
       messages,
       SocketSessionPhaseService(socket),

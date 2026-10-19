@@ -205,5 +205,28 @@ void main() {
       expect(find.text(l10nEn.noConnection), findsOneWidget);
       expect(tryAgain(), findsNothing);
     });
+
+    testWidgets('another server behind the onion address says so, with Try again (phase 045)', (tester) async {
+      await pumpWith(tester, SessionPhase.serverMismatch);
+
+      expect(find.text(l10nEn.connectionProblemOtherServer), findsOneWidget);
+      expect(tryAgain(), findsOneWidget);
+    });
+  });
+
+  testWidgets('a failed round with a known cause says it in place of No connection (phase 045)', (tester) async {
+    tester.view.devicePixelRatio = 3.0;
+    tester.view.physicalSize = Constants.designSize * 3.0;
+    addTearDown(() {
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
+    });
+    await pumpApp(tester, ChatCardPage(chat: _sampleChat(), initialScenario: ChatCardScenario.turnOnTor));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(find.text(l10nEn.connectionProblemTurnOnTor), findsOneWidget);
+    expect(find.text(l10nEn.noConnection), findsNothing);
+    expect(find.widgetWithText(TextButton, l10nEn.actionTryAgain), findsOneWidget);
   });
 }

@@ -42,7 +42,7 @@ mockups = Material Symbols Rounded.
 | Sent | `check` | `onSurfaceVariant` |
 | Error | `error` (FILL 0) | `error` |
 
-## File-type chips (no content preview anywhere)
+## File-type chips (every file that is not drawn: a picture whose bytes are on the device is a thumbnail instead)
 | Type | Icon |
 |---|---|
 | Image | `image` |
@@ -55,7 +55,7 @@ mockups = Material Symbols Rounded.
 | Archive (zip/rar/7z) | `folder_zip` |
 | Other / unknown | `insert_drive_file` |
 
-## Empty states (fallback until illustrations ship)
+## Empty states (the glyph at the centre of the NoxEmptyState composition; no illustration ships)
 | Screen | Icon |
 |---|---|
 | 5.1 no chats | `forum` (FILL 0) |

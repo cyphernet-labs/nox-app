@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,33 +12,36 @@ import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/api_client.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
-import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
+import 'package:nox_app/domain/service/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/app_lifecycle_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../remote/channel/fake_channel.dart';
 import '../remote/socket/fake_socket.dart';
 import 'connection/fake_direct_prober.dart';
 
@@ -48,10 +53,10 @@ import 'connection/fake_direct_prober.dart';
 /// nothing stops a test from constructing it, and the decisions that bricked an
 /// install twice - a greeting sent with nothing to greet with, and a refusal
 /// read as a revocation - live in the object, not in the storage it reads.
-/// Two fingerprints, distinct on sight. Their VALUES mean nothing here - the
-/// starter only carries them - so a readable pair beats a real hash.
-const String kPinA = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
-const String kPinB = 'ZZZZv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+/// Two server keys, distinct on sight: 32 bytes each, as base64. Their VALUES
+/// mean nothing here - the starter only carries them.
+const String kKeyA = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+const String kKeyB = 'ZZZZv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -68,39 +73,24 @@ void main() {
   tearDown(() async => getIt.reset());
 
   test('an install that has not paired holds the connection instead of greeting', () async {
-    // The window `pair` runs in. Greeting here would be an unsigned hello, the
-    // server refuses it, and the refusal reads as a revocation - which wipes
-    // the key and address the sign-in in progress just wrote, spending the
-    // one-shot claim token for nothing.
+    // The window `pair` runs in. Greeting here would be refused - the server
+    // does not know the key yet - and the refusal reads as a revocation, which
+    // wipes the key and address the sign-in in progress just wrote, spending
+    // the one-shot pairing token for nothing.
     expect((await session.readSession()).data, isNull);
 
     const credentials = GreetingCredentials.unpaired();
     expect(credentials.unpaired, isTrue);
-    expect(credentials.deviceSeed, isNull, reason: 'nothing to greet with, and nothing claimed');
-  });
-
-  test('a paired install greets with the public half of its own key', () async {
-    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-    final seed = (await session.deviceSecret()).data!;
-
-    final credentials = GreetingCredentials(deviceSeed: seed);
-
-    expect(credentials.unpaired, isFalse);
-    expect(await DeviceKeys.publicKey(credentials.deviceSeed!), isNotEmpty);
-    // The seed itself is what stays: the socket derives the public half and a
-    // signature from it, and neither the seed nor anything derived from a
-    // login identifier goes out.
-    expect(credentials.label, isNull);
   });
 
   test('the device key survives a rollback, so a retry is the same install', () async {
-    final before = (await session.deviceSecret()).data;
+    final before = (await session.deviceKey()).data;
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: false);
-    await session.saveServer(address: '10.0.0.1:9000', serverFingerprint: kPinA);
+    await session.saveServer(address: '10.0.0.1:9000', serverKey: kKeyA);
 
     await session.discardSignIn();
 
-    expect((await session.deviceSecret()).data, before, reason: 'a failed attempt changed no install');
+    expect((await session.deviceKey()).data, before, reason: 'a failed attempt changed no install');
     // The server it pointed at goes, though: leaving it would aim the next
     // connection at a machine this install never paired with.
     expect((await session.serverAddress()).data, isNull);
@@ -108,36 +98,20 @@ void main() {
 
   test('logout takes the key and the server with it', () async {
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-    final before = (await session.deviceSecret()).data;
-    await session.saveServer(address: '10.0.0.1:9000', serverFingerprint: kPinA);
+    final before = (await session.deviceKey()).data;
+    await session.saveServer(address: '10.0.0.1:9000', serverKey: kKeyA);
 
     await session.clear();
 
     expect((await session.serverAddress()).data, isNull);
     // A new key, because this is a different install of the app as far as the
     // server is concerned - which is why sign-in must never take this path.
-    expect((await session.deviceSecret()).data, isNot(before));
-  });
-
-  test('an unpaired install decides to hold, and a paired one decides to sign', () async {
-    // The two branches of the decision that bricked an install twice: greeting
-    // with nothing (refused, read as a revocation, wiped) versus greeting with
-    // the key (accepted).
-    expect((await session.readSession()).data, isNull);
-    const held = GreetingCredentials.unpaired();
-    expect(held.unpaired, isTrue);
-    expect(held.deviceSeed, isNull);
-
-    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-    final seed = (await session.deviceSecret()).data;
-    final signing = GreetingCredentials(deviceSeed: seed);
-    expect(signing.unpaired, isFalse);
-    expect(signing.deviceSeed, isNotNull);
+    expect((await session.deviceKey()).data, isNot(before));
   });
 
   test('the paired server address is what a later connection uses', () async {
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-    await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+    await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
     // Not the build-time address: pairing with the server a person presented
     // and then talking to another one is the opposite of "your own server".
@@ -148,7 +122,7 @@ void main() {
     late FakeSocketFactory factory;
     late NoxSocketClient socket;
     late LiveSessionStarter starter;
-    late PinnedHttpClient pinned;
+    late ChannelHttpClient channels;
     late FakeDirectProber prober;
     late FakeTorService tor;
 
@@ -168,14 +142,17 @@ void main() {
         getIt<OutboxRepository>(),
         getIt<ServerAddressesRepository>(),
       );
-      pinned = PinnedHttpClient();
+      // Nothing here opens a channel: the socket is the fake one. The client
+      // is what the starter binds, and what the attachment bytes go through.
+      channels = ChannelHttpClient(ScriptedChannelApi());
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ApiClient>(ApiClient(getIt<AppConfigRepository>(), channels));
       prober = FakeDirectProber();
       tor = FakeTorService();
       final selector = ConnectionPathSelector.forTest(
         prober,
         tor,
         getIt<ServerAddressesRepository>(),
-        getIt<AccessKeyRepository>(),
         getIt<NetworkChangeService>(),
         getIt<AppLifecycleService>(),
         socket,
@@ -190,23 +167,20 @@ void main() {
         getIt<MessageRepository>(),
         getIt<OutboxRepository>(),
         getIt<FileRepository>(),
-        pinned,
+        channels,
         selector,
-        AccessKeyRegistrar(socket, getIt<AccessKeyRepository>()),
         getIt<ServerAddressesRepository>(),
-        tor,
       );
     });
     tearDown(() async => starter.stop());
 
     /// A server reachable only through its onion address: the direct ones say
-    /// nothing, Tor works, and this device's key is registered there.
+    /// nothing, Tor works, and the person allows it (phase 045).
     Future<void> onlyThroughTor() async {
       prober.home = <String>{};
       tor.supported = true;
       await getIt<ServerAddressesRepository>().saveFromServer(direct: const <String>[], onion: '${'a' * 56}.onion:443');
-      await getIt<AccessKeyRepository>().deviceKey();
-      await getIt<AccessKeyRepository>().markRegistered(true);
+      await getIt<ServerAddressesRepository>().setUseTor(true);
     }
 
     Future<void> settle() async {
@@ -226,7 +200,7 @@ void main() {
 
     test('it connects to the address the pairing link carried', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -237,7 +211,7 @@ void main() {
 
     test('it dials wss, with no way to ask for anything else', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -246,60 +220,94 @@ void main() {
       expect(factory.urls.single.toString(), 'wss://10.0.0.5:9000/ws');
     });
 
-    test('the fingerprint from the link reaches the thing that checks certificates', () async {
-      // Threaded on every start rather than read once: the client is a
-      // singleton built long before anybody pairs, and a naive implementation
-      // would pin nothing at all for the life of a fresh install.
-      expect(pinned.pinnedFingerprint, isNull);
-
+    test('a stored address in URL form keeps its port, 443 included', () async {
+      // A Uri drops its scheme's default port: read through hasPort, this was
+      // a bare host - no address the probe dials.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: 'https://10.0.0.5:443', serverKey: kKeyA);
+
       await starter.start();
       await settle();
 
-      expect(pinned.pinnedFingerprint, kPinA);
+      expect(prober.rounds.first, ['10.0.0.5:443']);
+      expect(factory.urls.single.toString(), 'wss://10.0.0.5:443/ws');
     });
 
-    test('pairing with a DIFFERENT server pins the new one, not the cached one', () async {
+    test('the server key from the link is bound to every connection the channel opens (phase 044)', () async {
+      // Bound on every start rather than read once: the client is a singleton
+      // built long before anybody pairs.
+      expect(channels.boundServerKey, isNull);
+
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       await starter.start();
       await settle();
-      expect(pinned.pinnedFingerprint, kPinA);
+
+      expect(channels.boundServerKey, base64.decode(kKeyA));
+    });
+
+    test('the probes open their channels with the same two keys', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await starter.start();
+      await settle();
+
+      final pair = (await session.deviceKey()).data!;
+      expect(prober.keys.first.serverKey, base64.decode(kKeyA));
+      expect(prober.keys.first.devicePrivateKey, base64.decode(pair.privateKey));
+    });
+
+    test('pairing with a DIFFERENT server binds the new key, not the cached one', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await starter.start();
+      await settle();
+      expect(channels.boundServerKey, base64.decode(kKeyA));
 
       // Logout, then pair with another machine - the sequence a person goes
       // through when they rebuild their server.
       await starter.stop();
-      expect(pinned.pinnedFingerprint, isNull, reason: 'a logout leaves nothing this install may talk to');
+      expect(channels.boundServerKey, isNull, reason: 'a logout leaves nothing this install may talk to');
       await session.clear();
       await session.saveIdentifier(identifier: 'tok2', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.9:9000', serverFingerprint: kPinB);
+      await session.saveServer(address: '10.0.0.9:9000', serverKey: kKeyB);
 
       await starter.start();
       await settle();
 
-      expect(pinned.pinnedFingerprint, kPinB);
+      expect(channels.boundServerKey, base64.decode(kKeyB));
     });
 
-    test('a paired address with no fingerprint opens no socket (FR-009)', () async {
-      // "Nothing to check against" is a refusal, never a waiver. Reachable by a
-      // half-written session, and connecting anyway would accept whatever
-      // answered at that address - which is the state this phase ends.
+    test('a paired address with no server key opens no socket', () async {
+      // "Nothing to check against" is a refusal, never a waiver: a session
+      // paired before phase 044, which bootstrap retires (FR-025). Connecting
+      // anyway would accept whatever answered at that address.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
-      await FlutterSecureStorage().delete(key: 'session.server_fingerprint');
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await const FlutterSecureStorage().delete(key: 'session.server_key');
 
       await starter.start();
       await settle();
 
       expect(factory.created, isEmpty);
-      expect(pinned.pinnedFingerprint, isNull);
+      expect(channels.boundServerKey, isNull);
+    });
+
+    test('a stored server key that is not a key opens no socket either', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'not a key');
+
+      await starter.start();
+      await settle();
+
+      expect(factory.created, isEmpty);
+      expect(channels.boundServerKey, isNull);
     });
 
     group('the world is named by the server key (FR-011, FR-012)', () {
       Future<void> paired() async {
         await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-        await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+        await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       }
 
       Future<void> aChat() => getIt<ChatDao>().upsert(
@@ -313,43 +321,43 @@ void main() {
         ),
       );
 
-      test('a fresh install names it by the fingerprint', () async {
+      test('a fresh install names it by the server key', () async {
         await paired();
         await starter.start();
         await settle();
 
-        expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
+        expect(await getIt<SyncRepository>().getEpoch(), 'key:$kKeyA');
       });
 
-      test('a world named by the address before this phase is renamed, not wiped', () async {
-        // Every install that updates carries one. Wiping it would empty every
-        // chat on every device of every person, once, on update.
-        await paired();
-        await getIt<SyncRepository>().setEpoch('live:10.0.0.5:9000');
-        await aChat();
+      for (final old in ['fp:$kKeyA', 'live:10.0.0.5:9000']) {
+        test('a world named as builds before phase 044 named it ($old) is another world: nothing is migrated (FR-025)', () async {
+          await paired();
+          await getIt<SyncRepository>().setEpoch(old);
+          await aChat();
 
-        await starter.start();
-        await settle();
+          await starter.start();
+          await settle();
 
-        expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
-        expect(await getIt<ChatDao>().getById('c_1'), isNotNull, reason: 'the same server, so the same world');
-      });
+          expect(await getIt<SyncRepository>().getEpoch(), 'key:$kKeyA');
+          expect(await getIt<ChatDao>().getById('c_1'), isNull);
+        });
+      }
 
       test('another key is another world, and the old one goes', () async {
         await paired();
-        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        await getIt<SyncRepository>().setEpoch('key:$kKeyB');
         await aChat();
 
         await starter.start();
         await settle();
 
-        expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
+        expect(await getIt<SyncRepository>().getEpoch(), 'key:$kKeyA');
         expect(await getIt<ChatDao>().getById('c_1'), isNull);
       });
 
       test('another world stops the downloads before it wipes their cache (phase 043)', () async {
         await paired();
-        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        await getIt<SyncRepository>().setEpoch('key:$kKeyB');
         final cache = Directory('${(await getApplicationCacheDirectory()).path}/nox_attachments')..createSync(recursive: true);
         final sentinel = File('${cache.path}/f_old.bin')..writeAsBytesSync([1]);
         final downloads = _CacheWatchingDownloads(sentinel);
@@ -365,7 +373,7 @@ void main() {
 
       test('another world empties the picture queue before it stops the downloads, and a failed stop still lets the cache go', () async {
         await paired();
-        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        await getIt<SyncRepository>().setEpoch('key:$kKeyB');
         final cache = Directory('${(await getApplicationCacheDirectory()).path}/nox_attachments')..createSync(recursive: true);
         final sentinel = File('${cache.path}/f_old.bin')..writeAsBytesSync([1]);
         final order = <String>[];
@@ -385,7 +393,7 @@ void main() {
         // Made against the old server's world: created on this one it would be
         // a chat nobody asked this server for, under a name from elsewhere.
         await paired();
-        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        await getIt<SyncRepository>().setEpoch('key:$kKeyB');
         await getIt<ChatDao>().upsert(
           const ChatEntity(
             id: 'c_00000000000000000000000000000041',
@@ -406,7 +414,7 @@ void main() {
 
       test('the same key leaves everything where it is', () async {
         await paired();
-        await getIt<SyncRepository>().setEpoch('fp:$kPinA');
+        await getIt<SyncRepository>().setEpoch('key:$kKeyA');
         await aChat();
 
         await starter.start();
@@ -416,17 +424,17 @@ void main() {
       });
     });
 
-    test('another key at a direct address is "not home": the ladder goes on (FR-005)', () async {
+    test('another key at a direct address is "not home": the ladder goes on, with nothing shown (FR-011)', () async {
       // An address is a place. On another network the same 192.168.1.20 is
       // somebody else's machine, and calling that "not your server" would put
       // the banner up every time this person left home.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       await starter.start();
       await settle();
       expect(factory.created, hasLength(1));
 
-      factory.latest.refusePin();
+      factory.latest.refuseServerKey();
       await settle();
 
       expect(socket.currentPhase, isNot(SessionPhase.serverMismatch));
@@ -439,21 +447,21 @@ void main() {
 
     test('the socket dials the onion address when no direct one answers (US1)', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       await onlyThroughTor();
 
       await starter.start();
       await settle();
 
       expect(factory.urls.single.toString(), 'wss://${'a' * 56}.onion/ws');
-      expect(tor.target?.host, '${'a' * 56}.onion');
-      // The bytes go the same way, through the bridge the Tor client opened.
-      expect(pinned.onionBridge?.call()?.port, 9150);
+      // Tor came up; the channel itself is opened by the transport, through
+      // the module, to the address alone (phases 044, 045).
+      expect(tor.status.isReady, isTrue);
     });
 
     test('attachment bytes follow the path the socket took (FR-009)', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       await onlyThroughTor();
       await starter.start();
       await settle();
@@ -472,13 +480,13 @@ void main() {
 
     test('another key behind the onion address stops the ladder, and the retry is the way back', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       await onlyThroughTor();
       await starter.start();
       await settle();
       expect(factory.created, hasLength(1));
 
-      factory.latest.refusePin();
+      factory.latest.refuseServerKey();
       await settle();
 
       expect(socket.currentPhase, SessionPhase.serverMismatch);
@@ -500,7 +508,7 @@ void main() {
     group('Try again on No connection (phase 042)', () {
       Future<void> paired() async {
         await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-        await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+        await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       }
 
       test('a restart asked for while one is under way joins it: one stop and one start', () async {
@@ -554,19 +562,19 @@ void main() {
       });
     });
 
-    test('a refusal does not take the path that wipes the device', () async {
-      // The security requirement of the whole phase, asserted as a
-      // non-consequence: the revocation path ends in a forced logout with a
-      // full local wipe, so routing a bad certificate through it would let
-      // anyone able to stand in the middle erase this person's messages on
-      // every device they own, by presenting one.
+    test('a refusal does not take the path that wipes the device (FR-012)', () async {
+      // The security requirement, asserted as a non-consequence: the
+      // revocation path ends in a forced logout with a full local wipe, so
+      // routing another server's key through it would let anyone able to
+      // answer at the address erase this person's messages on every device
+      // they own.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
       await onlyThroughTor();
       await starter.start();
       await settle();
 
-      factory.latest.refusePin();
+      factory.latest.refuseServerKey();
       await settle();
       await Future<void>.delayed(const Duration(milliseconds: 300));
 
@@ -575,13 +583,13 @@ void main() {
       final live = await session.readSession();
       expect(live.data, isNotNull, reason: 'the session survived');
       expect((await session.serverAddress()).data, '10.0.0.5:9000');
-      expect((await session.serverFingerprint()).data, kPinA);
+      expect((await session.serverKey()).data, kKeyA);
     });
 
     test('an unpaired install connects but says nothing, leaving room for pair', () async {
       // No session at all: this is the state a fresh install signs in from, and
-      // greeting here would spend the claim token on a refusal.
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      // greeting here would spend the pairing token on a refusal.
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -592,9 +600,39 @@ void main() {
       expect(factory.latest.closed, isFalse);
     });
 
-    test('a paired install greets with a signature over the challenge', () async {
+    test(
+      'an unpaired install away from home pairs through Tor when Use Tor is on - the first device included (phase 045, FR-008)',
+      () async {
+        await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+        await onlyThroughTor();
+
+        await starter.start();
+        await settle();
+        expect(factory.urls.single.host, '${'a' * 56}.onion', reason: 'no direct address answered, so the onion one is dialled');
+        unawaited(socket.pair(token: 'machine', platform: 'macos').then((_) {}, onError: (Object _) {}));
+        for (var i = 0; i < 40 && factory.latest.commandNamed('pair') == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+
+        expect(factory.latest.commandNamed('pair')?['data'], {'token': 'machine', 'platform': 'macos'});
+      },
+    );
+
+    test('with Use Tor off an unpaired install away from home dials nothing through Tor', () async {
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await onlyThroughTor();
+      await getIt<ServerAddressesRepository>().setUseTor(false);
+
+      await starter.start();
+      await settle();
+
+      expect(factory.urls, isEmpty, reason: 'no direct address answered, and Tor is not allowed');
+      expect(tor.starts, 0);
+    });
+
+    test('a paired install greets naming nobody: the channel proved the device (phase 044)', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -606,13 +644,60 @@ void main() {
       final hello = factory.latest.commandNamed('session.hello');
       expect(hello, isNotNull);
       final args = hello!['data'] as Map<String, dynamic>;
-      expect(args['device_key'], isNotEmpty);
-      expect(args['signature'], isNotEmpty);
-      // The seed is the one thing that must never travel. Compared against the
+      expect(args.containsKey('device_key'), isFalse);
+      expect(args.containsKey('signature'), isFalse);
+      // The device's key is the one thing that must never travel. Compared against the
       // stored value rather than against a shape, because a bug that sent it
       // would send exactly this string.
-      final seed = (await session.deviceSecret()).data;
-      expect(hello.toString(), isNot(contains(seed!)));
+      final pair = (await session.deviceKey()).data!;
+      expect(hello.toString(), isNot(contains(pair.privateKey)));
+      expect(hello.toString(), isNot(contains(pair.publicKey)));
+    });
+
+    test('a device key that cannot be read is a failed attempt, never a wipe', () async {
+      // A keychain still locked after a reboot: nothing to connect with yet.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      final locked = LiveSessionStarter(
+        socket,
+        SyncService(
+          socket,
+          getIt<SyncRepository>(),
+          getIt<ChatDao>(),
+          getIt<MessageDao>(),
+          getIt<ChatMapper>(),
+          getIt<ChatWireMapper>(),
+          getIt<MessageMapper>(),
+          getIt<MessageWireMapper>(),
+          getIt<OutboxRepository>(),
+          getIt<ServerAddressesRepository>(),
+        ),
+        getIt<SyncRepository>(),
+        getIt<AppConfigRepository>(),
+        _LockedSeed(session),
+        getIt<ChatRepository>(),
+        getIt<MessageRepository>(),
+        getIt<OutboxRepository>(),
+        getIt<FileRepository>(),
+        channels,
+        ConnectionPathSelector.forTest(
+          prober,
+          tor,
+          getIt<ServerAddressesRepository>(),
+          getIt<NetworkChangeService>(),
+          getIt<AppLifecycleService>(),
+          socket,
+        ),
+        getIt<ServerAddressesRepository>(),
+      );
+      addTearDown(locked.stop);
+
+      await locked.start();
+      await settle();
+
+      expect(factory.created, isEmpty);
+      expect(channels.boundServerKey, isNull);
+      expect((await session.readSession()).data, isNotNull, reason: 'nothing was wiped');
     });
 
     test('the greeting hands the server\'s identity to the session', () async {
@@ -623,7 +708,7 @@ void main() {
       // that stopped adopting it makes own-vs-other detection wrong and every
       // message this person sent comes back looking like somebody else's.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -659,7 +744,7 @@ void main() {
       // id back, and adoptServerIdentity re-emits their label on watchLabel(),
       // so the account avatars go on naming somebody who just logged out.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -713,7 +798,7 @@ void main() {
       // over an empty session - is a DIFFERENT case and has its own test above.
       // This comment used to claim that guard was unreachable; it is reachable
       // through logout, and saying otherwise is the argument for deleting it.
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
       await settle();
@@ -731,8 +816,8 @@ void main() {
       // The brick: a device that has not paired is refused as a matter of
       // course, and treating that as a revocation wiped the key and the address
       // a sign-in in progress had just written.
-      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
-      final before = (await session.deviceSecret()).data;
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      final before = (await session.deviceKey()).data;
 
       await starter.start();
       await settle();
@@ -740,10 +825,34 @@ void main() {
       await settle();
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect((await session.deviceSecret()).data, before);
+      expect((await session.deviceKey()).data, before);
       expect((await session.serverAddress()).data, '10.0.0.5:9000');
     });
   });
+}
+
+/// A session whose device key cannot be read - everything else is the real
+/// store.
+class _LockedSeed implements SessionRepository {
+  _LockedSeed(this._real);
+
+  final SessionRepository _real;
+
+  @override
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey() async =>
+      const RepositoryResult<DeviceKeyPair>.error(exception: RepositoryException.unknown);
+
+  @override
+  Future<RepositoryResult<String?>> serverAddress() => _real.serverAddress();
+
+  @override
+  Future<RepositoryResult<String?>> serverKey() => _real.serverKey();
+
+  @override
+  Future<RepositoryResult<SessionModel?>> readSession() => _real.readSession();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Notes whether the cache was still there when every download was stopped.

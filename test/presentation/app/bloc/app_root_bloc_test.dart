@@ -1,14 +1,19 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/settings/settings_repository.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
+
+import '../../../utils/fake_pair_request_service.dart';
 
 /// Settings store with a configurable theme read and write outcome — drives the
 /// AppRootBloc theme-persistence branches (read-applied-on-Initialize, save-revert).
@@ -119,5 +124,127 @@ void main() {
         isA<AppRootState>().having((s) => s.themeMode, 'themeMode', ThemeMode.system).having((s) => s.settingsSaveErrorTick, 'tick', 1),
       ],
     );
+  });
+
+  // A new device presented an invite this device issued, and waits for the
+  // answer here (phase 046): the one question asked over any screen.
+  group('AppRootBloc asking about a request to join (phase 046)', () {
+    late FakePairRequestService requests;
+    const windows = PairRequest(requestId: 'r_1', platform: DevicePlatform.windows);
+    const ipad = PairRequest(requestId: 'r_2', platform: DevicePlatform.ios);
+
+    setUp(() => requests = registerFakePairRequests());
+    tearDown(() => requests.close());
+
+    Future<AppRootBloc> initialized() async {
+      final bloc = AppRootBloc()..add(const AppRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      return bloc;
+    }
+
+    test('nothing to ask, nothing asked', () async {
+      final bloc = await initialized();
+      expect(bloc.state.pairRequest, isNull);
+    });
+
+    test('the oldest waiting request is the one asked about, and the next takes its turn', () async {
+      final bloc = await initialized();
+
+      requests
+        ..ask(windows)
+        ..ask(ipad);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(bloc.state.pairRequest, windows);
+
+      requests.resolve('r_1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(bloc.state.pairRequest, ipad);
+
+      requests.resolve('r_2');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(bloc.state.pairRequest, isNull);
+    });
+
+    test('Allow is sent for the request on screen, which then goes', () async {
+      final bloc = await initialized();
+      requests.ask(windows);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      bloc.add(const AppRootEvent.pairRequestAnswered(requestId: 'r_1', allow: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(requests.answers, [(requestId: 'r_1', allow: true)]);
+      expect(bloc.state.pairRequest, isNull);
+      expect(bloc.state.pairAnswering, isNull);
+    });
+
+    test('while an answer is on its way it is shown, and a second press sends nothing', () async {
+      final bloc = await initialized();
+      final reply = Completer<RepositoryResult<bool>>();
+      requests.reply = (_, _) => reply.future;
+      requests.ask(windows);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      bloc
+        ..add(const AppRootEvent.pairRequestAnswered(requestId: 'r_1', allow: false))
+        ..add(const AppRootEvent.pairRequestAnswered(requestId: 'r_1', allow: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(bloc.state.pairAnswering, isFalse, reason: 'Deny is on its way');
+      expect(requests.answers, hasLength(1));
+      reply.complete(const RepositoryResult<bool>.success(data: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(bloc.state.pairRequest, isNull);
+    });
+
+    test('an answer that did not get through says so, and can be given again', () async {
+      final bloc = await initialized();
+      requests.reply = (_, _) async => const RepositoryResult<bool>.error(exception: RepositoryException.internal);
+      requests.ask(windows);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      bloc.add(const AppRootEvent.pairRequestAnswered(requestId: 'r_1', allow: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(bloc.state.pairAnswerFailed, isTrue);
+      expect(bloc.state.pairAnswering, isNull);
+      expect(bloc.state.pairRequest, windows, reason: 'the question still stands');
+
+      requests.reply = null;
+      bloc.add(const AppRootEvent.pairRequestAnswered(requestId: 'r_1', allow: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(requests.answers, hasLength(2));
+      expect(bloc.state.pairRequest, isNull);
+    });
+
+    test('a new question starts clean', () async {
+      final bloc = await initialized();
+      requests.reply = (_, _) async => const RepositoryResult<bool>.error(exception: RepositoryException.internal);
+      requests
+        ..ask(windows)
+        ..ask(ipad);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      bloc.add(const AppRootEvent.pairRequestAnswered(requestId: 'r_1', allow: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(bloc.state.pairAnswerFailed, isTrue);
+
+      // The first request ran out meanwhile.
+      requests.resolve('r_1');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(bloc.state.pairRequest, ipad);
+      expect(bloc.state.pairAnswerFailed, isFalse);
+    });
+
+    test('an answer to a request that is not on screen sends nothing', () async {
+      final bloc = await initialized();
+      requests.ask(windows);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      bloc.add(const AppRootEvent.pairRequestAnswered(requestId: 'r_gone', allow: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(requests.answers, isEmpty);
+    });
   });
 }

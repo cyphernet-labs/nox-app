@@ -1,12 +1,21 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
+import 'package:nox_app/data/local/secure/secure_store_options.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -48,36 +57,63 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   /// A version-2 invite's onion address and one-time key, as earlier builds of
   /// phase 040 stored them; a pairing the process did not survive left them
-  /// behind. The key now lives in memory only (FR-021).
+  /// behind. Links carry no such key any more (phase 044).
   static const String _kLegacyInviteOnion = 'session.invite_onion';
   static const String _kLegacyInviteAccessKey = 'session.invite_access_key';
 
-  /// This device's Ed25519 seed. The private half of the pair whose public
-  /// half the server knows as `device_key` — it is generated here, stays here,
-  /// and dies with a logout through `deleteAll`.
-  static const String _kDeviceSecret = 'session.device_secret';
+  /// This device's key pair from RustSecureBox (phase 050), one JSON value -
+  /// `{"private", "public"}`, base64 each - so the halves never part. The
+  /// public half is what the server knows as `device_key`; the pair is made
+  /// here, stays here, and dies with a logout.
+  static const String _kDeviceKey = 'session.device_key';
 
-  /// Where this install's server lives, and the fingerprint of the key it is
-  /// pinned against. Both come out of the pairing link.
+  /// The device's Ed25519 seed of phases 032-049 - the Eidolon check's key.
+  /// Swept at launch: no channel takes it any more.
+  static const String _kLegacyDeviceSecret = 'session.device_secret';
+
+  /// The local-data key (phase 048), base64 of 32 bytes. Kept like every
+  /// other record here - for this device only - and, unlike the session's
+  /// records, it belongs to the device rather than to the person: a failed
+  /// sign-in leaves it, a logout deletes it with the data it sealed.
+  static const String _kStorageKey = 'device.storage_key';
+
+  /// The options every record was written with before phase 048: the
+  /// plugin's own keychain service and the keychain's default class on iOS,
+  /// which a backup carries to another phone, and the legacy file keychain on
+  /// macOS, which Time Machine and Migration Assistant do.
+  static const IOSOptions _legacyIOSOptions = IOSOptions();
+  static const MacOsOptions _legacyMacOsOptions = MacOsOptions(usesDataProtectionKeychain: false);
+
+  /// Whether this is iOS or macOS, where the records of builds before phase
+  /// 048 live under other options than today's. Elsewhere the options did not
+  /// change, and a sweep by the old ones would delete the session itself. A
+  /// test on a macOS host says which platform it means: the storage mock of
+  /// `flutter test` ignores options.
+  @visibleForTesting
+  static bool? debugApplePlatform;
+
+  static bool get _applePlatform => debugApplePlatform ?? (Platform.isIOS || Platform.isMacOS);
+
+  /// Where this install's connection to its server starts, and the server's
+  /// Ed25519 key (base64) every connection must prove (phase 044). Both come
+  /// out of the pairing link.
   ///
   /// They belong to the SESSION, not to the build: they say which server this
   /// installation belongs to, and they die with it. Keeping the address in a
   /// compile-time config instead would mean pairing with one server and
   /// sending messages to another.
   static const String _kServerAddress = 'session.server_address';
-  static const String _kServerFingerprint = 'session.server_fingerprint';
+  static const String _kServerKey = 'session.server_key';
 
-  /// True while THIS process is the one that brought the person into being and
-  /// has not finished naming them.
-  ///
-  /// In memory on purpose. Its only job is to tell "the server made this person
-  /// a moment ago, on this device, and someone is typing a name right now"
-  /// apart from "this person existed before this install ever greeted" — and
-  /// the two are indistinguishable on the wire, because every greeting after
-  /// the first reports `created == false` either way. It must NOT survive a
-  /// restart: after one, the naming screen is exactly where a greeting SHOULD
-  /// rescue a device from.
-  bool _onboardingStartedHere = false;
+  /// The fingerprint of the certificate key the builds before phase 044
+  /// pinned against. Nothing reads it any more: the session it belonged to is
+  /// wiped at the first launch (FR-025).
+  static const String _kLegacyServerFingerprint = 'session.server_fingerprint';
+
+  /// A pairing waiting for approval on another device (phase 046): the link,
+  /// what was set on the connection screen and this device's deadline, as one
+  /// JSON value. Secure storage, because the link carries the token.
+  static const String _kPendingPairing = 'session.pending_pairing';
 
   @override
   Future<RepositoryResult<bool>> sweepLegacyKeys() {
@@ -86,11 +122,31 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<bool>(() async {
       if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
       await _secureStorage.deleteIfPresent(key: _kLegacyInviteOnion);
+      await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kLegacyDeviceSecret);
       await _secureStorage.deleteIfPresent(
         key: _kLegacyInviteAccessKey,
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
+      // The device's onion access key and its registration mark (phases
+      // 040-044): the onion service opens for no key since phase 045.
+      await ConnectionStorage.sweepLegacy(_secureStorage);
+      // Everything builds before phase 048 kept in the keychain, which a
+      // backup could carry off the device (FR-003): on iOS the plugin's own
+      // service, of a class that migrates; on macOS the legacy keychain. The
+      // records of today live under another service, in the data-protection
+      // keychain on macOS, so this reaches only the old ones - whatever their
+      // name or class - and the session they held is paired again.
+      if (_applePlatform) {
+        try {
+          await _secureStorage.deleteAll(iOptions: _legacyIOSOptions, mOptions: _legacyMacOsOptions);
+        } on Object catch (error) {
+          // A legacy keychain with nothing in it can refuse the delete of its
+          // synchronizable variant; the next launch tries again.
+          logRepository.error(target: this, error: error.runtimeType);
+        }
+      }
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -132,9 +188,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) {
     return execute<bool>(() async {
-      // Named (or skipped): this process is no longer the one mid-onboarding,
-      // so a later greeting may act on what the server says again.
-      _onboardingStartedHere = false;
       await _prefs.setBool(_kOnboardingComplete, true);
       if (label != null) {
         await _prefs.setString(_kLabel, label);
@@ -179,30 +232,77 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<String>> deviceSecret() {
-    return execute<String>(() async {
-      final stored = await _secureStorage.read(key: _kDeviceSecret);
-      if (stored != null && stored.isNotEmpty) {
-        return RepositoryResult<String>.success(data: stored);
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey() {
+    return execute<DeviceKeyPair>(() async {
+      final stored = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
+      if (stored != null && (await _hasIdentifier() || DeviceKeys.isOwn(stored))) {
+        return RepositoryResult<DeviceKeyPair>.success(data: stored);
       }
-      // Minted once, on the way into the first pairing. A rotated seed is a
-      // device the server no longer knows, which reads as a revocation.
-      final minted = await DeviceKeys.generateSeed();
-      await _secureStorage.write(key: _kDeviceSecret, value: minted);
-      return RepositoryResult<String>.success(data: minted);
+      // Made once, on the way into the first pairing. A new pair is a device
+      // the server no longer knows, which reads as a revocation - so a record
+      // that does not read, or a pair another RustSecureBox made (an attempt
+      // that never paired, kept by discardSignIn), is replaced only here,
+      // where there is nothing paired with it yet: a session holding one is
+      // retired at launch first (predatesSecureBox).
+      final minted = DeviceKeys.generate();
+      await _secureStorage.write(key: _kDeviceKey, value: jsonEncode({'private': minted.privateKey, 'public': minted.publicKey}));
+      return RepositoryResult<DeviceKeyPair>.success(data: minted);
+    });
+  }
+
+  /// The stored pair, or null when there is none or it does not read as two
+  /// base64 keys of 32 bytes.
+  static DeviceKeyPair? _decodeDeviceKey(String? stored) {
+    if (stored == null || stored.isEmpty) return null;
+    try {
+      final json = jsonDecode(stored);
+      if (json is! Map<String, dynamic>) return null;
+      final private = json['private'];
+      final public = json['public'];
+      if (private is! String || public is! String) return null;
+      if (base64.decode(private).length != 32 || base64.decode(public).length != 32) return null;
+      return DeviceKeyPair(privateKey: private, publicKey: public);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  @override
+  Future<RepositoryResult<String?>> storageKey() {
+    // Inside `execute`: a store that throws is an error, and an error is
+    // never "no key" - only an answer of nothing is.
+    return execute<String?>(() async {
+      final stored = await _secureStorage.read(key: _kStorageKey);
+      return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
     });
   }
 
   @override
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) {
+  Future<RepositoryResult<bool>> saveStorageKey({required String key}) {
+    return execute<bool>(() async {
+      await _secureStorage.write(key: _kStorageKey, value: key);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> forgetStorageKey() {
+    return execute<bool>(() async {
+      await _secureStorage.deleteIfPresent(key: _kStorageKey);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) {
     return execute<bool>(() async {
       // What any earlier server said about itself goes first (phase 040): its
-      // addresses, and whether it holds this device's access key. A sign-in
-      // the process did not survive leaves them behind, and kept they would
-      // send the next server's connection to the old one's onion address.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
+      // addresses, and what the person set for it. A sign-in the process did
+      // not survive leaves them behind, and kept they would send the next
+      // server's connection to the old one's addresses.
+      await ConnectionStorage.delete(_secureStorage);
       await _secureStorage.write(key: _kServerAddress, value: address);
-      await _secureStorage.write(key: _kServerFingerprint, value: serverFingerprint);
+      await _secureStorage.write(key: _kServerKey, value: serverKey);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -216,33 +316,77 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<String?>> serverFingerprint() {
+  Future<RepositoryResult<String?>> serverKey() {
     return execute<String?>(() async {
-      final stored = await _secureStorage.read(key: _kServerFingerprint);
+      final stored = await _secureStorage.read(key: _kServerKey);
       return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
     });
   }
 
   @override
-  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) {
+  Future<RepositoryResult<bool>> predatesSecureBox() {
+    // Inside `execute`: a read that throws - or RustSecureBox failing - comes
+    // back as an error, and the caller wipes nothing on an error.
     return execute<bool>(() async {
-      // Forward only. A reconnect that happens BEFORE the person has named
-      // themselves legitimately reports created == false, because the row was
-      // already made by the first greeting - so "re-derive from every
-      // greeting" would silently declare them onboarded under the
-      // server-assigned name. Advancing but never retreating is safe in both
-      // directions.
-      if (created) return const RepositoryResult<bool>.success(data: false);
-      // A reconnect while the person is still typing their name reports
-      // created == false, because the first greeting already made the row.
-      // Advancing on it would swap the root route out from under them and
-      // discard what they had typed, under the server-assigned name.
-      if (_onboardingStartedHere) return const RepositoryResult<bool>.success(data: false);
-      if (_prefs.getBool(_kOnboardingComplete) ?? false) {
-        return const RepositoryResult<bool>.success(data: false);
+      if (!await _hasIdentifier()) return const RepositoryResult<bool>.success(data: false);
+      final pair = _decodeDeviceKey(await _secureStorage.read(key: _kDeviceKey));
+      if (pair == null) return const RepositoryResult<bool>.success(data: true);
+      return RepositoryResult<bool>.success(data: !DeviceKeys.isOwn(pair));
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> resetSecureStore() {
+    return execute<bool>(() async {
+      try {
+        await _secureStorage.deleteAll(aOptions: SecureStoreOptions.android.copyWith(resetOnError: true));
+      } catch (_) {
+        // The plugin rebuilds a store only from a key it can no longer
+        // unwrap. A key that is there but will not be read at all fails
+        // this too: the runner deletes the plugin's Keystore entries and
+        // files, and the store is asked again, empty (048 research R13).
+        if (!_androidPlatform) rethrow;
+        await _secureStoreChannel.invokeMethod<bool>('wipe');
+        await _secureStorage.deleteAll();
       }
-      await _prefs.setBool(_kOnboardingComplete, true);
       return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  /// The Android runner's way to delete the secure-store plugin's store whole
+  /// (`MainActivity.wipeSecureStore`).
+  static const MethodChannel _secureStoreChannel = MethodChannel('nox/secure_store');
+
+  /// Which platform a test means: the storage mock of `flutter test` runs on
+  /// the host.
+  @visibleForTesting
+  static bool? debugAndroidPlatform;
+
+  static bool get _androidPlatform => debugAndroidPlatform ?? Platform.isAndroid;
+
+  @override
+  Future<RepositoryResult<bool>> outlivedItsInstall() {
+    return execute<bool>(() async {
+      if (!await _hasIdentifier()) return const RepositoryResult<bool>.success(data: false);
+      return RepositoryResult<bool>.success(data: !_prefs.containsKey(_kOnboardingComplete));
+    });
+  }
+
+  /// Whether a session is stored - which is what anything paired hangs on.
+  Future<bool> _hasIdentifier() async {
+    final identifier = await _secureStorage.read(key: _kIdentifier);
+    return identifier != null && identifier.isNotEmpty;
+  }
+
+  @override
+  Future<RepositoryResult<bool>> predatesServerKey() {
+    // Inside `execute`: a read that throws comes back as an error, and the
+    // caller wipes nothing on an error.
+    return execute<bool>(() async {
+      final identifier = await _secureStorage.read(key: _kIdentifier);
+      if (identifier == null || identifier.isEmpty) return const RepositoryResult<bool>.success(data: false);
+      final key = await _secureStorage.read(key: _kServerKey);
+      return RepositoryResult<bool>.success(data: key == null || key.isEmpty);
     });
   }
 
@@ -255,7 +399,64 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  void noteOnboardingStartedHere() => _onboardingStartedHere = true;
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing) {
+    return execute<bool>(() async {
+      final connection = pairing.connection;
+      await _secureStorage.write(
+        key: _kPendingPairing,
+        value: jsonEncode(<String, dynamic>{
+          'link': pairing.link,
+          'wait_until': pairing.waitUntil.toUtc().millisecondsSinceEpoch,
+          if (connection != null)
+            'connection': <String, dynamic>{
+              'server_address': connection.serverAddress,
+              'onion_address': ?connection.onionAddress,
+              'use_tor': connection.useTor,
+            },
+        }),
+      );
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing() {
+    return execute<PendingPairing?>(() async {
+      final stored = await _secureStorage.read(key: _kPendingPairing);
+      return RepositoryResult<PendingPairing?>.success(data: stored == null ? null : _pendingFrom(stored));
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> clearPendingPairing() {
+    return execute<bool>(() async {
+      await _secureStorage.deleteIfPresent(key: _kPendingPairing);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  /// A remembered pairing, or null for anything that does not read as one -
+  /// a value nothing can resume is the same as no value.
+  static PendingPairing? _pendingFrom(String stored) {
+    try {
+      final json = jsonDecode(stored);
+      if (json is! Map<String, dynamic>) return null;
+      final link = json['link'];
+      final until = json['wait_until'];
+      if (link is! String || link.isEmpty || until is! int) return null;
+      final raw = json['connection'];
+      final connection = raw is Map<String, dynamic> && raw['server_address'] is String
+          ? ConnectionSettings(
+              serverAddress: raw['server_address'] as String,
+              onionAddress: raw['onion_address'] is String ? raw['onion_address'] as String : null,
+              useTor: raw['use_tor'] == true,
+            )
+          : null;
+      return PendingPairing(link: link, waitUntil: DateTime.fromMillisecondsSinceEpoch(until, isUtc: true), connection: connection);
+    } on FormatException {
+      return null;
+    }
+  }
 
   @override
   Future<RepositoryResult<bool>> discardSignIn() {
@@ -265,17 +466,19 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // the person, so an attempt that never reached the server must not
       // rotate it - doing so would make one install look like two devices to
       // the server the moment the next attempt succeeds.
-      _onboardingStartedHere = false;
       await _secureStorage.deleteIfPresent(key: _kIdentifier);
       // The server the failed attempt pointed at goes with it. Leaving it would
       // aim the next connection at a machine this install never paired with,
       // and the world-epoch key would call that the same world.
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
-      await _secureStorage.deleteIfPresent(key: _kServerFingerprint);
-      // And what that server said about where it lives, and whether it holds
-      // this device's access key (phase 040). The key itself stays: like the
-      // device key, it names this install.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
+      await _secureStorage.deleteIfPresent(key: _kServerKey);
+      // And what that server said about where it lives, with what the person
+      // set for it on the connection screen (phases 040, 045).
+      await ConnectionStorage.delete(_secureStorage);
+      // And the wait for approval that attempt left (phase 046): it names the
+      // link, a credential, and a restart must not resume a sign-in that was
+      // undone.
+      await _secureStorage.deleteIfPresent(key: _kPendingPairing);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it
@@ -298,7 +501,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
-      _onboardingStartedHere = false;
       // Every key BY NAME, and only then the sweep. `deleteAll` alone is not a
       // wipe: it is one query against the platform store, and a key written
       // under options that query does not match survives it - silently, with no
@@ -309,12 +511,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // app puts them on the naming screen, holding a token for a server it can
       // no longer reach.
       await _secureStorage.deleteIfPresent(key: _kIdentifier);
-      await _secureStorage.deleteIfPresent(key: _kDeviceSecret);
+      await _secureStorage.deleteIfPresent(key: _kDeviceKey);
+      await _secureStorage.deleteIfPresent(key: _kLegacyDeviceSecret);
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
-      await _secureStorage.deleteIfPresent(key: _kServerFingerprint);
-      // Phase 040: the addresses and the access key - each with the options it
-      // was written under, which `deleteAll` alone may not match.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);
+      await _secureStorage.deleteIfPresent(key: _kServerKey);
+      await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kPendingPairing);
+      // The connection settings (phases 040, 045), by name like the rest.
+      await ConnectionStorage.delete(_secureStorage);
       // Kept for anything a later version writes and forgets to name above, and
       // not allowed to fail a wipe that has already happened.
       // Swallowed on purpose, and it is not a silent failure: the read-back

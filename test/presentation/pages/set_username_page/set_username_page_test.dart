@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/auth_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
@@ -13,6 +15,21 @@ import '../../../utils/fake_session_repository.dart';
 import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
+
+/// Records each completed onboarding and the name it stated (`null` = Skip,
+/// which keeps the name the server gave).
+class _RecordingAuth implements AuthRepository {
+  final List<String?> labels = <String?>[];
+
+  @override
+  Future<RepositoryResult<bool>> completeOnboarding({String? label}) async {
+    labels.add(label);
+    return const RepositoryResult<bool>.success(data: true);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   setUp(() async {
@@ -78,6 +95,23 @@ void main() {
     expect(tester.widget<TextField>(find.byType(TextField)).controller?.text, 'Lena');
     expect(find.text('Lena'), findsOneWidget);
     expect(tester.widget<FilledButton>(doneButton()).onPressed, isNotNull);
+  });
+
+  testWidgets('the system back on the real screen is Skip: onboarding completes with the server name', (tester) async {
+    registerFakeSession(session: kTestSession.copyWith(label: 'Lena'));
+    final auth = _RecordingAuth();
+    getIt.allowReassignment = true;
+    getIt.registerSingleton<AuthRepository>(auth);
+    await pumpApp(tester, const SetUsernamePage());
+    // A name typed and not submitted: back is Skip, so it is NOT taken.
+    await tester.enterText(find.byType(TextField), 'Olena');
+    await tester.pump();
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(auth.labels, <String?>[null], reason: 'Skip states no name; Done would have stated Olena');
+    expect(find.byType(SetUsernamePage), findsOneWidget, reason: 'nothing is popped: the app-state spine moves on');
   });
 
   testWidgets('and stays empty when the session holds no name', (tester) async {

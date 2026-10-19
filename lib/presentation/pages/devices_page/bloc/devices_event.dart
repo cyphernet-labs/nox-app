@@ -23,6 +23,11 @@ sealed class DevicesEvent with _$DevicesEvent {
 
   /// The live channel came back after a break.
   const factory DevicesEvent.connectionRestored() = DevicesConnectionRestored;
+
+  /// A request to join through an invite this device issued is over -
+  /// answered, run out, or withdrawn by the new device - so the invite behind
+  /// it is spent (phase 046).
+  const factory DevicesEvent.inviteSpent() = DevicesInviteSpent;
 }
 
 /// Why the list is being read. The three answers differ in what the person

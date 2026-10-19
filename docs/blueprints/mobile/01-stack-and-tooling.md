@@ -12,7 +12,7 @@
 - **Dart SDK**: ограничение `>=3.12.0 <4.0.0` (парный к Flutter 3.44.1).
 - **Длина строки**: `140` везде (`formatter: page_width: 140` в `analysis_options.yaml`; команды используют `fvm dart format -l 140`).
 - **Платформы**: iOS, Android, Windows, Linux, macOS (web — вне scope). Desktop-floor по умолчанию Flutter 3.44.1: Windows 10 / macOS 10.15 / GTK3 (Linux).
-- **Rust**: `1.93.1` с целями всех платформ, пин в `packages/nox_tor/rust/rust-toolchain.toml` — как Flutter через FVM. Нужен для встроенного Tor-клиента (Arti 0.47): его собирает нативный хук пакета `nox_tor` при каждой сборке и при `flutter test`. На Linux хук ничего не собирает — Tor там пока не встроен.
+- **Rust**: `1.93.1` с целями всех пяти платформ, Linux включительно, пин в `packages/nox_tor/rust/rust-toolchain.toml` — как Flutter через FVM. Нужен для нативного модуля `nox_tor`: в нём канал к серверу (TLS 1.3 и проверка `POST /auth` → `POST /auth2` с RustSecureBox — крейт `packages/rust_secure_box`, который модуль собирает вместе с собой), хранилище локальных данных (запечатывание базы и файлов на диске, фаза 048) и встроенный Tor-клиент (Arti 0.47). Цель `wasm32-unknown-unknown` (пин в `packages/rust_secure_box/rust-toolchain.toml`) нужна копии RustSecureBox на сервере: `make box-wasm` её пересобирает, `make box-verify` собирает заново во временную папку и сверяет с закоммиченной, а `make tor-test` запускает `make box-verify`. Обеим целям нужны ещё Go и, при первом запуске, сеть: `go run` скачивает `github.com/ncruces/wasm2go@v0.4.15`. Модуль собирает нативный хук пакета при каждой сборке и при `flutter test`, на всех пяти платформах: без канала приложению нечем подключиться к серверу, без хранилища — нечем запечатать и открыть свои данные. Встроенный Tor работает на всех пяти платформах, Linux включительно (`TorCapability.isAvailable` — модуль загрузился).
 
 `.fvmrc` в корне пакета:
 
@@ -30,7 +30,7 @@ fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitign
 
 > **Один пакет приложения.** В этом блюпринте — **единственный Dart-пакет приложения `nox_app`**: слои — это папки внутри одного `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`). Один `build.yaml`, один прогон `build_runner`. Подробности раскладки — в `00-architecture-overview.md` и `11-scaffolding-plan.md`.
 >
-> **Одно исключение — `packages/nox_tor`** (фаза 040): Tor-клиент на Rust с тонкой Dart-обёрткой, член workspace (`workspace: [packages/nox_tor]` в корневом `pubspec.yaml`, зависимость `nox_tor: {path: packages/nox_tor}`). Отдельный пакет он не ради слоёв, а потому что нативный хук сборки (`hook/build.dart`, native assets) принадлежит пакету: C ABI крейта вызывается через `@Native`, библиотеку под каждую платформу собирает `native_toolchain_rust`. Приложение видит его только через доменный `TorService`; тестовое окружение получает фейк и нативную библиотеку не грузит.
+> **Одно исключение — `packages/nox_tor`**: нативный модуль на Rust с тонкой Dart-обёрткой, член workspace (`workspace: [packages/nox_tor]` в корневом `pubspec.yaml`, зависимость `nox_tor: {path: packages/nox_tor}`). В нём канал к серверу (`nox_chan_*`: TCP или поток Tor → TLS 1.3 → проверка `POST /auth` → `POST /auth2`, см. `14-networking-and-auth.md` §6.0), функции RustSecureBox для Dart (`nox_box_*`, `package:nox_tor/secure_box.dart` — ими создаётся пара ключей устройства), хранилище локальных данных (`nox_vault_*`, `package:nox_tor/vault.dart` — `NoxVault`: под ключом локальных данных запечатывает записи локальной базы для `VaultCodec` и файлы на диске кусками для `SealedFile`, фаза 048, см. `04-data-layer.md` §6г) и встроенный Tor-клиент (`nox_tor_*`). Отдельный пакет он не ради слоёв, а потому что нативный хук сборки (`hook/build.dart`, native assets) принадлежит пакету: C ABI крейта вызывается через `@Native`, библиотеку под каждую из пяти платформ собирает `native_toolchain_rust`. Приложение видит канал через `NoxChannelApi` (`package:nox_tor/channel.dart`; его берут `ChannelHttpClient` и `ChannelDirectProber`), а Tor — через доменный `TorService`. Канал и Tor в тестовом окружении не участвуют: `NoxChannelApi` зарегистрирован только в `dev`, вместо `TorService` стоит фейк (`FakeTorService`, `[test]`). Хранилище участвует: `DeviceVault` зарегистрирован во всех окружениях, файлы на диске запечатываются через `NoxVault` и под `flutter test` (`test/utils/sealed_files.dart`), поэтому нативная библиотека грузится и в тестах, и без Rust тесты не запускаются.
 
 ---
 
@@ -38,7 +38,7 @@ fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitign
 
 Полный файл ниже — готов к копированию. Имя пакета — `nox_app`, все импорты вида `package:nox_app/...`. Пины версий и inline-комментарии сохранены: они кодируют разрешённые конфликты — не трогайте без причины.
 
-> **Соответствие актуальному скелету.** Блок ниже — канонический «полный» манифест, сверенный с реально закоммиченным `pubspec.yaml`. Помимо базового набора там **активны**: `permission_handler` (камера фичи 010 + системный пермишен уведомлений), `file_selector` (пикер вложений, фича 017), `connectivity_plus` (офлайн-баннер, фичи 014/015), `zxing2` (pure-Dart QR-декод из картинки на Windows/Linux), `web_socket_channel` (клиент WebSocket-конверта, фича 026), `flutter_localizations` + `flutter: generate: true` (l10n EN+UK, конфиг — `l10n.yaml`); `fonts:`-блок **объявлен** (Roboto + Roboto Mono с фичи 002). Закомментированными плейсхолдерами остаются только `firebase_*` (push — док 15), `image_picker` (док 16) и vendor-SDK аналитики (док 17) — раскомментируются при активации соответствующего дока. Версии-пины держим здесь, потому что доки 14/15/16/17 ссылаются за ними сюда.
+> **Соответствие закоммиченному `pubspec.yaml`.** Блок ниже — канонический манифест, сверенный с реальным `pubspec.yaml` (комментарии в блоке — пояснения блюпринта; блок `flutter_launcher_icons:` реального файла опущен). Помимо базового набора там **активны**: `nox_tor` (нативный модуль, член workspace), `permission_handler` (камера фичи 010 + системный пермишен уведомлений), `file_selector` (пикер вложений, фича 017), `connectivity_plus` (сигнал смены сети для выбора пути и фазы сессии мок-флейворов), `zxing2` (pure-Dart QR-декод из картинки на Windows/Linux), `web_socket_channel` (клиент WebSocket-конверта, фича 026), `video_player` (видео на 5.3, iOS/Android/macOS), `path_provider_platform_interface` + `path_provider_windows` (папка данных на Windows, фаза 048), `flutter_localizations` + `flutter: generate: true` (l10n EN+UK, конфиг — `l10n.yaml`); `fonts:`-блок **объявлен** (Roboto + Roboto Mono с фичи 002). Закомментированными плейсхолдерами остаются только `firebase_*` (push — док 15), `image_picker` (док 16) и vendor-SDK аналитики (док 17) — раскомментируются при активации соответствующего дока. Версии-пины держим здесь, потому что доки 14/15/16/17 ссылаются за ними сюда.
 
 ```yaml
 name: nox_app
@@ -46,12 +46,16 @@ description: "NOX secure messenger."
 publish_to: 'none'
 
 # CalVer + shifted-epoch build (YY.M.D+EPOCH, без ведущих нулей; см. 09-build-and-secrets-infra.md §9).
-# CI переписывает это значение через commit.
 version: 26.1.1+0
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
   flutter: 3.44.1
+
+# The native module (channel, local-data vault, embedded Tor) owns a native-assets build hook,
+# and a build hook belongs to a package.
+workspace:
+  - packages/nox_tor
 
 dependencies:
   flutter:
@@ -60,6 +64,10 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.9     # iOS-style icons
 
+  # --- Native module: channel to the server, local-data vault, embedded Tor (Rust) ---
+  nox_tor:
+    path: packages/nox_tor
+
   # --- State management ---
   flutter_bloc: 9.1.1
   bloc_concurrency: 0.3.0     # restartable()/droppable()/sequential() event transformers
@@ -67,7 +75,7 @@ dependencies:
   # --- Core model / reactive ---
   freezed_annotation: 3.1.0
   json_annotation: ^4.12.0    # явная зависимость для *.g.dart
-  rxdart: 0.28.0              # BehaviorSubject / PublishSubject в репозиториях и блоках
+  rxdart: 0.28.0              # операторы потоков (debounceTime/switchMap/skip) + субъекты служб и состояния в памяти
   collection: 1.19.1          # collection-расширения
   intl: 0.20.2                # ТОЛЬКО форматирование дат/чисел (без i18n-инфраструктуры)
   uuid: ^4.5.3                # генерация id
@@ -103,7 +111,11 @@ dependencies:
   # sembast: документная NoSQL (schema-less) для cache-first репозиториев — OQ-1 закрыт: Sembast,
   # бэкенд databaseFactoryIo на mobile/desktop (web — вне scope).
   sembast: ^3.8.8
-  path_provider: 2.1.5             # резолв директории БД для Sembast (IO-бэкенд)
+  path_provider: 2.1.5             # папка данных приложения (AppDataRoot): база Sembast, файлы, состояние Tor
+  # Windows: the data folder moves to %LOCALAPPDATA% for every path_provider caller (phase 048).
+  # Pinned to what path_provider already resolves.
+  path_provider_platform_interface: 2.1.2
+  path_provider_windows: 2.3.0
 
   # --- Misc ---
   logger: ^2.7.0
@@ -127,6 +139,8 @@ dependencies:
                                  # package_info_plus ^10 (win32 ^6). See 16-file-upload.md.
   connectivity_plus: ^7.3.1      # online/offline state; real impl for [dev, prod], mock for [test]
                                  # (platform channel) - see 14-networking-and-auth.md §5.
+  video_player: ^2.14.0          # in-app video on 5.3; iOS/Android/macOS only (VideoPlaybackCapability):
+                                 # no Windows/Linux implementation. Not media_kit without an owner decision.
 
   # --- Feature-gated (в актуальном скелете ЗАКОММЕНТИРОВАНЫ; раскомментируются при активации
   #     соответствующего дока; major-пины ПРОВИЗОРНЫ — сверить latest stable перед реализацией) ---
@@ -164,12 +178,13 @@ flutter:
   assets:
     - assets/png/
     - assets/svg/icons/
-    - assets/svg/illustrations/
     - assets/svg/flags/
     - assets/animation/
+    - assets/licenses/        # licence texts of the bundled fonts, registered in LicenseRegistry by main.dart
 
   # Real design-system fonts, shipped since 002-design-system-assets.
   # Roboto Mono is used for the long identifier string only (see 06-theming.md).
+  # Every bundled font ships its licence text in assets/licenses/ (06-theming.md §1).
   fonts:
     - family: Roboto
       fonts:
@@ -203,13 +218,13 @@ flutter_gen:
 
 > **`dependency_overrides`.** В этом проекте — **пусто**. Добавляйте override только когда реально упёрлись в ошибку резолва (например, конфликт транзитивов вокруг `win32`). Не копируйте overrides «на всякий случай» из чужих проектов.
 
-> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт `{"app.flavor": "stage|prod"}`, а с фазы 026 `config/stage.json` дополнительно несёт `app.apiUrl`. **С фазы 036 это значение больше не путь к живому серверу:** адрес приезжает ссылкой спаривания и живёт в сессии, а собранный в билд адрес по построению не имеет отпечатка — значит соединение с ним нечем проверить, чего фаза и не допускает. Ключ остаётся в файле как дефолт сборки, но `LiveSessionStarter` и `ApiClient` его не читают. Потребляются через `--dart-define-from-file` — единообразный флейвор-механизм для всех платформ, включая desktop (Windows/Linux/macOS), у которых нет нативной flavor-машинерии Android/iOS (см. `09-build-and-secrets-infra.md`).
+> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт только `{"app.flavor": "stage|prod"}`. **Адреса сервера в сборке нет:** адрес приезжает ссылкой спаривания вместе с ключом сервера и живёт в сессии, а у адреса из сборки ключа сервера не было бы по построению — канал не смог бы проверить соединение с ним. Потребляются через `--dart-define-from-file` — единообразный флейвор-механизм для всех платформ, включая desktop (Windows/Linux/macOS), у которых нет нативной flavor-машинерии Android/iOS (см. `09-build-and-secrets-infra.md`).
 
 > **Почему нет `equatable`.** Библиотека **намеренно исключена** из зависимостей. Value-equality (`==` / `hashCode`) в этом проекте полностью обеспечивает **Freezed**: каждый `@freezed`-класс генерирует структурное равенство сам — это покрывает и BLoC-state/event (`05-presentation-layer.md`), и любые value-объекты. Правило: **где нужен value-объект, делайте его `@freezed`-классом — не наследуйте `Equatable` и не добавляйте `equatable`**. `equatable` тянем обратно только если найдётся кейс, который Freezed реально не закрывает (на сегодня такого нет).
 
 > **Не тянем (desktop-shell).** Адаптивный shell строится на **кастомном breakpoint** (`NavigationBar`↔`NavigationRail`, ширина-триггер `840dp` = `Constants.railBreakpoint`; single-window; центрально-докнутый `+` FAB; 2 destination — Chats/Settings; `IndexedStack`-body; без profile-экрана), **без** `flutter_adaptive_scaffold` / `custom_adaptive_scaffold`. В скелете также **не добавляются** `window_manager` / `bitsdojo_window` / `desktop_multi_window` / `yaru`: дефолтный single-window runner, нативный оконный chrome платформы и единый Material 3 без desktop-специфичных пакетов. Любой из них вводится только когда появится конкретная потребность (custom window chrome, multi-window и т.п.), не «на всякий случай».
 
-> **Feature-gated зависимости.** `firebase_core`/`firebase_messaging` (push — `15`), `image_picker` (`16`), vendor-SDK аналитики (`17`) вынесены отдельной группой выше и в актуальном скелете **закомментированы** — они вводятся **при активации соответствующей фичи**, не нужны для скелета. Уже **активны** и из этой группы выведены: `permission_handler` (камера с фичи 010 **и** системный пермишен уведомлений; сама push-доставка при этом не реализована), `file_selector` вместо `file_picker` (вложения, фича 017) и `connectivity_plus` (офлайн-баннер, фичи 014/015). **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке. Push-зависимости (`firebase_*`) — **mobile-only**: desktop-impl нет, desktop push = disabled no-op, вводится с первым desktop-консьюмером (см. 15 §Desktop fallback).
+> **Feature-gated зависимости.** `firebase_core`/`firebase_messaging` (push — `15`), `image_picker` (`16`), vendor-SDK аналитики (`17`) вынесены отдельной группой выше и в актуальном скелете **закомментированы** — они вводятся **при активации соответствующей фичи**, не нужны для скелета. Уже **активны** и из этой группы выведены: `permission_handler` (камера с фичи 010 **и** системный пермишен уведомлений; сама push-доставка при этом не реализована), `file_selector` вместо `file_picker` (вложения, фича 017) и `connectivity_plus` (смена сети — сигнал выбору пути, `NetworkChangeService`; фаза сессии мок-флейвора `prod`). **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке. Push-зависимости (`firebase_*`) — **mobile-only**: desktop-impl нет, desktop push = disabled no-op, вводится с первым desktop-консьюмером (см. 15 §Desktop fallback).
 
 > **Аналитика — vendor-neutral, opt-in.** Конкретный SDK аналитики **не выбран**: в манифесте он стоит плейсхолдером-комментарием, `mixpanel_flutter` приведён лишь как **пример** вендора. NOX — E2EE-продукт: аналитика **opt-in** (выключена до явного согласия), без PII. Детали — `17-analytics.md`. Не хардкодьте конкретного вендора в зависимостях скелета.
 
@@ -220,28 +235,29 @@ flutter_gen:
 | `flutter_bloc` + `bloc_concurrency` | управление состоянием; event-трансформеры (`restartable`/`droppable`/`sequential`) поверх Freezed-событий. См. `05-presentation-layer.md`. |
 | `freezed_annotation` (+ dev `freezed`) | sealed unions для State/Event и доменных моделей (`*.freezed.dart`, без `*.g.dart` на BLoC-типах). См. `03`/`05`. |
 | `json_annotation` (+ dev `json_serializable`) | сериализация **entity-слоя** (`*.g.dart`). Доменные модели JSON не несут. См. `04-data-layer.md`. |
-| `rxdart` | `BehaviorSubject<RepositoryResult<...>>` в репозиториях поверх реактивного Sembast-DAO. |
+| `rxdart` | операторы потоков: `debounceTime` + `switchMap` в `debounceRestartable()` (поиск, проверка имени — `05-presentation-layer.md`), `skip` + `debounceTime` на тиках сигнала `watch*`; `BehaviorSubject` — производное состояние в памяти (`AppStateRepositoryImpl`) и потоки служб (фаза сокета, статус связи, запросы устройств). Проекции DAO в `watch*` идут голыми, без субъекта. |
 | `injectable` + `get_it` (+ dev `injectable_generator`) | единый `configureDependencies(String env)` + `$initGetIt`. См. `02-dependency-injection.md`. |
-| `dio` | HTTP-клиент **REST-поверхности** client-сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт: его клиент приехал в фазе **026** (`lib/data/remote/socket/`), поэтому dio остаётся только на файловой цепочке (фаза 028). **С фазы 036 dio ходит по тому же проверенному каналу, что и сокет**: `IOHttpClientAdapter` получает единственный `HttpClient` из `PinnedHttpClient`: пустое хранилище доверенных корней и проверкой отпечатка **листа** предъявленной цепочки (`SecureSocket.peerCertificate`) внутри `HttpClient.connectionFactory`. Порт не 443, а тот, что приехал ссылкой. |
+| `dio` | HTTP-клиент **REST-поверхности** клиентского сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт: его клиент приехал в фазе **026** (`lib/data/remote/socket/`), поэтому dio остаётся только на файловой цепочке (фаза 028). **Dio ходит по тому же каналу, что и сокет**: `IOHttpClientAdapter` получает `ChannelHttpClient.transferClient` — `HttpClient`, чей `connectionFactory` открывает канал нативного модуля (транспорт → TLS 1.3 → проверка `POST /auth` → `POST /auth2` против ключа сервера из ссылки спаривания) и отдаёт готовый `ChannelSocket`. Порт прямого адреса — тот, что приехал ссылкой (443 — только когда в адресе порта нет), onion-сервис — порт 443. |
 | `web_socket_channel` | транспорт WebSocket-конверта контракта v0: `SocketChannelFactory` поверх `IOWebSocketChannel` (нужен `pingInterval`) под `NoxSocketClient` — `lib/data/remote/socket/`, фаза 026. |
 | `infinite_scroll_pagination` 5.1.1 | stateless `PagingState`-в-bloc (без `PagingController`). См. `07-pagination.md`. |
 | `flutter_screenutil` 5.9.3 | адаптивные spacing/typography токены, design size 360×779. См. `06-theming.md`. |
 | `skeletonizer` | shimmer-плейсхолдеры для загрузки. |
 | `cached_network_image` / `flutter_svg` | растровые картинки (например, аватары) и векторные ассеты. |
-| `sembast` + `path_provider` | cache-first DAO; env-scoped `AppDatabase` (Dev/Prod = IO `databaseFactoryIo` на mobile/desktop, Test = memory). См. `04`. |
+| `sembast` + `path_provider` | cache-first DAO; env-scoped `AppDatabase` (Dev/Prod = IO `databaseFactoryIo` на mobile/desktop в папке данных приложения, каждая строка запечатана `VaultCodec`; Test = memory, без кодека). См. `04` §6г. |
 | `shared_preferences` | простые флаги, `themeMode`. |
-| `flutter_secure_storage` | шифрованное хранилище секретов сессии: сегодня — ключ `session.identifier`, плюс шов `auth_id_token` для Dio-интерцептора (писателя ещё нет — токены появятся с аутентификацией этапа 2, она пока открыта). Кросс-платформенно (macOS Keychain / Windows DPAPI / Linux libsecret). |
+| `flutter_secure_storage` | шифрованное хранилище секретов сессии: `session.identifier`, пара ключей устройства `session.device_key` (JSON с закрытым и открытым ключом от RustSecureBox; закрытый модуль канала получает при каждом открытии соединения), ключ сервера из ссылки `session.server_key`, настройки связи `session.server_addresses` (адреса сервера, ручная правка, `Use Tor`), спаривание, ждущее одобрения, `session.pending_pairing` (ссылка с токеном, срок устройства и настройки связи — только пока ожидание длится, фаза 046) и ключ локальных данных `device.storage_key` (32 случайных байта в base64, фаза 048). Плюс шов `auth_id_token` для Dio-интерцептора без писателя: соединение аутентифицирует канал, токенов контракт v0 не несёт. Каждая запись — только для этого устройства и ни в какой бэкап не попадает: параметры `SecureStoreOptions` (`lib/data/local/secure/secure_store_options.dart`) заданы один раз на единственном экземпляре `FlutterSecureStorage` (`RegisterModule`) — iOS `first_unlock_this_device`; macOS — keychain защиты данных в release-сборке и login keychain в debug/profile, оба под сервисом `com.cyphernetlabs.noxapp`; Android — хранилище плагина на Keystore с `resetOnError: false`; Windows — DPAPI, файл плагина в `%LOCALAPPDATA%\Cyphernet Labs\NOX\data`; Linux — libsecret. |
 | `logger` | реализация обязательного `LogRepository` (единый канал, без raw `print`). |
-| `package_info_plus` | версия/билд приложения (регистрируется в DI-бутстрапе первым консьюмером). |
-| `nox_tor` (path, workspace) | встроенный Tor-клиент: Arti 0.47 на Rust за C ABI, локальный мост с секретом к onion-сервису своего сервера, сон и пробуждение. Только за `TorService` (`NativeTorService` в `[dev, prod]`). Свои зависимости пакета — `native_toolchain_rust`, `hooks`, `code_assets` (нативный хук сборки). См. `14-networking-and-auth.md` §6. |
-| `cryptography` | Ed25519 ключ устройства (подпись приветствия, фаза 032) и x25519 ключ доступа к onion-сервису (фаза 040). |
+| `package_info_plus` | версия/билд приложения: `AppVersionTextWidget` читает `PackageInfo.fromPlatform()` прямо из `FutureBuilder`, в DI он не регистрируется (`02-dependency-injection.md` §3). |
+| `nox_tor` (path, workspace) | нативный модуль на Rust за C ABI. Канал к серверу: TCP или поток Arti → TLS 1.3 (rustls) → проверка `POST /auth` → `POST /auth2`; ключи и подписи — RustSecureBox (крейт `packages/rust_secure_box`, зависимость модуля по пути; для Dart — `package:nox_tor/secure_box.dart`); Dart видит канал через `NoxChannelApi` (`package:nox_tor/channel.dart`, `NativeNoxChannelApi` в `[dev]`). Хранилище локальных данных (`nox_vault_*`, фаза 048): ключ локальных данных, который приложение отдаёт модулю один раз за процесс, запечатывание записей базы и кусков файлов; Dart видит его через `NoxVault` (`package:nox_tor/vault.dart`) — синхронно, во всех окружениях, `test` включительно. Встроенный Tor-клиент: Arti `=0.47.0` с фичей `hs-pow-full` (решает задачу PoW onion-сервиса), без ключей доступа и без хранилища ключей; подключение к onion-сервису своего сервера, сон и пробуждение; Dart видит его через `TorService` (`NativeTorService` в `[dev, prod]`). Собирается и работает на всех пяти платформах. Свои зависимости пакета — `native_toolchain_rust`, `hooks`, `code_assets` (нативный хук сборки). См. `14-networking-and-auth.md` §6. |
+| `video_player` | видео на экране файла 5.3 — только из локального файла (открытой временной копии), без потоковой отдачи: нативный плеер ходил бы своим HTTP мимо канала. Реализации есть для iOS, Android и macOS; на Windows и Linux воспроизведения нет, его закрывает `VideoPlaybackCapability`. |
+| `path_provider_platform_interface` + `path_provider_windows` | на Windows `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает `%LOCALAPPDATA%\Cyphernet Labs\NOX\data` каждому, кто спрашивает папку данных (фаза 048, `04-data-layer.md` §6г). Пины — те, что уже резолвит `path_provider`. |
 | `app_links` | приём входящих ссылок (deep / universal links) — cold-start + warm-поток; парсятся в `DeepLinkRepository`. **План**: зависимость объявлена, но в `lib/` пока не импортируется — deep links не реализованы и остаются открытым вопросом. См. `13-deep-links.md`. |
 
 ---
 
 ## Кодген-стек
 
-Четыре генератора работают под одним вызовом `build_runner`:
+Пять генераторов работают под одним вызовом `build_runner` (четыре — для `lib/`, `mockito` — для `test/`):
 
 | Генератор | Срабатывает на | Производит |
 |---|---|---|
@@ -249,6 +265,9 @@ flutter_gen:
 | `json_serializable` | `@JsonSerializable` / freezed-фабрики с `fromJson` | `*.g.dart` |
 | `injectable_generator` | `@injectable` / `@LazySingleton` / `@singleton` | `lib/di/configure_dependencies.config.dart` |
 | `flutter_gen_runner` | ассеты из `pubspec` | `lib/design/gen/assets.gen.dart` |
+| `mockito` | `@GenerateMocks` в тестах | `*.mocks.dart` рядом с тестом (в `.gitignore`) |
+
+Локализация генерируется отдельно — `fvm flutter gen-l10n` (`make generate` зовёт его после `build_runner`): сгенерированный `AppLocalizations` в `.gitignore`, без него `analyze` и тесты не находят `AppLocalizations`.
 
 ### `build.yaml`
 
@@ -315,7 +334,7 @@ formatter:
 - **Только стандартный `flutter_lints`.** Большие кастомные спеки (десятки явных правил + `errors`-карта, поднимающая часть проблем до уровня ошибки) в этом блюпринте **намеренно не используются**: проект опирается на рекомендованный Dart/Flutter-линтер. Если конкретное правило когда-нибудь действительно понадобится — добавляйте его **осознанно и точечно**, а не копируйте чужой большой набор «на всякий случай».
 - **Минимальная `errors`-карта.** Единственная запись — `invalid_annotation_target: ignore`: гасит annotation-noise генераторов (freezed/json_serializable кладут аннотации на таргеты, которые анализатор иначе считает невалидными). Больше ничего в `errors` не поднимаем.
 - **Длина строки — 140.** `formatter: page_width: 140` в `analysis_options.yaml` — единственный источник истины; `fvm dart format` подхватывает его автоматически (команды форматирования — в `12-dev-commands.md`; для явности они также передают `-l 140`).
-- **Исключения из анализа.** Сгенерированные файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) **никогда не правятся руками** — только регенерация через `build_runner`. Дополнительно исключён `docs/**`: там лежит сгенерированный design-system handoff Dart (`docs/design/system/nox-handoff/flutter/`), который не часть приложения. Шаблоны `*.gr.dart` / `*.mocks.dart` в исключениях **пока нет** — добавьте их, когда появятся соответствующие генераторы (router-кодген / mockito-`@GenerateMocks`).
+- **Исключения из анализа.** Сгенерированные файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) **никогда не правятся руками** — только регенерация через `build_runner`. Дополнительно исключён `docs/**`: там лежит сгенерированный design-system handoff Dart (`docs/design/system/nox-handoff/flutter/`), который не часть приложения. `*.mocks.dart` (mockito `@GenerateMocks` в тестах) в исключениях нет: эти файлы анализируются вместе с тестами. `*.gr.dart` не нужен — router-кодгена в проекте нет.
 
 ---
 
@@ -333,8 +352,9 @@ formatter:
 - [ ] Один `pubspec.yaml` с `name: nox_app`, `description: "NOX secure messenger."`, `sdk: '>=3.12.0 <4.0.0'`, `flutter: 3.44.1`.
 - [ ] Рантайм-набор присутствует целиком: `flutter_bloc`, `bloc_concurrency`, `rxdart`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `dio`, `web_socket_channel: 3.0.3`, `infinite_scroll_pagination: 5.1.1`, `flutter_screenutil: 5.9.3`, `skeletonizer`, `cached_network_image`, `flutter_svg`, `url_launcher`, `app_links`, `intl`, `uuid`, `collection`, `logger`, `path_provider`, `shared_preferences`, `flutter_secure_storage`, `sembast`, `package_info_plus` (^10), `cupertino_icons`.
 - [ ] Camera/QR: `mobile_scanner: ^7.2.0` (iOS/Android/macOS only), `qr_flutter: ^4.1.0` (все 5), `permission_handler: ^12.0.3` (iOS/Android), `zxing2: ^0.2.3` (QR-декод из картинки на Windows/Linux) — АКТИВНЫ.
-- [ ] Файлы/сеть: `file_selector: ^1.1.0` (НЕ `file_picker` — конфликт `win32` с `package_info_plus ^10`) и `connectivity_plus: ^7.3.1` — АКТИВНЫ.
-- [ ] l10n: `flutter_localizations` (sdk) + `flutter: generate: true` + `l10n.yaml`; `fonts:`-блок объявлен (Roboto, Roboto Mono).
+- [ ] Файлы/сеть: `file_selector: ^1.1.0` (НЕ `file_picker` — конфликт `win32` с `package_info_plus ^10`), `connectivity_plus: ^7.3.1`, `video_player: ^2.14.0` (iOS/Android/macOS), `path_provider_platform_interface: 2.1.2` + `path_provider_windows: 2.3.0` — АКТИВНЫ.
+- [ ] Нативный модуль: `workspace: [packages/nox_tor]` + `nox_tor: {path: packages/nox_tor}`; Rust по пину `packages/nox_tor/rust/rust-toolchain.toml` установлен (без него не собирается приложение и не идут тесты).
+- [ ] l10n: `flutter_localizations` (sdk) + `flutter: generate: true` + `l10n.yaml`; `fonts:`-блок объявлен (Roboto, Roboto Mono); лицензия каждого встроенного шрифта лежит в бандле (`assets/licenses/`) и зарегистрирована в `LicenseRegistry` при старте (`lib/main.dart`).
 - [ ] Feature-gated зависимости (`firebase_*`, `image_picker`, vendor-SDK аналитики) — закомментированы; раскомментируются при активации дока 15/16/17.
 - [ ] `dev_dependencies` содержит `build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `flutter_gen_runner`, `flutter_lints: 6.0.0`, `mockito: ^5.6.4` (с комментарием про конфликт analyzer/injectable_generator), `bloc_test`, `integration_test`, `flutter_test`, `flutter_launcher_icons` (объявлен, но генератор НЕ запускается — перетрёт ручной набор иконок 008), `file_selector_platform_interface` + `plugin_platform_interface` (фейк пикера в тестах).
 - [ ] `dependency_overrides` отсутствует (или содержит только реально необходимые из-за конфликта резолва).
@@ -343,6 +363,4 @@ formatter:
 - [ ] Все импорты — `package:nox_app/...`; относительные `../` отсутствуют (кроме `part`-директив).
 - [ ] Первый `fvm dart pub get` + `fvm dart run build_runner build --delete-conflicting-outputs` прошли без ошибок; сгенерированные файлы появились.
 - [ ] `fvm flutter analyze` проходит без ошибок.
-- [ ] Нигде нет ссылок на трёх-пакетную раскладку (`domain:`/`data:` как path-deps, отдельные `build.yaml` по слоям, порядок «data → domain → root»).
-</content>
-</invoke>
+- [ ] Нигде нет ссылок на трёх-пакетную раскладку (`domain:`/`data:` как path-deps, отдельные `build.yaml` по слоям, порядок «data → domain → root»); единственный path-пакет — член workspace `packages/nox_tor`.

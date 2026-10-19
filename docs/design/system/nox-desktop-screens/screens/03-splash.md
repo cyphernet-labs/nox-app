@@ -16,8 +16,7 @@ Full dark window (brand-fixed canvas), no title bar; centered logo + NOX wordmar
 - Same role as mobile 1.1. Chrome hidden; brand-fixed dark, not themed. One-shot reveal.
 
 ## Navigation
-- Valid ID → Chats (01).
-- No ID → Login (03).
+- Same routes as mobile 1.1: paired, onboarding done → Chats (01); paired, the name not yet set → Set username (03); not paired, or local data whose key is gone (wiped first) → Login (03). A secure store that does not answer yet keeps the splash up.
 
 ## Copy (EN)
 - Wordmark: NOX

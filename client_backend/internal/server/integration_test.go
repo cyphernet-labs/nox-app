@@ -2,14 +2,9 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"sort"
@@ -20,35 +15,41 @@ import (
 	"github.com/coder/websocket"
 
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/securebox"
 )
 
 // wsClient is a test-side protocol client over one connection.
 type wsClient struct {
-	t         *testing.T
-	conn      *websocket.Conn
-	ctx       context.Context
-	challenge string
-	// dev is the key this client greets with. Every greeting has to be signed
-	// since feature 032, so a test that does not care which device it is gets
-	// one paired for it on the first hello.
+	t    *testing.T
+	conn *websocket.Conn
+	ctx  context.Context
+	// dev is the key this connection proved in the channel - who it is, for
+	// good. hello() pairs it first when the server does not know it yet, so a
+	// test that does not care which device it is gets one.
 	dev *device
 	srv *Server
 	ts  *httptest.Server
 }
 
+// dialWS opens a WebSocket as a fresh device nobody has paired yet.
 func dialWS(t *testing.T, ts *httptest.Server, srv *Server) *wsClient {
+	t.Helper()
+	return dialAs(t, ts, srv, newDevice(t))
+}
+
+// dialAs opens a WebSocket as d: the channel proves d's key before the
+// upgrade, and the server knows the connection by it from the first byte.
+func dialAs(t *testing.T, ts *httptest.Server, srv *Server, d *device) *wsClient {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
-	// The pinned client, not the default one: ts.URL is https since the
-	// listener speaks TLS, and nothing else in this process trusts the key.
-	conn, _, err := websocket.Dial(ctx, ts.URL+"/ws", &websocket.DialOptions{HTTPClient: ts.Client()})
+	conn, _, err := websocket.Dial(ctx, ts.URL+"/ws", &websocket.DialOptions{HTTPClient: channelOf(t, ts).clientAs(d)})
 	if err != nil {
 		t.Fatalf("websocket.Dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	conn.SetReadLimit(1 << 20)
-	return &wsClient{t: t, conn: conn, ctx: ctx, srv: srv, ts: ts}
+	return &wsClient{t: t, conn: conn, ctx: ctx, dev: d, srv: srv, ts: ts}
 }
 
 func (c *wsClient) send(frame string) {
@@ -96,8 +97,7 @@ func (c *wsClient) expectNoFrame(d time.Duration) {
 	}
 }
 
-// expectGreeting consumes the srv greeting frame and remembers the challenge,
-// which every later greeting on this connection has to sign.
+// expectGreeting consumes the srv greeting frame: the schema and nothing else.
 func (c *wsClient) expectGreeting() {
 	c.t.Helper()
 	frame := c.read()
@@ -105,119 +105,136 @@ func (c *wsClient) expectGreeting() {
 	if !ok {
 		c.t.Fatalf("first frame is not a greeting: %v", frame)
 	}
-	var body struct {
-		Challenge string `json:"challenge"`
-	}
+	var body map[string]json.RawMessage
 	mustUnmarshal(c.t, raw, &body)
-	c.challenge = body.Challenge
+	if _, signed := body["challenge"]; signed {
+		c.t.Fatalf("the greeting still hands out a challenge: %s", raw)
+	}
 }
 
-// device is one test device's key pair. The private half never leaves it, the
-// same way it never leaves a real installation.
+// testBox is RustSecureBox as the test devices use it - the same library the
+// app's Rust module runs, here through the server's WebAssembly copy.
+var testBox = securebox.New()
+
+// device is one test device's key pair, made by RustSecureBox. The private
+// half never leaves it, the same way it never leaves a real installation - it
+// only signs the server's challenge in POST /auth2.
 type device struct {
+	// pub is the public key as devices.device_key stores it.
 	pub  string
-	priv ed25519.PrivateKey
+	key  securebox.PublicKey
+	priv securebox.PrivateKey
 }
 
 func newDevice(t *testing.T) *device {
 	t.Helper()
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	d, err := makeDevice()
 	if err != nil {
 		t.Fatalf("generate device key: %v", err)
 	}
-	return &device{pub: base64.StdEncoding.EncodeToString(pub), priv: priv}
+	return d
 }
 
-// sign produces what a real client puts in `signature`: the signature over the
-// prefixed RAW challenge bytes.
-func (d *device) sign(t *testing.T, challenge string) string {
-	t.Helper()
-	raw, err := base64.StdEncoding.DecodeString(challenge)
+func makeDevice() (*device, error) {
+	pair, err := testBox.GenerateKeys()
 	if err != nil {
-		t.Fatalf("decode challenge: %v", err)
+		return nil, err
 	}
-	return base64.StdEncoding.EncodeToString(
-		ed25519.Sign(d.priv, append([]byte(challengePrefix), raw...)))
+	return &device{pub: base64.StdEncoding.EncodeToString(pair.PublicKey[:]), key: pair.PublicKey, priv: pair.PrivateKey}, nil
 }
 
-// claimDevice pairs a fresh device by claiming the server. Returns the device
-// and the identity the pairing produced.
-func claimDevice(t *testing.T, ts *httptest.Server, srv *Server) (*device, map[string]json.RawMessage) {
+// firstDevice pairs a fresh device through a machine link - the way the first
+// device of a fresh install is paired. Returns the device and the identity the
+// pairing produced.
+func firstDevice(t *testing.T, ts *httptest.Server, srv *Server) (*device, map[string]json.RawMessage) {
 	t.Helper()
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	return pairDevice(t, ts, token)
+	return pairDevice(t, ts, mustMachineLink(t, srv))
 }
 
-// pairDevice presents a token on a fresh connection, which is the one command
-// allowed before a greeting.
+// pairDevice presents a token as a fresh device, on a connection of its own -
+// the one command allowed before a greeting.
 func pairDevice(t *testing.T, ts *httptest.Server, token string) (*device, map[string]json.RawMessage) {
 	t.Helper()
 	d := newDevice(t)
-	c := dialWS(t, ts, nil)
+	return d, pairDeviceAs(t, ts, token, d)
+}
+
+// pairDeviceAs presents a token as d. There is no key in the frame: the
+// server pairs the key the channel proved.
+func pairDeviceAs(t *testing.T, ts *httptest.Server, token string, d *device) map[string]json.RawMessage {
+	t.Helper()
+	c := dialAs(t, ts, nil, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, d.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	data := c.expectOK(1)
 	_ = c.conn.Close(websocket.StatusNormalClosure, "")
-	return d, data
+	channelOf(t, ts).devices.use(d)
+	return data
 }
 
-// greet performs a signed session.hello for an already paired device.
-func (c *wsClient) greet(t *testing.T, id int, d *device, extra string) map[string]json.RawMessage {
-	t.Helper()
-	return c.hello(id, fmt.Sprintf(`,"device_key":%q,"signature":%q%s`, d.pub, d.sign(t, c.challenge), extra))
-}
-
-// hello performs session.hello and returns the reply data.
-//
-// The signature is added automatically unless the caller already stated a
-// device_key: a greeting without one is refused, and making every one of the
-// thirty-odd tests spell that out would bury what each is actually about.
+// hello performs session.hello and returns the reply data, pairing this
+// connection's device first if the server does not know it yet - a greeting
+// from a key nobody paired is refused, and making every one of the thirty-odd
+// tests spell that out would bury what each is actually about.
 func (c *wsClient) hello(id int, extra string) map[string]json.RawMessage {
 	c.t.Helper()
-	if !strings.Contains(extra, "device_key") {
-		if c.dev == nil {
-			c.dev = pairedDevice(c.t, c.ts, c.srv)
-		}
-		extra += fmt.Sprintf(`,"device_key":%q,"signature":%q`, c.dev.pub, c.dev.sign(c.t, c.challenge))
-	}
+	c.ensurePaired()
 	c.send(fmt.Sprintf(`{"id":%d,"cmd":"session.hello","data":{"schema":1%s}}`, id, extra))
-	return c.expectOK(id)
+	data := c.expectOK(id)
+	if c.ts != nil {
+		channelOf(c.t, c.ts).devices.use(c.dev)
+	}
+	return data
 }
 
-// pairedDevice pairs a fresh key: by claiming the server while no device can
-// reach it, otherwise by an invite one of the person's devices issues.
+// setLabel names the person this connection speaks as, the one way anybody is
+// named (contract §8A identity.setLabel): the greeting carries no name. Every
+// OTHER live connection of the person is sent identity.updated, so a test that
+// reads another connection's frames by position names the person before that
+// connection greets.
+func (c *wsClient) setLabel(id int, label string) {
+	c.t.Helper()
+	data := c.expectOKAfter(id, fmt.Sprintf(`{"id":%d,"cmd":"identity.setLabel","data":{"label":%q}}`, id, label))
+	var got string
+	mustUnmarshal(c.t, data["label"], &got)
+	if got != label {
+		c.t.Fatalf("identity.setLabel answered %q, want %q", got, label)
+	}
+}
+
+// ensurePaired pairs this connection's device unless the server knows it
+// already - on ANOTHER connection with the same key, the way the app pairs and
+// then reconnects. A greeting sent after it finds the key paired.
+func (c *wsClient) ensurePaired() {
+	c.t.Helper()
+	if c.srv == nil {
+		return
+	}
+	if _, found, err := c.srv.store.DeviceOwner(context.Background(), c.dev.pub); err != nil {
+		c.t.Fatalf("DeviceOwner: %v", err)
+	} else if found {
+		return
+	}
+	if c.ts == nil {
+		c.t.Fatal("this client's device is not paired, and it knows no entry to pair it through")
+	}
+	pairAs(c.t, c.ts, c.srv, c.dev)
+}
+
+// pairedDevice pairs a fresh key and returns it.
 func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 	t.Helper()
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	var issuer string
-	err := readDB(t, srv).QueryRowContext(ctx, "SELECT device_key FROM devices LIMIT 1").Scan(&issuer)
-	if errors.Is(err, sql.ErrNoRows) {
-		token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-		if err != nil {
-			t.Fatalf("IssueClaimToken: %v", err)
-		}
-		d, _ := pairDevice(t, ts, token)
-		return d
-	}
-	if err != nil {
-		t.Fatalf("read a paired device: %v", err)
-	}
-	token, err := srv.store.IssueDeviceInvite(ctx, issuer, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	d, _ := pairDevice(t, ts, token)
+	d := newDevice(t)
+	pairAs(t, ts, srv, d)
 	return d
+}
+
+// pairAs pairs d through a machine link. The link creates the person while
+// nobody is there and joins them after, with no Allow to wait for - which is
+// what a test that is not about invites wants from "a second device".
+func pairAs(t *testing.T, ts *httptest.Server, srv *Server, d *device) {
+	t.Helper()
+	pairDeviceAs(t, ts, mustMachineLink(t, srv), d)
 }
 
 // expectOK reads frames until the reply for id arrives (skipping events) and
@@ -331,31 +348,38 @@ func TestStoryOneLiveExchange(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	helloData := anna.hello(1, `,"label":"Anna"`)
+	helloData := anna.hello(1, ``)
 
 	var ident identity
 	mustUnmarshal(t, helloData["identity"], &ident)
 	// The author id is the person, not the name: a rename must not rewrite who
 	// owns the history, and a name must not double as credentials.
-	if ident.Label != "Anna" {
-		t.Fatalf("identity label = %q, want Anna", ident.Label)
-	}
 	if !regexp.MustCompile(`^u_[0-9a-f]{16}$`).MatchString(ident.ID) {
 		t.Fatalf("identity id = %q, want the u_<16 hex> shape", ident.ID)
 	}
+	// Named before the second device greets. The rename's identity.updated goes
+	// out after the reply, so bob may still catch it: bob reads the journal's
+	// frames only.
+	anna.setLabel(2, "Anna")
 
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	var bobIdent identity
+	mustUnmarshal(t, bob.hello(1, ``)["identity"], &bobIdent)
+	// One person on the machine, so the second device greets under the same
+	// id and the name the first one gave.
+	if bobIdent.ID != ident.ID || bobIdent.Label != "Anna" {
+		t.Fatalf("bob greets as %+v, want %s named Anna", bobIdent, ident.ID)
+	}
 
-	createData := anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"smoke"}}`)
+	createData := anna.expectOKAfter(3, `{"id":3,"cmd":"chat.create","data":{"name":"smoke"}}`)
 	var chat protocol.Chat
 	mustUnmarshal(t, createData["chat"], &chat)
 	if chat.CreatedByLabel != "Anna" || chat.Name != "smoke" {
 		t.Fatalf("chat = %+v", chat)
 	}
 
-	seq, name, evData := bob.expectEvent()
+	seq, name, evData := bob.expectJournalEvent()
 	if name != protocol.EventChatCreated || seq != 1 {
 		t.Fatalf("bob got event %s seq %d, want chat.created seq 1", name, seq)
 	}
@@ -366,10 +390,10 @@ func TestStoryOneLiveExchange(t *testing.T) {
 	}
 
 	sendFrame := fmt.Sprintf(
-		`{"id":3,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"a1","body":{"type":"text","text":"hello"}}}`,
+		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"a1","body":{"type":"text","text":"hello"}}}`,
 		chat.ChatID)
 	before := time.Now()
-	sendData := anna.expectOKAfter(3, sendFrame)
+	sendData := anna.expectOKAfter(4, sendFrame)
 
 	var echo protocol.Message
 	mustUnmarshal(t, sendData["message"], &echo)
@@ -377,7 +401,7 @@ func TestStoryOneLiveExchange(t *testing.T) {
 		t.Fatalf("echo = %+v", echo)
 	}
 
-	seq, name, evData = bob.expectEvent()
+	seq, name, evData = bob.expectJournalEvent()
 	latency := time.Since(before)
 	if name != protocol.EventMessageNew || seq != 2 {
 		t.Fatalf("bob got event %s seq %d, want message.new seq 2", name, seq)
@@ -391,10 +415,10 @@ func TestStoryOneLiveExchange(t *testing.T) {
 		t.Fatalf("event message_id = %s, want %s", evMsgID, echo.MessageID)
 	}
 	// Contract §5: client_message_id belongs to the AUTHOR - the person, not the
-	// device. A stage-2 server holds exactly one person until invite-user
-	// arrives (Q15), so the second connection is another device of the same
-	// person and legitimately receives the key: that is what lets a restarted
-	// send settle its queue entry instead of showing twice.
+	// device. The machine holds exactly one person, so the second connection is
+	// another device of the same person and legitimately receives the key: that
+	// is what lets a restarted send settle its queue entry instead of showing
+	// twice.
 	if _, present := evData["client_message_id"]; !present {
 		t.Fatal("the author's other device lost its own client_message_id")
 	}
@@ -510,15 +534,15 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	// assertion is on the raw JSON keys rather than on a decoded struct, because
 	// a decoded struct is exactly what cannot see a field nobody asked for.
 	t.Run("the identity object carries only what the contract lists", func(t *testing.T) {
-		// Its own server: the shared one above is already claimed and has a
-		// device, and a claim there is now refused - correctly.
+		// Its own server, so the pairing below creates the person and the reply
+		// carries every field it can.
 		ts, srv := newTestServer(t)
-		d, paired := pairDevice(t, ts, mustClaimToken(t, srv))
+		d, paired := pairDevice(t, ts, mustMachineLink(t, srv))
 		assertIdentityKeys(t, paired, "id", "label", "created")
 
-		c := dialWS(t, ts, srv)
+		c := dialAs(t, ts, srv, d)
 		c.expectGreeting()
-		greeted := c.greet(t, 1, d, ``)
+		greeted := c.hello(1, ``)
 		assertIdentityKeys(t, greeted, "id", "label")
 	})
 
@@ -594,7 +618,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		huge := strings.Repeat("a", 200000) // above max_frame_bytes 131072
-		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"label":"`+huge+`"}}`))
+		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"padding":"`+huge+`"}}`))
 		waitClosed(t, c, websocket.StatusMessageTooBig)
 		assertHealthy(t, ts)
 	})
@@ -616,8 +640,8 @@ func TestStoryOneDefaultLabelFallback(t *testing.T) {
 	}
 
 	// A second device of the same person is the SAME person. There is no other
-	// kind of second connection on a stage-2 server: a nameless one is refused,
-	// and inviting a new PERSON is still blocked on Q15.
+	// kind of second connection: a key nobody paired is refused, and the machine
+	// belongs to one person.
 	c2 := dialWS(t, ts, srv)
 	c2.expectGreeting()
 	var ident2 identity
@@ -642,30 +666,27 @@ func waitClosed(t *testing.T, c *wsClient, want websocket.StatusCode) {
 	}
 }
 
+// assertHealthy proves the server still serves: a fresh channel opens and a
+// fresh WebSocket is greeted. (/health is not on this port any more.)
 func assertHealthy(t *testing.T, ts *httptest.Server) {
 	t.Helper()
-	resp, err := ts.Client().Get(ts.URL + "/health")
-	if err != nil {
-		t.Fatalf("health after failure: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("health status = %d", resp.StatusCode)
-	}
+	c := dialWS(t, ts, nil)
+	c.expectGreeting()
 }
 
-// mustClaimToken mints the claim for a server that has none yet.
-func mustClaimToken(t *testing.T, srv *Server) string {
+// mustMachineLink mints a machine link and returns its token. The previous
+// one, if any, stops working - as it does for the page's button.
+func mustMachineLink(t *testing.T, srv *Server) string {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(ctx, testBox); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	link, err := srv.store.IssueMachineLink(ctx, time.Now().Unix())
 	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+		t.Fatalf("IssueMachineLink: %v", err)
 	}
-	return token
+	return link.Token
 }
 
 // assertIdentityKeys checks the identity object's key SET, not its values: the

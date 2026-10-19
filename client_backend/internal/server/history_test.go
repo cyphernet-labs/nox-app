@@ -27,7 +27,7 @@ func TestStoryTwoBackwardWalkIsCompleteAndOrdered(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "walk")
 	for i := range 25 {
 		sendText(t, anna, 100+i, chatID, fmt.Sprintf("w%d", i), fmt.Sprintf("msg %d", i))
@@ -72,14 +72,14 @@ func TestStoryTwoBackwardWalkIsCompleteAndOrdered(t *testing.T) {
 	// A second client gets the same history WITHOUT client_message_id.
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	bob.hello(1, ``)
 	bobPage := listMessages(t, bob, 2, fmt.Sprintf(`{"chat_id":%q,"limit":100}`, chatID))
 	if len(bobPage.Messages) != 25 {
 		t.Fatalf("bob sees %d messages, want 25", len(bobPage.Messages))
 	}
-	// The send key belongs to the PERSON, and a stage-2 server holds one person
-	// until invite-user arrives (Q15), so the second connection is another
-	// device of the same person and sees its own keys.
+	// The send key belongs to the PERSON, and the machine holds one person, so
+	// the second connection is another device of the same person and sees its
+	// own keys.
 	for _, msg := range bobPage.Messages {
 		if msg.ClientMessageID == "" {
 			t.Fatalf("the author's own history lost client_message_id at seq %d", msg.Seq)

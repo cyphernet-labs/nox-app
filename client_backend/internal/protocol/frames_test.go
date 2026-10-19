@@ -92,11 +92,11 @@ func jsonHas(t *testing.T, raw []byte, key string) bool {
 	return ok
 }
 
-// The four off-journal event names are the contract, not an implementation
-// detail: §8A fixes these exact strings, the Dart side keeps its own copy of
-// them (lib/data/remote/socket/server_frame.dart), and nothing else in this
-// module compares against a literal. Rename one here and the wire breaks with
-// every test still green.
+// The seven off-journal event names, and the two pairing commands of 046, are
+// the contract, not an implementation detail: §8A fixes these exact strings,
+// the Dart side keeps its own copy of them (lib/data/remote/socket/), and
+// nothing else in this module compares against a literal. Rename one here and
+// the wire breaks with every test still green.
 func TestTheOffJournalEventNamesAreTheOnesInTheContract(t *testing.T) {
 	for _, tc := range []struct {
 		got  string
@@ -106,10 +106,27 @@ func TestTheOffJournalEventNamesAreTheOnesInTheContract(t *testing.T) {
 		{EventIdentityUpdated, "identity.updated"},
 		{EventDevicePaired, "device.paired"},
 		{EventServerAddresses, "server.addresses"},
-		{CmdDeviceSetAccessKey, "device.setAccessKey"},
+		{EventPairResolved, "pair.resolved"},
+		{EventDevicePairRequested, "device.pairRequested"},
+		{EventDevicePairResolved, "device.pairResolved"},
+		{CmdPairCancel, "pair.cancel"},
+		{CmdDeviceApprove, "device.approve"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("wire name = %q, want %q (contract §8A)", tc.got, tc.want)
 		}
+	}
+}
+
+// The greeting is the schema and nothing else (feature 044). A challenge left
+// in it would be a field nobody signs any more - and a client that still reads
+// one would go on signing it for a server that never checks.
+func TestTheGreetingCarriesOnlyTheSchema(t *testing.T) {
+	raw, err := MarshalFrame(Greeting{Srv: GreetingBody{SchemaMax: SchemaVersion}})
+	if err != nil {
+		t.Fatalf("MarshalFrame: %v", err)
+	}
+	if want := `{"srv":{"schema_max":1}}`; string(raw) != want {
+		t.Fatalf("greeting = %s, want %s", raw, want)
 	}
 }

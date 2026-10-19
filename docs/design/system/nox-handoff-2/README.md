@@ -7,7 +7,7 @@ and the original specs in `uploads/`. Nothing is a screenshot — it is all pars
 ## Layout
 
 ```
-nox-handoff/
+nox-handoff-2/
 ├── README.md                  ← you are here
 ├── tokens/                    ← W3C Design Tokens (DTCG) — the tool-agnostic source of truth
 │   ├── $metadata.json         ← token-set load order
@@ -68,6 +68,11 @@ theme. `spec/primitives.md` describes each (API + token bindings); `flutter/widg
 renders the real components next to their Dart. Stock-themed widgets (buttons, text field, dialog)
 aren't reimplemented — the theme styles them.
 
+**In this repository** this package's role is the widget catalog: the `App*Widget` kit in
+`lib/presentation/widgets/` is built from `flutter/widgets/` and `spec/primitives.md`. The tokens and
+the theme Dart here are the same as in `nox-handoff/`, which is where the app's `ColorScheme`,
+`TextTheme` and token values come from.
+
 ## Token format notes (for codegen authors)
 
 - **Color** — hex string (`#RRGGBB`). → `Color(0xFF + RRGGBB)`.
@@ -95,5 +100,10 @@ For pixel-level reference of assembled screens, see the live builds in the proje
 
 ## Still to deliver (asset orders, per design-system.md §11)
 
-Final logo SVG (full-color on dark) · app launcher icon · 3 empty-state illustrations
-(chats / messages / files) · final `ColorScheme` tuning pass in Material Theme Builder.
+Final logo SVG (full-color on dark) · app launcher icon (a set built from the 200×200 raster logo
+ships in `nox-app-icons/`; the final one waits for the vector logo).
+
+No empty-state illustration is ordered: the art of an empty state is the `NoxEmptyState` composition
+(see `spec/primitives.md`), and the three SVGs in `nox-assets/illustrations/` are sketches of the
+corpus that do not ship. The `ColorScheme` is tuned and fixed by the tokens (design-system.md
+§2.2–2.3).

@@ -18,6 +18,8 @@ import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_body.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/connection_page/connection_body.dart';
+import 'package:nox_app/presentation/pages/connection_page/connection_page.dart';
 // import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 // import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
@@ -40,13 +42,14 @@ import 'package:nox_app/presentation/widgets/settings/app_settings_nav_row_widge
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
 /// Desktop settings sections (the list-detail menu items).
-enum _Section { account, devices, notifications, appearance, language, terms, about }
+enum _Section { account, devices, connection, notifications, appearance, language, terms, about }
 
 /// 7.1 Settings root — the Settings tab body. Mobile: a flat list (identity card +
 /// nav rows + Log out). Desktop: a list-detail (menu pane 340 + detail pane ≤680,
 /// selection swaps the pane without push). The id is public since feature 032, so
 /// the card shows it whole - there is no mask, no reveal, and no account QR: adding
-/// a device is its own screen, 7.8. Settings rows open the real 7.2–7.7 subscreens;
+/// a device is its own screen, 7.8, and where the server is reached is Connection
+/// (phase 045). Settings rows open the real 7.2–7.7 subscreens;
 /// Log out → real 1.1 Splash. Owns [SettingsRootBloc]. `[inShell]` suppresses the
 /// back affordance when hosted as a shell tab.
 class SettingsRootPage extends StatefulWidget {
@@ -136,21 +139,23 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   Future<void> _logout() async {
-    final confirmed = await AppLogoutDialogWidget.show(context);
-    if (confirmed != true || !mounted) return;
-    if (widget.demo) {
-      // Gallery preview: hop to the standalone (demo) Splash without touching real state.
-      Navigator.of(context).push(SplashPage.routeDemo());
-    } else {
-      // Real flow: full wipe + re-derive app state; the spine returns to Login. A
-      // failed wipe must NOT present as a successful logout (Constitution I: logout
-      // fully wipes) — surface it instead of silently leaving the identity on disk.
-      final result = await authRepository.logout();
-      if (!mounted) return;
-      result.match(
-        onData: (_) {},
-        onError: (_) => showAppSnackBar(context, text: context.l10n.logoutError, error: true),
-      );
+    // Real flow: the dialog runs the logout and holds its spinner until the wipe is
+    // done; the spine then returns to the pairing screen. A failed wipe must NOT
+    // present as a successful logout (Constitution I: logout fully wipes) — it is
+    // surfaced instead of silently leaving the identity on disk. The gallery runs
+    // nothing and hops to the standalone (demo) Splash.
+    final outcome = await AppLogoutDialogWidget.show(
+      context,
+      logout: widget.demo ? null : () async => (await authRepository.logout()).match<bool>(onData: (_) => true, onError: (_) => false),
+    );
+    if (!mounted) return;
+    switch (outcome) {
+      case LogoutDialogResult.done when widget.demo:
+        Navigator.of(context).push(SplashPage.routeDemo());
+      case LogoutDialogResult.failed:
+        showAppSnackBar(context, text: context.l10n.logoutError, error: true);
+      default:
+        break;
     }
   }
 
@@ -200,6 +205,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             title: context.l10n.settingsDevicesTitle,
             icon: NoxIcons.devices,
             onTap: () => _openSection(DevicesPage.route()),
+          ),
+          // Where the server is reached, and whether Tor may be used (phase 045).
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsConnectionTitle,
+            icon: NoxIcons.lan,
+            onTap: () => _openSection(ConnectionPage.route()),
           ),
           AppSettingsNavRowWidget(
             title: context.l10n.settingsNotificationsTitle,
@@ -311,6 +322,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
                       _navGroup(context, [
                         item(_Section.account, context.l10n.settingsAccountTitle, NoxIcons.person, NoxIcons.personFill),
                         item(_Section.devices, context.l10n.settingsDevicesTitle, NoxIcons.devices, NoxIcons.devicesFill),
+                        item(_Section.connection, context.l10n.settingsConnectionTitle, NoxIcons.lan, NoxIcons.lanFill),
                       ]),
                       _navGroup(context, [
                         item(
@@ -350,6 +362,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   String _sectionTitle(_Section section) => switch (section) {
     _Section.account => context.l10n.settingsAccountTitle,
     _Section.devices => context.l10n.settingsDevicesTitle,
+    _Section.connection => context.l10n.settingsConnectionTitle,
     _Section.notifications => context.l10n.settingsNotificationsTitle,
     _Section.appearance => context.l10n.settingsAppearanceTitle,
     _Section.language => context.l10n.settingsLanguageTitle,
@@ -368,6 +381,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         ],
       ),
       _Section.devices => const DevicesBody(),
+      _Section.connection => const ConnectionBody(),
       _Section.notifications => const NotificationsBody(),
       _Section.appearance => const AppearanceBody(),
       _Section.language => const LanguageBody(),

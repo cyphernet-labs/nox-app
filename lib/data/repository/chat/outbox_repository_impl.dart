@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/picker_copies.dart';
 import 'package:nox_app/data/entity/chat/outbox_entity.dart';
 import 'package:nox_app/data/local/chat/outbox_copies.dart';
 import 'package:nox_app/data/local/chat/outbox_dao.dart';
@@ -53,6 +54,12 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
       );
       try {
         final placed = await _dao.enqueue(_mapper.toEntity(model: entry));
+        // The queue holds its own sealed copy now: a plain one the platform's
+        // picker left in the app's storage goes (048 review) - unless another
+        // queued message still sends from it.
+        if (copy != null && picked != null && !(await pending()).any((e) => e.attachment?.localPath == picked)) {
+          await PickerCopies.release(picked);
+        }
         return RepositoryResult<OutboxEntry>.success(data: _mapper.toModel(entity: placed));
       } catch (_) {
         if (copy != null) await _copies.drop(key);

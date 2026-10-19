@@ -58,7 +58,6 @@ class NativeTorService implements TorService {
   final BehaviorSubject<TorStatus> _status = BehaviorSubject<TorStatus>.seeded(TorStatus.stopped);
   Timer? _poll;
   Duration? _pollEvery;
-  TorBridgeEndpoint? _bridge;
 
   /// Counts stops, so a start still awaiting its preparations sees that the
   /// session it was for has ended meanwhile.
@@ -88,9 +87,6 @@ class NativeTorService implements TorService {
   }
 
   @override
-  TorBridgeEndpoint? get bridge => _bridge;
-
-  @override
   Future<void> start() async {
     if (!isSupported) return;
     final stops = _stops;
@@ -117,7 +113,6 @@ class NativeTorService implements TorService {
     _poll?.cancel();
     _poll = null;
     _pollEvery = null;
-    _bridge = null;
     if (!isSupported) return;
     _api.stop();
     _tick(schedule: false);
@@ -152,42 +147,17 @@ class NativeTorService implements TorService {
   }
 
   @override
-  void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
-    if (!isSupported) return;
-    try {
-      _api.setTarget(onionHost: onionHost, port: port, clientKey: clientKey);
-      // The secret rotates with every target; read it now, not per connection.
-      final snapshot = _api.status();
-      _bridge = snapshot.port == null ? null : TorBridgeEndpoint(port: snapshot.port!, secret: _api.bridgeSecret());
-    } on NoxTorException catch (e) {
-      _bridge = null;
-      logRepository.debug(target: this, message: 'tor: target refused (${e.code})');
-    }
-    _tick();
-  }
-
-  @override
-  void clearTarget() {
-    _bridge = null;
-    if (!isSupported) return;
-    try {
-      _api.clearTarget();
-    } on NoxTorException {
-      // Not started: there is no target to clear.
-    }
-    _tick();
-  }
-
-  @override
   void setDormant(bool dormant) {
     if (!isSupported) return;
     _api.setDormant(dormant);
     _tick();
   }
 
+  /// Not gated on [isSupported]: the address is the module's arithmetic, and
+  /// asking it costs nothing even where Tor is not wanted. Where the library
+  /// is absent the lookup fails, and the answer is null.
   @override
   String? onionFromPublicKey(Uint8List publicKey) {
-    if (!isSupported) return null;
     try {
       return _api.onionFromPublicKey(publicKey);
     } on Object {
@@ -200,13 +170,8 @@ class NativeTorService implements TorService {
     final next = TorStatus(
       state: TorState.values[snapshot.state.index],
       bootstrapPercent: snapshot.bootstrapPercent,
-      error: TorError.values[snapshot.error.index],
-      port: snapshot.port,
+      error: errorOf(snapshot.error),
     );
-    // No port, no bridge: a client that went away on its own - refused as
-    // obsolete, say - took its listener with it, and the port it had may
-    // belong to somebody else by the next dial.
-    if (next.port == null) _bridge = null;
     _publish(next);
     if (next.isObsolete) unawaited(_recordObsolete());
     if (!schedule) return;
@@ -224,6 +189,20 @@ class NativeTorService implements TorService {
       _poll = Timer.periodic(every, (_) => _tick());
     }
   }
+
+  /// The app's kind for the module's. By name rather than by index: the ABI
+  /// keeps the two access-key codes in its numbering (phase 045), and the app
+  /// has no such kinds any more.
+  @visibleForTesting
+  static TorError errorOf(NoxTorError error) => switch (error) {
+    NoxTorError.none => TorError.none,
+    NoxTorError.timeout => TorError.timeout,
+    NoxTorError.network => TorError.network,
+    NoxTorError.internal => TorError.internal,
+    NoxTorError.softwareDeprecated => TorError.softwareDeprecated,
+    // Never produced since phase 045 - the client holds no access keys.
+    NoxTorError.missingClientAuth || NoxTorError.wrongClientAuth => TorError.none,
+  };
 
   void _publish(TorStatus next) {
     // Final for the build: a later `stopped` from a library that was never

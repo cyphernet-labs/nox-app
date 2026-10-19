@@ -25,6 +25,10 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 ///
 /// [danger] is the destructive `Log out` row: `error` throughout, the glyph always
 /// the FILLED variant, and no chevron — it opens a dialog, it does not navigate.
+///
+/// [value] makes it an informational row (`SettingsNavRow` with a trailing value,
+/// 7.7 About): the value sits where the chevron would, and with no [onTap] the row
+/// goes nowhere.
 class AppSettingsNavRowWidget extends StatelessWidget {
   const AppSettingsNavRowWidget({
     super.key,
@@ -32,6 +36,7 @@ class AppSettingsNavRowWidget extends StatelessWidget {
     required this.icon,
     required this.onTap,
     this.selectedIcon,
+    this.value,
     this.danger = false,
     this.selected = false,
     this.menuPane = false,
@@ -46,7 +51,12 @@ class AppSettingsNavRowWidget extends StatelessWidget {
   /// bar swaps on its tabs.
   final SvgGenImage? selectedIcon;
 
-  final VoidCallback onTap;
+  /// Null for an informational row, which goes nowhere.
+  final VoidCallback? onTap;
+
+  /// The trailing value of an informational row, in place of the chevron.
+  final Widget? value;
+
   final bool danger;
   final bool selected;
   final bool menuPane;
@@ -87,10 +97,13 @@ class AppSettingsNavRowWidget extends StatelessWidget {
           leading: leading,
           title: label,
           // No chevron on the destructive row: it opens a dialog rather than
-          // going anywhere, and a chevron would promise otherwise.
-          trailing: danger
-              ? null
-              : AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
+          // going anywhere, and a chevron would promise otherwise. An informational
+          // row shows its value there instead.
+          trailing:
+              value ??
+              (danger
+                  ? null
+                  : AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant)),
           shape: RoundedRectangleBorder(borderRadius: radius),
           onTap: onTap,
         ),

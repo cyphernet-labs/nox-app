@@ -60,7 +60,7 @@ fvm dart run build_runner watch --delete-conflicting-outputs
 fvm dart format -l 140 lib/data/repository/item/item_repository_impl.dart lib/presentation/pages/item_list_page/bloc/item_list_bloc.dart
 ```
 
-Передавать **явные пути**, а не `.` и не diff-режим: иначе переформатируется куча несвязанных файлов и раздувается diff. Генерируемые файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) форматировать не нужно — они исключены из анализа и не правятся руками.
+Передавать **явные пути**, а не `.` и не diff-режим: иначе переформатируется куча несвязанных файлов и раздувается diff. Генерируемые файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) форматировать не нужно — они исключены из анализа и не правятся руками. Массовый проход `make format` идёт только в составе `make gate` (§2), который перед коммитом обязателен.
 
 ### 1.4. Статический анализ
 
@@ -74,21 +74,23 @@ fvm flutter analyze
 
 ```bash
 # Юнит + виджет-тесты (включая bloc_test для Freezed-BLoC).
-# Goldens исключены тегом `golden` (как в `make test` и CI); голый `fvm flutter test` без флага прогонит и их.
-fvm flutter test --exclude-tags golden
+# Goldens исключены тегом `golden`, пробы живого `noxd` — тегом `live` (как в `make test`);
+# голый `fvm flutter test` без флага прогонит и их.
+fvm flutter test --exclude-tags "golden || live"
 
 # Один файл / директория (тесты — DEEP-mirror структуры lib/)
 fvm flutter test test/presentation/pages/item_list_page/item_list_bloc_test.dart
 fvm flutter test test/data/
 
-# Интеграционные тесты — каталога `integration_test/` ПОКА НЕТ (dev-зависимость заведена,
-# тесты не написаны); команда форвард-лукинг.
-fvm flutter test integration_test
+# Rust-модуль (packages/nox_tor) и RustSecureBox: cargo-тесты, сверка копии на сервере, dart test пакета
+make tor-test
 ```
+
+`integration_test/` держит две **ручные** проверки Tor (`tor_pairing_test.dart`, `tor_relaunch_test.dart`): они идут на симуляторе или эмуляторе против живого `noxd`, чей onion-сервис публикует отдельная служба tor, и в гейт не входят (как их запускать — `specs/045-tor-service-addresses/quickstart.md`).
 
 BLoC покрываем через `bloc_test` — он проверяет последовательность эмитнутых Freezed-`State` (`Initializing` → `Initialized` → …). Для пагинации тестируем чистую функцию `PagingStateExt.applyPage` отдельным юнит-тестом (детерминированно, без UI) — см. [07-pagination.md](07-pagination.md).
 
-**Golden-тесты (snapshot)** — plain-Flutter `matchesGoldenFile` через общий хелпер `test/utils/golden.dart` (`goldenTest()`: light+dark на фиксированной design-поверхности, реальные шрифты через `loadNoxFonts`). Помечены `@Tags(['golden'])` (тег объявлен в `dart_test.yaml`), **локальны (Apple Silicon / macOS) и исключены из CI** и из `make test` (`--exclude-tags golden`). Запуск только локально:
+**Golden-тесты (snapshot)** — plain-Flutter `matchesGoldenFile` через общий хелпер `test/utils/golden.dart` (`goldenTest()`: light+dark на фиксированной design-поверхности, реальные шрифты через `loadNoxFonts`). Помечены `@Tags(['golden'])` (тег объявлен в `dart_test.yaml`), **локальны (Apple Silicon / macOS) и исключены из CI** и из `make test` (`--exclude-tags "golden || live"`). Запуск только локально:
 
 ```bash
 make golden-verify        # прогнать goldens (= fvm flutter test --tags golden)
@@ -114,7 +116,7 @@ fvm flutter run --dart-define-from-file=config/prod.json    # prod
 
 ## 2. mise-таски и Makefile-обёртки
 
-Секреты (SOPS + age) и flavored-сборки оборачиваются в `mise`-таски (их **полное определение** — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §4 `.mise.toml`), а Makefile (§5 там же) даёт короткие алиасы. Именование тасков: `namespace:action[:channel]` для секретов и `build:<platform>:<channel>` для сборок; на будущее каждый `build:*` сможет объявлять `depends = ["secrets:decrypt:<flavor>"]`, чтобы decrypt выполнялся автоматически перед сборкой. NOX — **пять платформ** (constitution v1.3.0, семь принципов; паритет mobile↔desktop — Принцип VI): android, ios, macos, windows, linux; build-таски заведены на все пять. Точные имена:
+Секреты (SOPS + age) и flavored-сборки оборачиваются в `mise`-таски (их **полное определение** — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §4 `.mise.toml`), а Makefile (§5 там же) даёт короткие алиасы. Именование тасков: `namespace:action[:channel]` для секретов и `build:<platform>:<channel>` для сборок; на будущее каждый `build:*` сможет объявлять `depends = ["secrets:decrypt:<flavor>"]`, чтобы decrypt выполнялся автоматически перед сборкой. NOX — **пять платформ** (constitution v1.5.1, семь принципов; паритет mobile↔desktop — Принцип VI): android, ios, macos, windows, linux; build-таски заведены на все пять. Точные имена:
 
 ```bash
 # Расшифровать секреты в .secrets-runtime/<flavor>.dart-define.json (+ нативные конфиги) — на будущее
@@ -141,7 +143,7 @@ mise run build:linux:prod
 Makefile-обёртки поверх них (соответствуют реальному корневому Makefile; полный Makefile — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §5):
 
 ```makefile
-.PHONY: deps generate format analyze test golden-update golden-verify gate \
+.PHONY: deps generate format analyze test golden-update golden-verify gate tor-test box-wasm box-verify \
   build-macos-stage build-macos-prod build-windows-stage build-linux-stage
 
 # --- dev helpers (блюпринт 12) ---
@@ -152,14 +154,19 @@ generate:
 	fvm dart run build_runner build --delete-conflicting-outputs
 	fvm flutter gen-l10n
 
-format:              ; fvm dart format -l 140 lib test   # bulk-свип всего дерева; пер-задачное форматирование — по явным путям
+format:              ; fvm dart format -l 140 lib test packages/nox_tor/lib packages/nox_tor/test packages/nox_tor/hook   # bulk-свип
 analyze:             ; fvm flutter analyze
-test:                ; fvm flutter test --exclude-tags golden $(FILE)   # goldens исключены; FILE= сужает до файла/каталога
+test:                ; fvm flutter test --exclude-tags "golden || live" $(FILE)   # FILE= сужает до файла/каталога
 gate: generate format analyze test
 
 # --- golden (snapshot) tests — ЛОКАЛЬНО (Apple Silicon/macOS), исключены из CI тегом `golden` ---
 golden-update:       ; fvm flutter test --tags golden --update-goldens $(FILE)
 golden-verify:       ; fvm flutter test --tags golden $(FILE)
+
+# --- Rust-модуль и RustSecureBox (фазы 040, 050) ---
+tor-test:   # cargo test RustSecureBox → box-verify → cargo test nox_tor → dart test пакета nox_tor
+box-wasm:   # пересобрать копию RustSecureBox на сервере (WebAssembly → Go)
+box-verify: # упасть, если закоммиченная копия не совпадает с тем, во что собирается крейт
 
 # --- builds (через mise) — только desktop-обёртки; android/ios собираем `mise run build:<platform>:<flavor>` напрямую ---
 build-macos-stage:   ; mise run build:macos:stage
@@ -168,7 +175,7 @@ build-windows-stage: ; mise run build:windows:stage
 build-linux-stage:   ; mise run build:linux:stage
 ```
 
-> **`make format` — это bulk-свип всего дерева** (`lib test`); пер-задачное правило из §1.3 остаётся в силе: руками форматируем **только изменённые файлы по явным путям**, а `make format` используем как CI-style единоразовый прогон. `make test` исключает goldens (`--exclude-tags golden`); сами goldens гоняем локально через `make golden-verify` / `make golden-update` (см. §1.5). Makefile оборачивает только **desktop**-сборки (`macos`/`windows`/`linux`); `android`/`ios` собираем `mise run build:<platform>:<flavor>` напрямую. **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
+> **`make format` — это bulk-свип** (`lib test` + Dart-код `packages/nox_tor`); пер-задачное правило из §1.3 остаётся в силе: руками форматируем **только изменённые файлы по явным путям**, а `make format` идёт в составе `make gate`. **Пока автозапуск CI на паузе, `make gate` и `make golden-verify` обязательны перед каждым коммитом, затрагивающим Dart-код или ассеты** (`09-build-and-secrets-infra.md` §8); для изменений в Rust — ещё `make tor-test`. `make test` исключает goldens и пробы живого сервера (`--exclude-tags "golden || live"`); сами goldens гоняем локально через `make golden-verify` / `make golden-update` (см. §1.5). Makefile оборачивает только **desktop**-сборки (`macos`/`windows`/`linux`); `android`/`ios` собираем `mise run build:<platform>:<flavor>` напрямую. **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
 
 ---
 
@@ -336,7 +343,10 @@ Create a repository: contract, configs union, implementation, and DI registratio
 
 1. **Domain contract** — `lib/domain/repository/<snake_name>/<snake_name>_repository.dart`:
    - `abstract class <Name>Repository`
-   - Methods return `RepositoryResult<T>` (one-shot) or `Stream<RepositoryResult<T>>` (watch).
+   - Reads and commands return `Future<RepositoryResult<T>>`. `watch*` returns a BARE stream
+     (`Stream<<Name>Model?>` / `Stream<List<<Name>Model>>`): a change signal projected straight from
+     the DAO — no `RepositoryResult`, no subject. Blocs never read its value; on each tick they
+     re-read through `get*`/`fetch*`. A storage error reaches the subscriber as a stream error.
    - For server-owned paginated lists the LIST method is `get<Name>s` returning
      `Future<RepositoryResult<(List<<Name>Model>, PageMetadata)>>`.
      `PageMetadata{required bool hasMore, int? nextPage}` lives at
@@ -347,10 +357,11 @@ Create a repository: contract, configs union, implementation, and DI registratio
        * SEQ CURSOR (message history): request `before_seq` + `limit`, reply `{messages, has_more}`,
          batch ascending by seq, server caps `limit` at 100 with a SILENT clamp; `nextPage` stays
          null and the thread bloc keeps `oldestLoadedSeq` instead of a page number.
-     Being paginated does NOT by itself make a list network-only: since feature 013 product
-     lists are cache-first (DAO + seed-once). See step 3 and `04-data-layer.md` §8.
+     Being paginated does NOT by itself make a list network-only: product lists are cache-first
+     read-through (every server page lands in the DAO; a `cachedOnly` read is served from it).
+     See step 3 and `04-data-layer.md` §8.
    - Canonical method set (per the method-prefix table — `get*` = parametrized/list,
-     `fetch*` = one-shot single, `watch*` = stream): `watch<Name>`, `fetch<Name>`, `get<Name>s`,
+     `fetch*` = one-shot single, `watch*` = change signal): `watch<Name>`, `fetch<Name>`, `get<Name>s`,
      `create<Name>`, `update<Name>`, `delete<Name>`, `clean`.
      NO `save<Name>` (use `create<Name>`/`update<Name>`); NEVER `fetch<Name>s` for the list.
 
@@ -374,19 +385,23 @@ Create a repository: contract, configs union, implementation, and DI registratio
    - `class <Name>RepositoryImpl with BaseRepositoryHelper implements <Name>Repository`
    - Wrap every method body in `execute<T>()`; the callback returns an already-wrapped `RepositoryResult`
      (`return RepositoryResult.success(data: …)` / `.error(exception: RepositoryException.<code>)`).
-     `execute` ALWAYS logs via LogRepository and has THREE catch branches: `on BaseRepositoryException`
-     (an already-mapped domain failure passes through unchanged), `on DioException`
-     (timeouts/connectionError -> connection, 401 -> unauthenticated, 403 -> authentication,
-     404 -> notFound, else -> internal), then a catch-all -> unknown
+     `execute` ALWAYS logs via LogRepository and has FOUR catch branches: `on BaseRepositoryException`
+     (an already-mapped domain failure passes through unchanged), `on SocketUnavailableException`
+     -> connection (a dead channel; without it every cache fallback guarded on `connection` is
+     unreachable), `on DioException` (timeouts/connectionError -> connection, 401 -> unauthenticated,
+     403 -> authentication, 404 -> notFound, else -> internal), then a catch-all -> unknown
    - Unwrap a data-source envelope with the mixin's `unwrapEnvelope<TD>(response, '<what>')`:
      it returns `response.data`, or throws `RepositoryException.fromWireCode(error.code)` for a
      contract v0 §2.1 `{code, message}` error (a code unknown to this build degrades to `internal`),
      or a StateError that the catch-all maps to `unknown`
-   - Cache-first reactive watch*(): one BehaviorSubject fed by a single subscription to the DAO stream
-   - Paginated `get<Name>s`: cache-first by DEFAULT (DAO + seed-once, as `ChatRepositoryImpl` /
-     `MessageRepositoryImpl` since feature 013). The old "paginated server-owned list = NETWORK-ONLY"
-     carve-out is RETIRED: network-only (no DAO/subject) is now the exception you justify — one-shot
-     commands with no local projection, and the frozen `Item` slice. On BOTH branches
+   - Cache-first watch*(): a bare projection of the DAO stream (`_dao.watch().map(...)`) — no subject,
+     no RepositoryResult, no network, NOT wrapped in `execute`
+   - Paginated `get<Name>s`: cache-first by DEFAULT, read-through like `ChatRepositoryImpl` /
+     `MessageRepositoryImpl`: a `cachedOnly` read is served from the DAO (the screen's first read and
+     the live refresh tick), any other read asks the data source for exactly that window, writes it
+     to the DAO and falls back to the DAO on `SocketUnavailableException`. Network-only (no
+     DAO) is the exception you justify — one-shot commands with no local projection, and the
+     frozen `Item` slice. On BOTH branches
      the data source returns `ResponseEntity<<Name>sWireEntity>` whose contract v0 page wrapper is
      `{<name>s, has_more}` (cf. `ChatsWireEntity{chats, hasMore}`) — there is NO `total` on the wire.
      Map to `(List<<Name>Model>, PageMetadata)` per the `04-data-layer.md` §8 canon, taking `hasMore`
@@ -481,14 +496,21 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
        );
        emit(state.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage));
        ```
-   - Repositories via `getIt<<Name>Repository>()`; store subscriptions in fields, cancel in `close()`
+   - Repositories and services via `getIt<...>()` — DOMAIN interfaces only (`<Name>Repository`,
+     `OutboxService`, ...); presentation never imports `lib/data/`. Store subscriptions in fields, cancel in `close()`
+   - Side effects (navigation, snackbar, dialog) are a STATUS in the state, caught by the page's
+     `BlocListener`/`BlocConsumer` with `listenWhen` and reset by an event (`navigationHandled()`);
+     no PublishSubject effect streams. Search and name checks: `transformer: debounceRestartable()`
+     (`lib/presentation/base/bloc_transformers.dart`)
 
 5. **Page** — `lib/presentation/pages/<snake_name>_page/<snake_name>_page.dart`:
-   - `class <Name>Page extends StatefulWidget` with `static const routeName` + `static Route route()` factory
+   - `class <Name>Page extends StatefulWidget` with a `static Route<T> route()` factory; the route name is
+     written straight into `RouteSettings(name: '/...')` — there is no `routeName` constant
    - Its State MUST `extends BaseStatePage<<Name>Page>` (NOT a bare `State<<Name>Page>`) — the canonical
      page-State base from `05-presentation-layer.md` §4
    - Create the BLoC in `initState()` with `..add(const <Name>Event.initialize())`; close in `dispose()`
-   - `build()` = `BlocProvider` + `BlocBuilder` + a Dart 3 exhaustive `switch (state)` over the Freezed
+   - `build()` = `BlocProvider` + `BlocBuilder` (`BlocConsumer`/`BlocListener` with `listenWhen` when the page
+     reacts to status effects) + a Dart 3 exhaustive `switch (state)` over the Freezed
      variants (`Initializing()` / `Initialized()` / `Error()`) — that is what every shipped page does;
      the generated `state.when(initializing:, initialized:, error:)` still exists and is allowed, but
      its `initialized` callback takes the substate's fields POSITIONALLY, so prefer `switch`
@@ -498,7 +520,10 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
      That is the PAGED path; a seq-cursor screen (the chat thread) instead renders a `reverse: true`
      `ListView.builder` with a `ScrollController` prefetch and keeps `oldestLoadedSeq` in state — it still
      folds every batch through `applyPage` to maintain `hasNextPage`
-   - Navigation single-window: `routeName` + `route()` + `Navigator.push`
+   - Navigation single-window: `route()` + `Navigator.push`
+   - Pull-to-refresh on a LIST page: the stock `RefreshIndicator` around the `PagedListView`; `onRefresh`
+     adds `loadItems(reset: true)` and awaits the bloc's own stream (first `Error`, or `Initialized` with
+     `!loadingInProgress`, 5 s timeout) — no Completer in the event, no custom indicator widget
 
 6. fvm dart run build_runner build --delete-conflicting-outputs   # REQUIRED — Freezed BLoC needs codegen
 7. fvm dart format -l 140 <changed files>
@@ -635,7 +660,8 @@ fvm flutter analyze                                            # ноль оши
 - [ ] `fvm flutter gen-l10n` — если трогали ARB (`lib/l10n/app_en.arb` / `app_uk.arb`) или собираете на свежем клоне.
 - [ ] `fvm dart format -l 140 <только изменённые файлы>` — никогда весь репозиторий.
 - [ ] `fvm flutter analyze` — **ноль ошибок**.
-- [ ] `fvm flutter test --exclude-tags golden` (+ `bloc_test` для затронутых BLoC; юнит-тест `applyPage` для затронутой пагинации); goldens — отдельно и локально, `make golden-verify`.
+- [ ] `fvm flutter test --exclude-tags "golden || live"` (+ `bloc_test` для затронутых BLoC; юнит-тест `applyPage` для затронутой пагинации); goldens — отдельно и локально, `make golden-verify`.
+- [ ] Перед коммитом, затрагивающим Dart-код или ассеты, — `make gate` + `make golden-verify` (автозапуск CI на паузе); для Rust-модуля — `make tor-test`.
 - [ ] Импорты — только `package:nox_app/...` (никаких `../` кроме `part`).
 - [ ] Никакого `print`/`debugPrint` в `lib/` — только `LogRepository`.
 - [ ] BLoC-`State`/`Event` — `@freezed sealed` с `*.freezed.dart` (никогда `*.g.dart`/`fromJson`).
@@ -649,8 +675,8 @@ fvm flutter analyze                                            # ноль оши
 - [ ] Все повседневные команды идут через `fvm` (`fvm flutter` / `fvm dart`), Flutter 3.44.1 из `.fvmrc`.
 - [ ] Codegen — **ОДИН** прогон `fvm dart run build_runner build --delete-conflicting-outputs` плюс вторым шагом `fvm flutter gen-l10n` (ровно так устроен `make generate`); явно зафиксировано, что нет `data→domain→root`-порядка (один пакет).
 - [ ] Форматирование — только изменённые файлы, `-l 140`, явные пути.
-- [ ] `mise run secrets:decrypt:<flavor>` и `mise run build:<platform>:<channel>` на **пяти** платформах (`build:android:stage`/`:android:prod`/`:ios:stage`/`:ios:prod` + desktop `build:macos:*`/`build:windows:*`/`build:linux:*`, имена совпадают с 09 §4) задокументированы; Makefile-обёртки — dev-helpers `deps`/`generate`/`format`/`analyze`/`test`/`gate` + golden `golden-update`/`golden-verify`, build-обёртки **только desktop** (`macos`/`windows`/`linux`; `android`/`ios` — `mise run` напрямую); `make format` — bulk-свип, `make test` — `--exclude-tags golden`, пер-задачное форматирование — по явным путям; `sops`/`age` напрямую не вызываются.
-- [ ] `.claude/commands/*` заведены: `/check-build`, `/new-model`, `/new-repository`, `/new-page`, `/move-files`, `/rename-class`, `/update-json`.
+- [ ] `mise run secrets:decrypt:<flavor>` и `mise run build:<platform>:<channel>` на **пяти** платформах (`build:android:stage`/`:android:prod`/`:ios:stage`/`:ios:prod` + desktop `build:macos:*`/`build:windows:*`/`build:linux:*`, имена совпадают с 09 §4) задокументированы; Makefile-обёртки — dev-helpers `deps`/`generate`/`format`/`analyze`/`test`/`gate` + golden `golden-update`/`golden-verify`, build-обёртки **только desktop** (`macos`/`windows`/`linux`; `android`/`ios` — `mise run` напрямую); `make format` — bulk-свип в составе `make gate`, `make test` — `--exclude-tags "golden || live"`, `make tor-test` — Rust-модуль и RustSecureBox, пер-задачное форматирование — по явным путям; `sops`/`age` напрямую не вызываются.
+- [ ] `.claude/commands/*` заведены: `/check-build`, `/new-model`, `/new-repository`, `/new-page`, `/move-files`, `/rename-class`, `/update-json` (сейчас в каталоге только `/bloc-test`, `/golden-test`, `/widget-test`; эти семь — форвард-лукинг, §3).
 - [ ] `/new-repository` эмитит LIST-метод `get<Feature>s` (`fetch*`=single, `watch*`=stream, без `save*`/`fetch<Feature>s`-списка) + **единственный** `@freezed Get<Feature>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1` — 1-based) — **не** sealed-union `…RepositoryConfigs.list`, **не** `page: 0`; никаких магических чисел страницы в BLoC — первая страница выражается только фабрикой `Get<Feature>sConfig.firstPage()`.
 - [ ] `/new-page` эмитит **Freezed**-BLoC-трио (`@freezed sealed` State+Event, `when()`/`copyWith()`, extension-геттеры) + пагинацию через `applyPage` (`PagingState<String, …>`, key = item id; координата следующей страницы — в `nextPage` на **страничном** пути `page`/`page_size`, а курсорная история сообщений `before_seq`/`limit` держит вместо неё `oldestLoadedSeq`) — **не** рукописный Equatable; и **запускает** codegen в трейлере.
 - [ ] Все команды используют одно-пакетные пути (`lib/domain/...`, `lib/data/...`, `lib/presentation/...`), env-лист `[Environment.dev, Environment.prod, Environment.test]` (test обязателен), импорты `package:nox_app/...`; BigInt/IPC/swift-to-dart не эмитятся.

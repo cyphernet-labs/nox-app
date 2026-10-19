@@ -1,6 +1,6 @@
 # 7.8 · Devices
 
-> **Settings** · mobile (iOS / Android) · Material 3 · new in feature 032
+> **Settings** · mobile (iOS / Android) · Material 3 · new in feature 032 · invites need Allow since feature 046
 
 **Purpose.** Show the keys allowed to speak as this person, and let any of them be cut off. Without it pairing has no undo and every lost device stays an open door.
 
@@ -13,19 +13,23 @@ Detail scaffold (back + title). One group holding every device, the current one 
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
-- `invite` — QR card, link valid for 10 minutes. Always asked for with the server's onion address (phase 040): such a link (version 2) works from any network
-- `invite-home-only` — the server gave an ordinary link (its Tor is off or not connected): a note under the card's message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`)
+- `invite` — QR card with a `nox://pair/…` link (version 3), valid for 10 minutes. It pairs nothing by itself: the new device that presents it waits, and THIS device asks “New device: {platform}. Allow it to join?” in a dialog over whatever screen is up (8.2 · Pair request); only Allow lets it in. The link carries every address the server has to offer: its public address when one is set, a direct address, and its onion address when one is set (feature 045). A new device pairs with it from wherever one of them answers — through Tor too, if it ticks Use Tor on Connect (2.4).
+- `invite-home-only` — the link carries neither the server's onion address nor its public address, so it works only on the home network, and the card says so under its message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`). The note follows the server's reply to `device.invite` — its `public` flag, and its `onion` flag counted only when the link itself carries the onion address — never a guess of the app
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
-- A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
+- A row shows the OS family and two moments (paired, last seen). The family is named in the app's own words, the same the pair-request dialog (8.2) uses - “iPhone or iPad” · “Android” · “Mac” · “Windows” · “Linux”, or “Unknown system” - never text from the wire. The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
 - `Revoke` opens a confirm dialog. Revoking the current device is a logout, and asks the logout question word for word - but the dialog is this screen's own: the confirm button stays `Revoke`, not the `Log out` that 7.1's logout dialog carries. You press what you asked for and read what it will actually do.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
-- A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
+- A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads; nobody has to leave the section and come back to find out.
 - The whole invite surface disappears when a device joins: the card, because the token is one-shot and the server will now refuse that QR, and
   the "Couldn't create an invite." line with it, because a device joined anyway - which is what the failed request was asking for.
+- It also disappears when a request opened with an invite this device issued closes, whichever way - Allow, Deny, its ten minutes running
+  out, or Cancel on the new device (feature 046): the invite is spent whatever the outcome, and a Deny or an expiry changes no list, so the
+  pairing event would never say so. The event names a request, not a token, so a card showing a NEWER invite than the spent one goes too -
+  the price is one more tap on Add a device.
 - The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
-- A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
+- A revoke that fails says so in its own sentence, above the list, separate from the load error: the screen re-reads
   the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing.
 - That notice belongs to ONE device, and leaves on either of two events: another attempt on the same device (the person is retrying it),
   or a list that comes back without that device at all. The second is not a formality - a revoke whose reply was lost still happened, and
@@ -37,12 +41,14 @@ Detail scaffold (back + title). One group holding every device, the current one 
 ## Copy (EN)
 - Title: Devices
 - This device · Revoke · Add a device · Copy · Hide
+- OS family: iPhone or iPad · Android · Mac · Windows · Linux · Unknown system
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - (current device) Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.
 - Scan this from the other device. The link works for 10 minutes.
 - This link works only on your home network.
+- Invite QR (screen-reader label): Pairing link QR code
 - Copy
 - Hide
 
 ## Design-system components
-- AppDetailScaffoldWidget, AppSettingsGroupWidget, ListTile rows, FilledButton, AppQrSurfaceWidget
+- AppDetailScaffoldWidget, AppSettingsGroupWidget, ListTile rows, FilledButton, AppInviteCardWidget with AppQrSurfaceWidget

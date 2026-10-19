@@ -114,6 +114,13 @@ abstract final class NoxIcons {
   /// 7.1 `Devices` — selected.
   static SvgGenImage get devicesFill => Assets.svg.icons.devicesFill;
 
+  /// 7.1 `Connection` — unselected (phase 045): a small network of nodes, for
+  /// where the server is reached and whether Tor may be used.
+  static SvgGenImage get lan => Assets.svg.icons.lan;
+
+  /// 7.1 `Connection` — selected.
+  static SvgGenImage get lanFill => Assets.svg.icons.lanFill;
+
   /// 7.1 `Notifications` — selected (the outlined bell is [notifications]).
   static SvgGenImage get notificationsFill => Assets.svg.icons.notificationsFill;
 
@@ -188,7 +195,7 @@ abstract final class NoxIcons {
   /// Other / unknown (`insert_drive_file` substitute — stock Flutter still `Icons.insert_drive_file`).
   static SvgGenImage get draft => Assets.svg.icons.draft;
 
-  // --- emptyStates — fallback glyphs until the 3 illustrations ship (see Assets.svg.illustrations) ---
+  // --- emptyStates — the glyph at the centre of each empty state's art (AppEmptyContentWidget) ---
 
   /// 5.2 no messages.
   static SvgGenImage get chatBubble => Assets.svg.icons.chatBubble;

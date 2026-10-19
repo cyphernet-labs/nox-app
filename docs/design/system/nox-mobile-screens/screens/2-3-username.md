@@ -22,6 +22,7 @@ App bar (wordmark). Name field with counter N/32 + helper. Pinned bottom: primar
 
 ## Navigation
 - Done / Skip → Chats shell (5.1).
+- System back → the same as Skip: the server-assigned name stays.
 
 ## Copy (EN)
 - Label: Name

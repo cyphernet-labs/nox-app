@@ -23,15 +23,16 @@ class FakeTorService implements TorService {
   /// of a bring-up.
   Completer<void>? startGate;
 
+  /// How an onion address is derived from a service key, when a test needs a
+  /// particular answer; otherwise a fixed address while [supported].
+  String? Function(Uint8List publicKey)? onionOf;
+
   final BehaviorSubject<TorStatus> _status = BehaviorSubject<TorStatus>.seeded(TorStatus.stopped);
 
   int starts = 0;
   int stops = 0;
   int wipes = 0;
-  int targetSets = 0;
-  int targetClears = 0;
   final List<bool> dormancy = <bool>[];
-  ({String host, int port, Uint8List key})? target;
 
   @override
   bool get isSupported => supported;
@@ -45,10 +46,6 @@ class FakeTorService implements TorService {
   void emit(TorStatus status) => _status.add(status);
 
   @override
-  TorBridgeEndpoint? get bridge =>
-      target == null ? null : TorBridgeEndpoint(port: 9150, secret: Uint8List.fromList(List<int>.filled(32, 7)));
-
-  @override
   Future<void> start() async {
     if (!supported) return;
     starts++;
@@ -59,7 +56,6 @@ class FakeTorService implements TorService {
   @override
   Future<void> stop() async {
     stops++;
-    target = null;
     emit(TorStatus.stopped);
   }
 
@@ -70,20 +66,12 @@ class FakeTorService implements TorService {
   }
 
   @override
-  void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
-    targetSets++;
-    target = (host: onionHost, port: port, key: clientKey);
-  }
-
-  @override
-  void clearTarget() {
-    targetClears++;
-    target = null;
-  }
-
-  @override
   void setDormant(bool dormant) => dormancy.add(dormant);
 
   @override
-  String? onionFromPublicKey(Uint8List publicKey) => supported ? '${'a' * 56}.onion' : null;
+  String? onionFromPublicKey(Uint8List publicKey) {
+    final derive = onionOf;
+    if (derive != null) return derive(publicKey);
+    return supported ? '${'a' * 56}.onion' : null;
+  }
 }

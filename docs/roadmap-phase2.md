@@ -3,13 +3,13 @@
 > ## ⛔ АРХИВНЫЙ ДОКУМЕНТ (закрыт 2026-08-28)
 >
 > Фаза 2 завершена: фичи 001–021 смёржены, бэкенд **выбран** (Go + SQLite, контракт v0),
-> этап 1 сервера (022–024) смёржен, идёт клиентский трек 025–028.
+> этап 1 сервера (022–024) и клиентский трек (025–028) закрыты.
 > Всё ниже — снимок состояния на июль 2026 и **не отражает реальность**: в частности
 > строка «Бэкенд/протокол не выбран» и §4 «заблокирован» больше не действуют.
 >
-> **Актуальные трекеры:** [`roadmap-client-track.md`](client-backend/roadmap-client-track.md)
-> (клиент ↔ сервер), [`roadmap-stage1.md`](client-backend/roadmap-stage1.md) (сервер, этап 1),
-> состояние кодовой базы — `CLAUDE.md`.
+> **Актуальные трекеры:** [`roadmap-security.md`](client-backend/roadmap-security.md) (трек безопасности),
+> [`roadmap-tor.md`](client-backend/roadmap-tor.md) (трек Tor), [`roadmap-stage2.md`](client-backend/roadmap-stage2.md)
+> (этап 2), реестр [`open-questions.md`](client-backend/open-questions.md); состояние кодовой базы — `CLAUDE.md`.
 
 > Живой документ для отслеживания фазы 2. Фаза 1 (UI, 17 экранов на мок-данных) **закрыта** — её трекер заархивирован: [`docs/archive/roadmap-phase1.md`](archive/roadmap-phase1.md).
 >

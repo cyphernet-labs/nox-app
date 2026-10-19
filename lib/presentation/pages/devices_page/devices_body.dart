@@ -4,6 +4,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/device_platform_text.dart';
 import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 import 'package:nox_app/presentation/widgets/settings/app_invite_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
@@ -191,15 +192,17 @@ class _DeviceRow extends StatelessWidget {
           ? Text.rich(
               TextSpan(
                 children: [
-                  TextSpan(text: _platformName(device.platform)),
+                  TextSpan(text: DevicePlatformText.of(l10n, device.platform)),
+                  // Kept whole: a long family name wraps BEFORE the annotation
+                  // rather than through the middle of it.
                   TextSpan(
-                    text: ' · ${l10n.devicesCurrent}',
+                    text: ' · ${l10n.devicesCurrent.replaceAll(' ', '\u00A0')}',
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 ],
               ),
             )
-          : Text(_platformName(device.platform)),
+          : Text(DevicePlatformText.of(l10n, device.platform)),
       subtitle: Text(
         '${l10n.devicesPairedAt(DateFormatter.momentShort(device.pairedAt, l10n: l10n))} · '
         '${l10n.devicesLastSeen(DateFormatter.momentShort(device.lastSeenAt, l10n: l10n))}',
@@ -216,13 +219,4 @@ class _DeviceRow extends StatelessWidget {
       ),
     );
   }
-
-  static String _platformName(String platform) => switch (platform) {
-    'ios' => 'iPhone',
-    'android' => 'Android',
-    'macos' => 'macOS',
-    'windows' => 'Windows',
-    'linux' => 'Linux',
-    _ => 'Device',
-  };
 }

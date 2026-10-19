@@ -8,9 +8,9 @@ import 'package:nox_app/design/nox_icons.dart';
 void main() {
   final iconsDir = Directory('assets/svg/icons');
 
-  test('all 58 icon SVGs are bundled', () {
+  test('all 60 icon SVGs are bundled', () {
     final svgs = iconsDir.listSync().whereType<File>().where((f) => f.path.endsWith('.svg')).toList();
-    expect(svgs.length, 58, reason: 'expected 58 bundled icon SVGs');
+    expect(svgs.length, 60, reason: 'expected 60 bundled icon SVGs');
   });
 
   test('every bundled icon SVG uses currentColor and bakes no color (FR-003)', () {
@@ -21,7 +21,7 @@ void main() {
     }
   });
 
-  test('NoxIcons covers the 56 referenced glyphs and each resolves to an existing asset', () {
+  test('NoxIcons covers the 58 referenced glyphs and each resolves to an existing asset', () {
     final registry = <SvgGenImage>[
       NoxIcons.forum,
       NoxIcons.forumFill,
@@ -71,6 +71,8 @@ void main() {
       NoxIcons.personFill,
       NoxIcons.devices,
       NoxIcons.devicesFill,
+      NoxIcons.lan,
+      NoxIcons.lanFill,
       NoxIcons.notificationsFill,
       NoxIcons.palette,
       NoxIcons.paletteFill,
@@ -81,19 +83,19 @@ void main() {
       NoxIcons.infoFill,
       NoxIcons.logoutFill,
     ];
-    expect(registry.length, 56, reason: 'NoxIcons should expose the 56 referenced glyphs');
+    expect(registry.length, 58, reason: 'NoxIcons should expose the 58 referenced glyphs');
     for (final icon in registry) {
       expect(File(icon.path).existsSync(), isTrue, reason: '${icon.path}: asset not found');
     }
   });
 
-  test('NoxIcons exposes exactly 56 getters (parsed from source — catches silent drift)', () {
+  test('NoxIcons exposes exactly 58 getters (parsed from source — catches silent drift)', () {
     final src = File('lib/design/nox_icons.dart').readAsStringSync();
     final getters = RegExp(r'static SvgGenImage get ').allMatches(src).length;
-    expect(getters, 56, reason: 'NoxIcons getter count must match the verified registry');
+    expect(getters, 58, reason: 'NoxIcons getter count must match the verified registry');
   });
 
-  test('count reconciliation: the 2 unreferenced outlined variants are bundled (54 + 2 = 56)', () {
+  test('count reconciliation: the 2 unreferenced outlined variants are bundled (58 + 2 = 60)', () {
     expect(File('assets/svg/icons/flashlight_on.svg').existsSync(), isTrue);
     expect(File('assets/svg/icons/send.svg').existsSync(), isTrue);
   });
@@ -102,7 +104,7 @@ void main() {
     // The desktop menu pane swaps a selected destination to its filled glyph,
     // the same axis the bottom bar swaps on its tabs. A missing `-fill` is
     // invisible until that row is selected, which no unit test does.
-    for (final name in ['person', 'devices', 'notifications', 'palette', 'language', 'description', 'info']) {
+    for (final name in ['person', 'devices', 'lan', 'notifications', 'palette', 'language', 'description', 'info']) {
       expect(File('assets/svg/icons/$name.svg').existsSync(), isTrue, reason: '$name outlined is missing');
       expect(File('assets/svg/icons/$name-fill.svg').existsSync(), isTrue, reason: '$name filled is missing');
     }

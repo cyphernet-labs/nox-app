@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/service/attachment_transfer_service_impl.dart';
-import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service_impl.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -59,7 +59,7 @@ void main() {
   });
 
   test('asks for nothing while the machine that answered is the wrong one', () async {
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.serverMismatch), AttachmentTransferServiceImpl());
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.serverMismatch), AttachmentTransferServiceImpl());
 
     await service.prefetch([image('m1')]);
 
@@ -70,7 +70,7 @@ void main() {
     // The other half of the gate: without it the test above would pass over a
     // service that never fetches anything at all. The message id goes along -
     // the download service records the path against it itself.
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
 
     await service.prefetch([image('m2')]);
 
@@ -94,7 +94,7 @@ void main() {
       seen.add(transfers.current['m3']);
       return const RepositoryResult<String>.success(data: '/tmp/photo.png');
     });
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), transfers);
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), transfers);
 
     await service.prefetch([image('m3')]);
 
@@ -115,7 +115,7 @@ void main() {
       (invocation.namedArguments[#onProgress] as TransferFraction?)?.call(0.4);
       return held.future;
     });
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), transfers);
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), transfers);
 
     final running = service.prefetch([image('m5')]);
     await pumpEventQueue();
@@ -128,13 +128,13 @@ void main() {
 
   group('after the automation gave up on a picture', () {
     late AttachmentTransferServiceImpl transfers;
-    late AttachmentPrefetchService service;
+    late AttachmentPrefetchServiceImpl service;
 
     setUp(() {
       transfers = AttachmentTransferServiceImpl();
       // What the download service answers once the server refused too often.
       whenFetched().thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.internal));
-      service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), transfers);
+      service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), transfers);
     });
 
     test('the transfer ends, and later refreshes do not start the ladder over', () async {
@@ -160,7 +160,7 @@ void main() {
 
   test('a file the server no longer has is never asked for again, not even when the channel comes back', () async {
     whenFetched().thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.attachmentGone));
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
 
     await service.prefetch([image('m6')]);
     await service.prefetch([image('m6')], retryNow: true);
@@ -182,7 +182,7 @@ void main() {
       running--;
       return const RepositoryResult<String>.success(data: '/tmp/photo.png');
     });
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
 
     final first = service.prefetch([image('a', fileId: 'fa'), image('b', fileId: 'fb')]);
     final second = service.prefetch([image('b', fileId: 'fb'), image('c', fileId: 'fc')]); // a refresh mid-way
@@ -202,7 +202,7 @@ void main() {
       asked.add((invocation.namedArguments[#attachment] as MessageAttachment).id);
       return held.future;
     });
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
     final running = service.prefetch([image('a', fileId: 'fa'), image('b', fileId: 'fb')]);
     await pumpEventQueue();
 
@@ -223,7 +223,7 @@ void main() {
       calls++;
       return calls == 1 ? held.future : Future<RepositoryResult<String>>.value(const RepositoryResult<String>.success(data: '/tmp/p.png'));
     });
-    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final service = AttachmentPrefetchServiceImpl(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
     final stopped = service.prefetch([image('m1')]);
     await pumpEventQueue();
 

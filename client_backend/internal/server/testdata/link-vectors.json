@@ -1,0 +1,25 @@
+{
+  "comment": "Pairing link version 3. Address = type (1) | value length (1) | value. 1 IPv4 = 4 + port16BE; 2 IPv6 = 16 + port16BE; 3 name = UTF-8 + port16BE; 4 onion = service public key 32, port 443.",
+  "full": {
+    "link": "nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4",
+    "server_public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+    "token": "000102030405060708090a0b0c0d0e0f",
+    "addresses": [
+      {"type": "ipv4", "host": "192.168.1.20", "port": 8443},
+      {"type": "name", "host": "nox.example.org", "port": 8443},
+      {"type": "onion", "public_key": "17cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce", "port": 443}
+    ]
+  },
+  "minimal": {
+    "link": "nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7",
+    "addresses": [{"type": "ipv4", "host": "192.168.1.20", "port": 8443}]
+  },
+  "unknown_type_skipped": {
+    "link": "nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7CQMBAgM",
+    "addresses": [{"type": "ipv4", "host": "192.168.1.20", "port": 8443}]
+  },
+  "refusals": {
+    "malformed": ["nox://pair/", "nox://pair/A6Cap", "https://nox.app/p/#AQ", "nox://id/abc", "nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEG"],
+    "newer_version": "nox://pair/BKCapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODw"
+  }
+}

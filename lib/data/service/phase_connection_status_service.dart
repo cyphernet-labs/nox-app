@@ -1,5 +1,6 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connection_status_service.dart';
@@ -33,5 +34,7 @@ class PhaseConnectionStatusService implements ConnectionStatusService {
       SessionPhase.serverMismatch => LinkState.serverMismatch,
       SessionPhase.unsupported => LinkState.unsupported,
     },
+    // The one cause a phase alone can name (phase 045).
+    problem: phase == SessionPhase.serverMismatch ? ConnectionProblem.otherServer : null,
   );
 }

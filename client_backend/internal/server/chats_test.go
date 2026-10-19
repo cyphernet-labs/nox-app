@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -53,7 +54,7 @@ func TestStoryOneChatsListOrderSearchAndGet(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 
 	page := listChats(t, anna, 10, `{"page":1,"page_size":10}`)
 	if page.HasMore || len(page.Chats) != 2 {
@@ -176,10 +177,10 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	bob.hello(1, ``)
 
 	orderBefore := listChats(t, anna, 10, `{"page":1,"page_size":10}`)
 	if len(orderBefore.Chats) != 2 || orderBefore.Chats[0].ChatID != kitchen || orderBefore.Chats[1].ChatID != targetChat.ChatID {
@@ -266,7 +267,7 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 	// Replay: a reconnecting client receives chat.updated in log order.
 	lateBob := dialWS(t, ts, srv)
 	lateBob.expectGreeting()
-	lateBob.hello(1, `,"label":"Late","since":0`)
+	lateBob.hello(1, `,"since":0`)
 	var seenChatUpdated bool
 	for range 8 {
 		_, name, _ := lateBob.expectEvent()
@@ -320,10 +321,10 @@ func TestChatCreateWithDeviceChatIDCreatesItOnceAndRepeatsWithoutAnEvent(t *test
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	bob.hello(1, ``)
 
 	create := func(id int) protocol.Chat {
 		t.Helper()
@@ -417,10 +418,10 @@ func TestChatCreateWithoutChatIDStillGetsAServerID(t *testing.T) {
 
 	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
-	anna.hello(1, `,"label":"Anna"`)
+	anna.hello(1, ``)
 	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.hello(1, `,"label":"Bob"`)
+	bob.hello(1, ``)
 
 	serverID := regexp.MustCompile(`^c_[0-9a-f]{16}$`)
 	// null reads as absent: a serializer that writes every optional field
@@ -489,23 +490,30 @@ func person(t *testing.T, s *store.Store, name string) store.Identity {
 	ctx := context.Background()
 	deviceKey := "dev-" + name
 
-	if id, err := s.ResolveIdentity(ctx, deviceKey, name, 1); err == nil {
-		return id
+	id, err := s.ResolveIdentity(ctx, deviceKey, 1)
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		if _, err := s.EnsureServerIdentity(ctx, testBox); err != nil {
+			t.Fatalf("EnsureServerIdentity: %v", err)
+		}
+		// linkErr, not err: `:=` would declare a new err in this block, and the
+		// greeting below would assign to it instead of the one checked after.
+		link, linkErr := s.IssueMachineLink(ctx, 1)
+		if linkErr != nil {
+			t.Fatalf("IssueMachineLink: %v", linkErr)
+		}
+		if _, err := s.Pair(ctx, link.Token, deviceKey, "test", 1); err != nil {
+			t.Fatalf("Pair(%s): %v", name, err)
+		}
+		id, err = s.ResolveIdentity(ctx, deviceKey, 1)
 	}
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := s.IssueClaimToken(ctx, 1)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := s.Pair(ctx, token, deviceKey, "test", store.PairOptions{}, 1); err != nil {
-		t.Fatalf("Pair(%s): %v", name, err)
-	}
-	// State the chosen name the way onboarding does.
-	id, err := s.ResolveIdentity(ctx, deviceKey, name, 1)
 	if err != nil {
 		t.Fatalf("ResolveIdentity(%s): %v", name, err)
 	}
+	// State the chosen name the way onboarding does: identity.setLabel, the
+	// one write of a name.
+	if err := s.SetLabel(ctx, id.UserID, name); err != nil {
+		t.Fatalf("SetLabel(%s): %v", name, err)
+	}
+	id.Label = name
 	return id
 }

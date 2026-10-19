@@ -43,7 +43,14 @@ void main() {
   // `offline`: the strip carries a different glyph, a different sentence and an
   // action the offline one does not have, and a shared baseline would let any
   // of the three quietly become the other.
-  goldenTest('chats_list_page_pin_refused', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.pinRefused));
+  goldenTest(
+    'chats_list_page_server_mismatch',
+    () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.serverMismatch),
+  );
+
+  // A failed round with a known cause (phase 045): the strip says why in place
+  // of «No connection», and keeps its Try again. Two lines on a phone.
+  goldenTest('chats_list_page_turn_on_tor', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.turnOnTor));
   goldenTest('chats_list_page_error', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.fatal));
 
   // The ONLY page-level baseline that contains a chat row with a badge, and the
@@ -65,8 +72,8 @@ void main() {
   // The wide branch draws the strip in BOTH panes - the list one and, with no
   // chat selected, the thread one - and only a desktop baseline can see that.
   goldenTestDesktop(
-    'chats_list_page_pin_refused',
-    () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.pinRefused),
+    'chats_list_page_server_mismatch',
+    () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.serverMismatch),
   );
 
   // No connection with its Try again (phase 042), on the wide branch too -
@@ -77,6 +84,12 @@ void main() {
     setUp(() async => getIt<AppDatabase>().clearEntireDatabase());
 
     goldenTestDesktop('chats_list_page_offline', () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.offline));
+
+    // The cause in place of «No connection» (phase 045), in both panes.
+    goldenTestDesktop(
+      'chats_list_page_turn_on_tor',
+      () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.turnOnTor),
+    );
   });
 
   // Chats not on the server yet, one in each state (phase 041), on both

@@ -9,11 +9,8 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 /// 56 Material glyph, with two brand dots pinned inside it (teal top-right, gold
 /// bottom-left), over a headline and a message.
 ///
-/// It used to draw one of three bespoke SVG illustrations from
-/// `Assets.svg.illustrations`. Those are drawings of nothing in particular — thin
-/// strokes at 132 that read as a rendering fault rather than as art — and the
-/// design never asked for them: it composes this state from a stock glyph and the
-/// brand accents. The three SVGs stay in the bundle, referenced by nothing.
+/// This composition IS the art of an empty state: the design builds it from a
+/// stock glyph and the brand accents, and no illustration is bundled for it.
 class AppEmptyContentWidget extends StatelessWidget {
   const AppEmptyContentWidget({super.key, required this.glyph, required this.title, required this.message});
 

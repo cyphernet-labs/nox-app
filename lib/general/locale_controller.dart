@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:nox_app/general/app_language.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,11 +28,29 @@ class LocaleController {
     language.value = _fromName(prefs.getString(_prefsKey));
   }
 
-  /// Persist and apply [value] (drives the live re-render through [language]).
-  Future<void> set(AppLanguage value) async {
+  /// Writes the choice under [_prefsKey]; a test swaps it to make a save fail.
+  @visibleForTesting
+  static Future<bool> Function(String value)? debugWrite;
+
+  /// Applies [value] at once (drives the live re-render through [language]),
+  /// then persists it. A choice that could not be saved is undone - the app
+  /// goes back to the language it had - and `false` tells the screen to say so;
+  /// a language that changes now and silently reverts at the next launch would
+  /// be a choice the app only pretended to take.
+  Future<bool> set(AppLanguage value) async {
+    final previous = language.value;
     language.value = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, value.name);
+    bool saved;
+    try {
+      final write = debugWrite;
+      saved = write != null ? await write(value.name) : await (await SharedPreferences.getInstance()).setString(_prefsKey, value.name);
+    } catch (_) {
+      saved = false;
+    }
+    // Undone only while it is still the choice: a later choice made while this
+    // write was failing is not taken back with it.
+    if (!saved && language.value == value) language.value = previous;
+    return saved;
   }
 
   /// The [Locale] to hand `MaterialApp.locale`; `null` lets it follow the system

@@ -3,34 +3,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/service/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
-import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/file/file_repository.dart';
-import 'package:nox_app/domain/service/attachment_transfer_service.dart';
-import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/widgets/chat/rename_chat_dialog/rename_chat_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Counts the requests to drain, and drains nothing.
-class _CountingOutbox extends OutboxService {
-  _CountingOutbox()
-    : super(
-        getIt<OutboxRepository>(),
-        getIt<MessageRepository>(),
-        getIt<SessionPhaseService>(),
-        getIt<FileRepository>(),
-        getIt<AttachmentTransferService>(),
-        getIt<ChatRepository>(),
-      );
-
+class _CountingOutbox implements OutboxService {
   int flushes = 0;
 
   @override
   Future<void> flush() async => flushes++;
+
+  @override
+  void start() {}
+
+  @override
+  Future<void> discard({required String clientMessageId}) async {}
+
+  @override
+  Future<void> stop() async {}
 }
 
 /// RenameChatBloc (edit chat name) over the real test-env repo (Sembast). A target chat

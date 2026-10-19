@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -6,6 +8,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/app_language.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/locale_controller.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_select_option_widget.dart';
 
@@ -35,9 +38,14 @@ class _LanguageBodyState extends State<LanguageBody> {
     AppLanguage.ukrainian => context.l10n.languageUkrainian,
   };
 
-  void _select(AppLanguage language) {
+  Future<void> _select(AppLanguage language) async {
+    final previous = _selected;
     setState(() => _selected = language);
-    LocaleController.instance.set(language);
+    final saved = await LocaleController.instance.set(language);
+    if (saved || !mounted) return;
+    // The card follows the controller back only if nothing was chosen since.
+    if (_selected == language) setState(() => _selected = previous);
+    showAppSnackBar(context, text: context.l10n.settingsSaveError, error: true);
   }
 
   @override
@@ -52,7 +60,7 @@ class _LanguageBodyState extends State<LanguageBody> {
               label: _label(context, language),
               preview: _LanguagePreview(language: language),
               selected: _selected == language,
-              onTap: () => _select(language),
+              onTap: () => unawaited(_select(language)),
             ),
           ),
       ],

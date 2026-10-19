@@ -19,7 +19,9 @@ import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/connection_problem_text.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
@@ -244,7 +246,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     if (state is! Initialized) return const SizedBox.shrink();
     if (state.isServerMismatch) {
       return AppNoticeStripWidget(
-        message: context.l10n.serverNotRecognised,
+        message: (state.problem ?? ConnectionProblem.otherServer).text(context.l10n),
         icon: NoxIcons.error,
         actionLabel: context.l10n.actionTryAgain,
         onAction: () => _bloc.add(const ChatCardEvent.retryConnection()),
@@ -254,7 +256,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       // Try again restarts the channel; nothing to try for a server that
       // refuses this build (phase 042).
       return AppNoticeStripWidget(
-        message: context.l10n.noConnection,
+        message: state.problem?.text(context.l10n) ?? context.l10n.noConnection,
         icon: NoxIcons.wifiOff,
         actionLabel: state.isUnsupported ? null : context.l10n.actionTryAgain,
         onAction: state.isUnsupported ? null : () => _bloc.add(const ChatCardEvent.retryConnection()),
@@ -277,7 +279,12 @@ class _ChatCardBodyState extends State<ChatCardBody> {
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
           child: Row(
             children: [
-              AppRingedAvatarWidget(name: chat.name, size: AppDimensionTokens.size.avatarLg),
+              // The same row on both widths; the side sheet (desktop corpus) draws the
+              // avatar at 72, the page (mobile corpus) at 56.
+              AppRingedAvatarWidget(
+                name: chat.name,
+                size: widget.isDrawer ? AppDimensionTokens.size.avatarXl : AppDimensionTokens.size.avatarLg,
+              ),
               SizedBox(width: AppSpacingTokens.s16),
               Expanded(
                 child: Text(

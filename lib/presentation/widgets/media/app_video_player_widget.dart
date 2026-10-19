@@ -15,11 +15,11 @@ import 'package:video_player/video_player.dart';
 ///
 /// **From disk, never from the server.** A native player runs its own HTTP
 /// stack - AVPlayer and ExoPlayer do not go through Dart's `HttpClient` - so a
-/// streaming player would reach the server without passing the certificate pin
-/// that feature 036 puts on both transports. It would also simply fail: the
-/// server's certificate is self-signed and no platform trust store will accept
-/// it. Handing the player a path that the pinned download already produced
-/// keeps the one channel one channel.
+/// streaming player would reach the server around the channel of the native
+/// module, and around the check of both keys it makes (phase 044). It would
+/// also simply fail: the server's port speaks nothing before that check.
+/// Handing the player a path that the download over the channel already
+/// produced keeps the one channel one channel.
 ///
 /// The widget owns the controller's whole life. Three states, and the failing
 /// one is not decoration: a file can arrive complete and still be unplayable

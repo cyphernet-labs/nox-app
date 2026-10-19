@@ -37,6 +37,24 @@ void main() {
       expect(tester.widget<ListTile>(find.byType(ListTile)).trailing, isNull);
     });
 
+    testWidgets('an informational row shows its value where the chevron would be, and goes nowhere', (tester) async {
+      await pumpApp(
+        tester,
+        AppSettingsNavRowWidget(title: 'Version', icon: NoxIcons.info, onTap: null, value: const Text('1.2.3 (build 456)')),
+      );
+
+      final tile = tester.widget<ListTile>(find.byType(ListTile));
+      expect(find.text('1.2.3 (build 456)'), findsOneWidget);
+      expect(tile.onTap, isNull);
+      expect(
+        find.descendant(
+          of: find.byType(ListTile),
+          matching: find.byWidgetPredicate((w) => w is AppIconWidget && w.icon == NoxIcons.chevronRight),
+        ),
+        findsNothing,
+      );
+    });
+
     testWidgets('a selected pane item swaps its glyph for the filled variant', (tester) async {
       // The same FILL axis the bottom bar swaps on its tabs.
       await pumpApp(

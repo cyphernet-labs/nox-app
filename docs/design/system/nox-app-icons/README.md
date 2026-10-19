@@ -1,6 +1,7 @@
 # NOX — App icons (all platforms)
 
-Launcher / app icons for **NOX**, generated from the brand mask logo (`assets/logo.png`).
+Launcher / app icons for **NOX**, generated from the brand mask logo (`../nox-assets/brand/logo.png`,
+byte-identical to the app's `assets/png/logo.png`).
 Folder structure mirrors a Flutter project so files drop straight into place. Open
 [`index.html`](index.html) for the visual gallery.
 
@@ -8,7 +9,7 @@ Folder structure mirrors a Flutter project so files drop straight into place. Op
 > see `specs/008-app-icons/`). The reproducible regen path (`flutter_launcher_icons`) is wired in
 > `pubspec.yaml` but intentionally **not run** — it would overwrite this hand-crafted set.
 
-> ⚠️ **Source resolution.** The only logo we have is a **200×200 raster** (`assets/logo.png`,
+> ⚠️ **Source resolution.** The only logo is a **200×200 raster** (`../nox-assets/brand/logo.png`,
 > opaque, backdrop `#151919`). Everything ≤256 px is crisp; **512 px and 1024 px are upscaled**
 > and therefore soft. Before store submission, regenerate from a higher-resolution master or the
 > **final vector logo** (still pending per `design-system.md §11` / `nox-assets/brand`). All sizes
