@@ -100,6 +100,8 @@ if (picked.sizeBytes > getIt<AppConfigRepository>().limits.maxAttachmentBytes) {
 
 > На десктопе (Windows/Linux/macOS — целевые платформы NOX, см. [00-architecture-overview.md](00-architecture-overview.md)) `file_selector` использует нативные системные диалоги. Отдельного камера-picker'а в цепочке вложения нет: камера в NOX задействована только сканером QR (фича 010).
 
+> **Диалога сохранения у `file_selector` на iOS и Android нет**: `pickSaveLocation` там всегда отвечает `null`. Поэтому «Сохранить» на 5.3 идёт не через этот шов, а через `FileSaveService`, который на телефонах показывает диалог платформы через раннер — см. [04-data-layer.md](04-data-layer.md) §6г, «Чтение для экранов».
+
 ---
 
 ## 3. Контракт (v0 §7 — файлы, §5 — сообщение)
