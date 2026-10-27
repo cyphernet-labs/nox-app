@@ -63,7 +63,8 @@ const FileViewDialog = ({ t, state = 'loaded' }) => (
 );
 
 // ── 5.4 Chat card / Files · right details drawer ─────────────
-const ChatInfoDrawer = ({ t, view = 'list' }) => (
+// view: 'list' | 'grid' | 'empty'; state: 'normal' | 'server-mismatch'
+const ChatInfoDrawer = ({ t, view = 'list', state = 'normal' }) => (
   <div style={{ position: 'absolute', inset: 0, zIndex: 12, display: 'flex', justifyContent: 'flex-end' }}>
     <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.32) }} />
     <div style={{ position: 'relative', width: 380, background: t.surface, borderLeft: `1px solid ${t.outlineVariant}`, boxShadow: elev(4, t.dark), display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -71,10 +72,30 @@ const ChatInfoDrawer = ({ t, view = 'list' }) => (
         <span style={{ ...ty('titleLarge'), color: t.onSurface, flex: 1 }}>Details</span>
         <IconButton t={t} name="close" />
       </div>
+      {/* 036: at the TOP of the drawer, under its own header and above the chat
+          identity - pushed below the People block it lands far enough down to
+          fall off the first fold. */}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       <div style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, borderBottom: `1px solid ${t.outlineVariant}`, flexShrink: 0 }}>
         <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}><Avatar name="Night Owls" size={72} /></div>
         <div style={{ ...ty('headlineSmall'), color: t.onSurface }}>Night Owls</div>
-        <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant }}>Aria, Mox and you</div>
+      </div>
+      {/* People (037): one row - the person this machine belongs to - then the
+          permanently disabled invite seam and its caption. Not a roster. */}
+      <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
+        <span style={{ ...ty('titleMedium'), color: t.onSurface }}>People</span>
+      </div>
+      <div style={{ padding: '12px 16px', flexShrink: 0, borderBottom: `1px solid ${t.outlineVariant}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
+            <Avatar name="Nyx" initials="N" size={36} />
+          </div>
+          <span style={{ ...ty('bodyLarge'), color: t.onSurface }}>Nyx</span>
+        </div>
+        <div style={{ height: 12 }} />
+        <FilledButton t={t} label="Invite a person" full disabled />
+        <div style={{ height: 4 }} />
+        <div style={{ ...ty('bodySmall'), color: t.onSurfaceVariant, textAlign: 'center' }}>Available in a future version</div>
       </div>
       <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Files</span>
@@ -153,7 +174,7 @@ const QRDesktop = ({ t, denied = false }) => (
           <div style={{ ...ty('titleLarge'), color: t.onSurface }}>Scan a QR code</div>
           <Viewfinder size={300} />
           <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, textAlign: 'center', maxWidth: 340 }}>
-            Point your webcam at a code, or <span style={{ color: t.primary }}>enter the ID manually</span>.
+            Point your webcam at the code, or <span style={{ color: t.primary }}>paste the pairing link</span>.
           </div>
         </div>
       )}
@@ -168,8 +189,8 @@ const CreateChatDesktop = ({ t, state = 'valid' }) => (
 const FileViewDesktop = ({ t, state = 'loaded' }) => (
   <ChatsDesktop t={t} overlay={<FileViewDialog t={t} state={state} />} />
 );
-const ChatInfoDesktop = ({ t, view = 'list' }) => (
-  <ChatsDesktop t={t} overlay={<ChatInfoDrawer t={t} view={view} />} />
+const ChatInfoDesktop = ({ t, view = 'list', state = 'normal' }) => (
+  <ChatsDesktop t={t} overlay={<ChatInfoDrawer t={t} view={view} state={state} />} />
 );
 
 Object.assign(window, {

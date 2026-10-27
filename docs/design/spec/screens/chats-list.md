@@ -4,21 +4,21 @@
 
 ## Назначение
 
-Главный экран таба «Chats» в основном шелле (4.1). Показывает **глобальный список всех чатов** (открытое общее пространство — см. [overview.md / Чаты](../overview.md#чаты)). Точка входа в конкретный чат (5.2) и в создание нового (6.1, через центральную `+`).
+Главный экран таба «Chats» в основном шелле (4.1). Показывает **весь список чатов этого сервера** — личное пространство человека, видимое на всех его устройствах (см. [overview.md / Чаты](../overview.md#чаты)). Точка входа в конкретный чат (5.2) и в создание нового (6.1, через центральную `+`).
 
 ## Контекст и переходы
 
 - **Откуда:** 4.1 Tab bar shell (таб «Chats») — при первом открытии и при возврате на таб.
 - **Куда:**
   - **5.2 Лента чата** — по тапу на элемент списка.
-  - **6.1 Создание чата** — через центральную `+` (поток обрабатывается шеллом 4.1, не самим списком).
-  - **3.1 Универсальный экран ошибки** — при fatal-сценариях загрузки.
+  - **6.1 Создание чата** — через центральную `+` (поток обрабатывается шеллом 4.1, не самим списком); на широкой ширине — через `+` в шапке панели списка.
+  - **7.1, раздел аккаунта** — по тапу на аватар аккаунта в AppBar.
 
 ## Лейаут
 
 Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 
-1. **AppBar (M3):** с wordmark `NOX`; адаптируется под тему.
+1. **AppBar (M3):** с wordmark `NOX` и брендовой градиентной линией снизу; справа — угол состояния связи и аватар аккаунта (генерируемый, с кольцом, инициалы по правилу для людей; подсказка `Account`); адаптируется под тему.
 2. **Постоянная M3 `SearchBar`** под AppBar для поиска по имени чата.
 3. **Body:** `ListView.builder` с элементами чатов, обёрнут в `RefreshIndicator` (pull-to-refresh).
 4. **Bottom:** нижняя панель — часть `4.1 Tab bar shell` (рендерится шеллом).
@@ -30,23 +30,41 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - **Аватар** — generated avatar чата по правилам из [overview.md / Generated avatar](../overview.md#generated-avatar-для-чатов) (инициалы + хеш-цвет; fallback-иконка для не-латиницы/символов).
 - **Колонка контента (растягивается):**
   - имя чата (header);
-  - превью последнего сообщения (subtitle, ellipsis при переполнении).
+  - превью последнего сообщения (subtitle, ellipsis при переполнении) — **только если оно есть**. У чата без сообщений строка однострочная и её содержимое стоит на средней линии строки: пустое превью забирало бы вторую строку, и заголовок оказывался бы выше центра.
+
+  На **широкой** ветке строки отстоят от краёв панели на 8, а между строками зазор 4: выбранная строка рисует скруглённую заливку, и вплотную две заливки сливались бы в один блок.
 - **Колонка справа (вертикальная):**
   - время последнего сообщения — **относительное**, по лестнице из [overview.md / Форматы времени](../overview.md#форматы-времени-и-даты) (`now`, `5 min`, `2 h`, `Yesterday`, `12 May`);
   - **unread badge** — число, считается **от последнего открытия чата этим устройством**; никогда не открытый чат бейджа **не имеет**; переполнение — `99+`.
+
+### Чат, которого ещё нет на сервере (фаза 041)
+
+Чат, созданный на этом устройстве (6.1), стоит в списке сразу и по обычному порядку — по времени последней активности. Пока сервер его не принял, строка показывает, где он, теми же глифами, что и статус сообщения в 5.2:
+
+| Состояние чата | Вместо времени | Вместо превью |
+|---|---|---|
+| Ждёт создания | глиф `schedule` (часики), `onSurfaceVariant`, `icon.sm` 16; имя для чтения с экрана `Waiting to be created` | превью как обычно |
+| Имя занято | глиф `error`, цвет `ColorScheme.error` | строка `Name already taken`, цвет `error` |
+| Не создан | глиф `error`, цвет `ColorScheme.error` | строка `Couldn't create`, цвет `error` |
+
+Строка для чтения с экрана — один узел. Отказ читается один раз, словами строки состояния: глиф ошибки рядом с ней из чтения исключён, иначе одно и то же прозвучало бы дважды. Как только сервер принял чат, строка становится обычной. Выход из аккаунта и смена мира стирают ждущие чаты вместе с остальными.
 
 ## Состояния
 
 | Состояние | Описание |
 |---|---|
-| Initial-loading | Первая загрузка. **Centered** `CircularProgressIndicator` в области body. |
-| Empty | Чатов нет. **Empty state**: иллюстрация (из дизайн-системы) + заголовок + поясняющий текст. |
+| Initial-loading | Первая загрузка. Чаты, которые уже есть на устройстве, показываются сразу, а страница сервера догружается в фоне ([overview / Offline](../overview.md#offline--нет-соединения)). **Centered** `CircularProgressIndicator` в области body — только когда на устройстве чатов нет, а сервер уже спрашивают; без связи сразу показывается пустое состояние. |
+| Empty | Чатов нет. **Empty state** (глиф `forum`) + заголовок + поясняющий текст. |
 | Filled | Список чатов отображается. |
 | Searching | В `SearchBar` непустой запрос; список фильтруется по имени в реальном времени. |
 | Search-empty | По запросу ничего не найдено — надпись `No chats found` в области результата. |
-| Offline | Нет соединения — постоянный `MaterialBanner` `No connection` сверху (под AppBar/SearchBar). Список показывает кэш. |
-| Inline-error | Не удалось загрузить — `MaterialBanner` сверху с предложением обновить (pull-to-refresh / action). |
-| Fatal | Передача в 3.1 (embedded). |
+| Connecting | Путь до сервера ищется или поднимается: в углу AppBar `Connecting…`, через Tor — с бейджем `Tor` ([overview / Состояние связи](../overview.md#состояние-связи-в-углу-экрана)). Баннера нет, список показывает кэш. |
+| Через Tor | Связь есть, путь — Tor: в углу бейдж `Tor`. |
+| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` сверху (под AppBar/SearchBar), угол пуст. Текст плашки — **причина**, если она известна ([overview / Причины неудачи](../overview.md#причины-неудачи)), иначе `No connection`; глиф `wifi_off` в обоих случаях. Список показывает кэш. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This onion address belongs to a different server.` с глифом ошибки и действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: выход — действие или исправленный onion-адрес в [7.10](connection.md). Чужой ключ на прямом адресе это состояние не вызывает. |
+| Tor устарел | Сеть Tor объявила встроенный клиент устаревшим: плашка `Update NOX to connect away from home` сверху (обе ширины); дома связь идёт напрямую как обычно. |
+| Inline-error | Не удалось загрузить — `MaterialBanner` сверху без действия, текст предлагает pull-to-refresh. |
+| Load-error | Список не загрузился вовсе — в области списка глиф ошибки, `Something went wrong` и `Try again` (повтор загрузки); AppBar, поиск и плашки остаются. В 3.1 экран не уходит. |
 
 ## Взаимодействия
 
@@ -60,15 +78,16 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 ## Material-компоненты
 
 - `Scaffold`.
-- `AppBar` (M3) с wordmark `NOX`; адаптируется под тему.
-- `SearchBar` (M3) — постоянная строка под AppBar.
+- `AppBar` (M3) с wordmark `NOX`, углом связи и аватаром аккаунта; адаптируется под тему.
+- `SearchBar` (M3) — постоянная строка под AppBar, глиф `search` слева.
 - `RefreshIndicator` оборачивает `ListView.builder`.
 - `ListView.builder` с кастомным item widget.
 - Generated-avatar widget (общая спека в overview).
 - `Badge` (M3) с числом — unread; цветовая роль `ColorScheme.primary` (не дефолтный error-red). При N = 0 бейдж не рендерится, правая колонка остаётся выровненной по времени.
 - `CircularProgressIndicator` (центрированный) — Initial-loading.
 - `MaterialBanner` (M3) — offline / inline-error.
-- Empty-state widget (`Column` с иллюстрацией + текст).
+- Глиф ошибки + текст + `FilledButton` `Try again` — Load-error в области списка.
+- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). **Нарисованных иллюстраций нет** (см. [design-system §10](../design-system.md)).
 
 ## Микрокопирайт
 
@@ -79,14 +98,29 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Empty state title | `No chats yet` |
 | Empty state message | `Tap + to create the first one.` |
 | Search empty | `No chats found` |
-| Offline banner | `No connection` |
+| Offline banner (причина неизвестна) | `No connection` |
+| Offline banner (причина известна) | текст причины: `This isn't a valid onion address.` · `No server answers at this onion address. Check the address and that Tor is running on the server.` · `Your server isn't answering through Tor right now. Check that it is running.` · `Can't connect to the Tor network. Check your internet connection.` · `Can't reach the server directly. Turn on Use Tor to connect through Tor.` |
+| Offline action | `Try again` |
+| Server-mismatch banner | `This onion address belongs to a different server.` |
+| Server-mismatch action | `Try again` |
+| Waiting chat, clock (имя для чтения с экрана) | `Waiting to be created` |
+| Name-taken chat, status line | `Name already taken` |
+| Refused chat, status line | `Couldn't create` |
+| Corner, connecting | `Connecting…` |
+| Corner, Tor badge | `Tor` |
+| Tor-obsolete strip | `Update NOX to connect away from home` |
 | Inline-error (network) | `Could not load chats. Pull to refresh.` |
+| Load-error | `Something went wrong` · `Try again` |
+| Account avatar tooltip | `Account` |
+| Pane title (широкая) | `Chats` |
+| Create tooltip (широкая) | `New chat` |
+| No selection (широкая) | `Select a chat` / `Choose a conversation on the left, or press + to start a new one.` |
 
 ## Принятые решения (Q1–Q10)
 
 | # | Вопрос | Решение |
 |---|---|---|
-| Q1 | AppBar содержимое | Wordmark `NOX` |
+| Q1 | AppBar содержимое | Wordmark `NOX`; справа — угол связи и аватар аккаунта |
 | Q2 | Search UI | M3 `SearchBar` постоянная строка под AppBar |
 | Q3 | Pull-to-refresh | Есть (`RefreshIndicator`) |
 | Q4 | Long-press на элементе | Ничего |
@@ -95,4 +129,15 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q7 | Аватар чата | Generated avatar (общая спека в overview) |
 | Q8 | Формат времени | Относительное (лестница в overview) |
 | Q9 | Initial-loading | Centered `CircularProgressIndicator` |
-| Q10 | Empty state | Иллюстрация + текст |
+| Q10 | Empty state | Композиция `EmptyState`: обведённый квадрат 132 + стоковый глиф 56 + две брендовые точки + заголовок и текст |
+| — | Чат, которого нет на сервере (фаза 041) | Часики вместо времени, пока ждёт создания; знак ошибки вместо времени и причина вместо превью, если сервер отказал. Обе ширины |
+| — | Текст плашки «нет связи» (фаза 045) | Причина неудачи, когда она известна, вместо `No connection`; `Try again` остаётся. Обе ширины (уточнение 2026-10-09) |
+
+## Десктоп-раскладка
+
+> Сведена с `nox-desktop-screens/screens/01-chats.md`.
+
+- Десктоп (`>= 840dp`) — **list-detail**: рейл шелла + панель списка 360 (шапка панели `Chats` с `+` справа + поле поиска) + панель ленты. Wordmark в панели нет — он живёт в заголовке окна. Выбор строки подсвечивает её (`secondaryContainer`) и загружает ленту справа **без** навигационного push (выбор — view-state в `ChatsListBloc`, контейнер `AppListDetailWidget`).
+- **Панель ленты** — настоящая лента 5.2 (см. [chat.md](chat.md)) в колонке не шире 980 на фоне `surfaceContainerLowest`. Пока чат не выбран — empty state `Select a chat` / `Choose a conversation on the left, or press + to start a new one.` (глиф `forum`).
+- Офлайн/inline-error — баннер под поиском в list-pane; список показывает кэш. Текст офлайн-баннера и плашки «другой сервер» — те же, что на узкой ширине; в панели ленты — своя такая же плашка (и над empty state, пока чат не выбран). Плашка `Update NOX to connect away from home` — только в панели списка.
+- Строка чата, которого ещё нет на сервере, на широкой ветке та же, что на узкой: часики или знак ошибки вместо времени, причина отказа вместо превью.

@@ -1,0 +1,283 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_transfer_progress_widget.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../utils/pump_app.dart';
+import '../../../utils/sealed_files.dart';
+
+/// A minimal valid 1x1 PNG so Image.file has real, decodable bytes.
+final Uint8List _png = Uint8List.fromList(<int>[
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0A,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+]);
+
+final l10nEn = AppLocalizationsEn();
+
+void main() {
+  // The picture is read through the files service (phase 048): sealed or not,
+  // it is opened into memory on its way to the decoder.
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async => getIt.reset());
+
+  testWidgets('a picture being sent carries a ring over it that fills with its bytes', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_sending_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(
+        localPath: tmp.path,
+        type: FileType.image,
+        name: 'shot.png',
+        size: '1 KB',
+        transfer: const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.6),
+      ),
+      settle: false,
+    );
+
+    expect(find.byType(AppTransferBadgeWidget), findsOneWidget);
+    expect(tester.widget<CircularProgressIndicator>(find.byType(CircularProgressIndicator)).value, 0.6);
+    expect(find.bySemanticsLabel(l10nEn.transferSending), findsOneWidget);
+  });
+
+  testWidgets('the ring over a picture being sent does not take the tap that opens it', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_sending_tap_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+    var taps = 0;
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(
+        localPath: tmp.path,
+        type: FileType.image,
+        name: 'shot.png',
+        size: '1 KB',
+        onTap: () => taps++,
+        transfer: const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.6),
+      ),
+      settle: false,
+    );
+
+    await tester.tapAt(tester.getCenter(find.byType(AppTransferBadgeWidget)));
+    expect(taps, 1);
+  });
+
+  testWidgets('a picture with nothing moving carries no ring', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_idle_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+
+    await pumpApp(tester, AppImageAttachmentWidget(localPath: tmp.path, type: FileType.image, name: 'shot.png', size: '1 KB'));
+
+    expect(find.byType(AppTransferBadgeWidget), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('renders an Image for a local image and taps through to onTap (F4)', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_thumb_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+    var taps = 0;
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(localPath: tmp.path, type: FileType.image, name: 'thumb.png', size: '1 KB', onTap: () => taps++),
+    );
+
+    expect(find.byType(Image), findsOneWidget); // the picture...
+    expect(find.byType(AppFileChipWidget), findsNothing); // ...not the type-icon chip fallback
+    await tester.tap(find.byType(Image));
+    expect(taps, 1); // opens the full-screen viewer
+  });
+
+  group('wouldRender (arriving-vs-never guard)', () {
+    MessageAttachment att({required FileType type, required String name, String? localPath}) =>
+        MessageAttachment(id: 'a', type: type, name: name, sizeBytes: 1, localPath: localPath);
+
+    test('true for a decodable picture that has no file YET - that is the whole point', () {
+      // The thread draws a spinner on this one, because the bytes are coming.
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.png')), isTrue);
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.jpg', localPath: '')), isTrue);
+    });
+
+    test('false for a file that was never going to be a thumbnail', () {
+      // Identical in the data to the case above - an image type with no local
+      // path - and it must NOT get a spinner: no bytes will make an svg draw.
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.svg')), isFalse);
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.pdf, name: 'a.pdf')), isFalse);
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.video, name: 'a.mp4')), isFalse);
+    });
+
+    test('canRender still demands the file, so the two questions stay different', () {
+      // Refactoring canRender to call wouldRender must not have dropped the
+      // on-disk half: a thumbnail with no file behind it is a broken box.
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.png')), isTrue);
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png')), isFalse);
+    });
+  });
+
+  group('canRender (thumbnail-vs-chip guard, F4)', () {
+    MessageAttachment att({required FileType type, required String name, String? localPath}) =>
+        MessageAttachment(id: 'a', type: type, name: name, sizeBytes: 1, localPath: localPath);
+
+    test('true only for an image in a natively-decodable raster format with an existing file', () {
+      final tmp = File('${Directory.systemTemp.path}/nox_canrender.png')..writeAsBytesSync(_png);
+      addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png', localPath: tmp.path)), isTrue);
+      // svg is image-typed but Flutter can't decode it → chip (tap reaches the File view).
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.svg', localPath: tmp.path)), isFalse);
+      // heic decodes only on Apple targets (P7): thumbnail there, chip elsewhere.
+      expect(
+        AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.heic', localPath: tmp.path)),
+        Platform.isIOS || Platform.isMacOS,
+      );
+      // non-image → chip.
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.pdf, name: 'a.pdf', localPath: tmp.path)), isFalse);
+      // image with no local path (seeded/backend) → chip.
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png')), isFalse);
+      // image whose file does not exist (stale after restart) → chip.
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png', localPath: '/no/such/x.png')), isFalse);
+    });
+  });
+
+  testWidgets('the compact removable variant (composer draft, P2) shows a remove × that fires onRemove', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_draft_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+    var removed = 0;
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(
+        localPath: tmp.path,
+        type: FileType.image,
+        name: 'draft.png',
+        size: '1 KB',
+        width: 72,
+        height: 72,
+        onRemove: () => removed++,
+      ),
+    );
+
+    expect(find.byType(Image), findsOneWidget); // the compact preview
+    final removeSize = tester.getSize(find.byType(IconButton));
+    expect(removeSize.width, greaterThanOrEqualTo(48)); // a11y tap target (FR-016)
+    expect(removeSize.height, greaterThanOrEqualTo(48));
+    await tester.tap(find.byType(IconButton)); // the remove ×
+    expect(removed, 1);
+  });
+
+  testWidgets('a sealed picture is drawn from memory (phase 048, FR-006)', (tester) async {
+    final path = '${Directory.systemTemp.path}/nox_sealed_thumb_test.png';
+    addTearDown(() => File(path).existsSync() ? File(path).deleteSync() : null);
+
+    await tester.runAsync(() async {
+      await writeSealed(path, _png);
+      await pumpApp(
+        tester,
+        AppImageAttachmentWidget(localPath: path, type: FileType.image, name: 'thumb.png', size: '1 KB'),
+        settle: false,
+      );
+      await precacheImage(LocalFileImage(path), tester.element(find.byType(AppImageAttachmentWidget)));
+      await tester.pump();
+    });
+
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(image.image, LocalFileImage(path));
+    expect(find.byType(AppFileChipWidget), findsNothing, reason: 'decoded, not fallen back to the chip');
+  });
+
+  testWidgets('falls back to the file chip when the image cannot be decoded (F4/FR-007)', (tester) async {
+    await tester.runAsync(() async {
+      await pumpApp(
+        tester,
+        const AppImageAttachmentWidget(localPath: '/no/such/nox_missing.png', type: FileType.image, name: 'x.png', size: '1 KB'),
+      );
+      // Let the load fail so the errorBuilder swaps in the chip.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await tester.pump();
+    });
+    expect(find.byType(AppFileChipWidget), findsOneWidget); // graceful fallback, no broken image
+  });
+}

@@ -1,0 +1,319 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_search_bar_widget.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
+import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
+import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
+
+import '../../utils/pump_app.dart';
+
+/// Cross-widget accessibility checks (FR-016): tap targets >= 48x48, icon-only
+/// actions expose a tooltip/semantics, and layout survives textScaler up to 2.0.
+final l10nEn = AppLocalizationsEn();
+
+void main() {
+  // M3 screens (shell / chats list) resolve ChatRepository from DI.
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    await getIt.reset();
+  });
+
+  group('accessibility (FR-016)', () {
+    testWidgets('composer icon-action tap targets are >= 48x48', (tester) async {
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
+
+      final buttons = find.byType(IconButton);
+      expect(buttons, findsNWidgets(2));
+      for (var i = 0; i < 2; i++) {
+        final size = tester.getSize(buttons.at(i));
+        expect(size.width, greaterThanOrEqualTo(48));
+        expect(size.height, greaterThanOrEqualTo(48));
+      }
+    });
+
+    testWidgets('the connection corner is >= 48x48 and named for a screen reader at 2.0 text scale (FR-029)', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpApp(
+        tester,
+        const Center(
+          child: AppConnectionIndicatorWidget(
+            wide: false,
+            status: ConnectionStatus(state: LinkState.connecting, path: ConnectionPath.tor),
+          ),
+        ),
+        textScale: 2.0,
+      );
+
+      final size = tester.getSize(find.byType(InkWell));
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+      expect(find.bySemanticsLabel(l10nEn.connectionSemanticsConnectingTor), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'no overflow at 2.0');
+      handle.dispose();
+    });
+
+    testWidgets('create FAB tap target is >= 48x48 with a tooltip', (tester) async {
+      await pumpApp(tester, AppCreateFabWidget(onPressed: () {}));
+
+      final size = tester.getSize(find.byType(FloatingActionButton));
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+      expect(find.byTooltip(l10nEn.tooltipCreateChat), findsOneWidget);
+    });
+
+    testWidgets('bottom bar tab tap targets are >= 48x48', (tester) async {
+      await pumpApp(tester, AppBottomBarWidget(active: AppTab.chats, onSelect: (_) {}));
+
+      final tabs = find.byType(InkResponse);
+      expect(tabs, findsNWidgets(2));
+      for (var i = 0; i < 2; i++) {
+        final size = tester.getSize(tabs.at(i));
+        expect(size.width, greaterThanOrEqualTo(48));
+        expect(size.height, greaterThanOrEqualTo(48));
+      }
+    });
+
+    testWidgets('desktop rail destinations announce as selectable buttons, named once (R4 parity)', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpApp(tester, AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, accountLabel: 'Nova', onAccount: () {}));
+
+      // The COMPILED SemanticsNode names each destination exactly ONCE: the accessible
+      // name comes from the child Text, so the wrapper must not also set `label`, or
+      // Flutter concatenates a duplicated "Chats\nChats" (the R4 regression this locks).
+      SemanticsNode node(String label) => tester.getSemantics(find.ancestor(of: find.text(label), matching: find.byType(InkWell)).first);
+      expect(node(l10nEn.chats).label, l10nEn.chats, reason: 'named once, not "Chats\\nChats"');
+      expect(node(l10nEn.settings).label, l10nEn.settings);
+      handle.dispose(); // dispose in-body: the handle-leak check runs before addTearDown callbacks.
+
+      // Role + selected state: both destinations are buttons; only the active tab is selected.
+      Semantics wrapper(String label) => tester.widget<Semantics>(
+        find.ancestor(of: find.text(label), matching: find.byWidgetPredicate((w) => w is Semantics && w.properties.button == true)).first,
+      );
+      expect(wrapper(l10nEn.chats).properties.selected, isTrue); // the active tab
+      expect(wrapper(l10nEn.settings).properties.selected, isFalse);
+    });
+
+    testWidgets('composer actions expose tooltips/semantics', (tester) async {
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
+
+      expect(find.byTooltip(l10nEn.tooltipAttachFile), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipSend), findsOneWidget);
+    });
+
+    testWidgets('layout survives textScaler 2.0 without overflow', (tester) async {
+      await pumpApp(
+        tester,
+        const AppChatItemWidget(
+          name: 'A long chat name that should ellipsize',
+          preview: 'A long preview line that should also ellipsize',
+          time: '09:00',
+          unread: 12,
+        ),
+        textScale: 2.0,
+      );
+      expect(tester.takeException(), isNull);
+
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(text: 'A long draft that should reflow')), textScale: 2.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('chat + shell widgets survive textScaler 2.0 without overflow', (tester) async {
+      await pumpApp(
+        tester,
+        const AppMessageBubbleWidget(
+          isOwn: false,
+          text: 'A long message that should wrap and still fit without overflowing at large text scale',
+          time: '09:00',
+          status: MessageStatus.sent,
+        ),
+        textScale: 2.0,
+      );
+      expect(tester.takeException(), isNull);
+
+      await pumpApp(
+        tester,
+        AppFileChipWidget(
+          type: FileType.pdf,
+          name: 'a-rather-long-attachment-name-that-could-clip.pdf',
+          size: '2.4 MB',
+          removable: true,
+          onRemove: () {},
+        ),
+        textScale: 2.0,
+      );
+      expect(tester.takeException(), isNull);
+
+      await pumpApp(tester, const AppSearchBarWidget(value: 'a long search query that should not overflow'), textScale: 2.0);
+      expect(tester.takeException(), isNull);
+
+      await pumpApp(tester, AppBottomBarWidget(active: AppTab.chats, onSelect: (_) {}), textScale: 2.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('M2 onboarding/form screens survive textScaler 2.0 without overflow', (tester) async {
+      await pumpApp(tester, const LoginPage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'LoginPage overflowed at 2.0');
+
+      await pumpApp(tester, const SetUsernamePage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'SetUsernamePage overflowed at 2.0');
+
+      await pumpApp(tester, const CreateChatPage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'CreateChatPage overflowed at 2.0');
+
+      await pumpApp(tester, const QrScanPage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'QrScanPage overflowed at 2.0');
+    });
+
+    testWidgets('QR scanner icon actions expose tooltips', (tester) async {
+      // Seed the scanning state (torch / switch-camera are shown only while the
+      // camera is active) without a live camera.
+      await pumpApp(
+        tester,
+        QrScanPage(
+          bloc: QrScanBloc()..add(const QrScanEvent.permissionResolved(CameraPermissionStatus.granted)),
+          previewBuilder: (_) => const SizedBox.expand(),
+        ),
+      );
+
+      expect(find.byTooltip(l10nEn.tooltipFlashlight), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipSwitchCamera), findsOneWidget);
+    });
+
+    testWidgets('M3 shell / settings / chats screens survive textScaler 2.0 without overflow', (tester) async {
+      // settle: true drains the screens' async init timers (Initialize + the mock
+      // load) and renders the loaded layout, where any overflow would surface.
+      await pumpApp(tester, const TabBarShell(), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'TabBarShell overflowed at 2.0');
+
+      await pumpApp(tester, const SettingsRootPage(), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'SettingsRootPage overflowed at 2.0');
+
+      await pumpApp(tester, const ChatsListPage(), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'ChatsListPage overflowed at 2.0');
+    });
+
+    testWidgets('M4 chat-detail screens survive textScaler 2.0 without overflow', (tester) async {
+      final chat = ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+
+      await pumpApp(tester, ChatThreadPage(chat: chat), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'ChatThreadPage overflowed at 2.0');
+
+      await pumpApp(tester, ChatCardPage(chat: chat), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'ChatCardPage overflowed at 2.0');
+
+      await pumpApp(
+        tester,
+        const FileViewPage(
+          file: MessageAttachment(id: 'f', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582),
+        ),
+        textScale: 2.0,
+      );
+      expect(tester.takeException(), isNull, reason: 'FileViewPage overflowed at 2.0');
+    });
+
+    testWidgets('the chat card survives 2.0 on a phone with no files in it', (tester) async {
+      // A phone-sized surface is half of what makes this visible: the default
+      // 800x600 canvas has room to spare. The card stacks a header, the People
+      // block and a section heading above the empty state, and at this scale
+      // what is left is smaller than the empty state wants.
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = const Size(360, 640) * 3.0;
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      final chat = ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+
+      await pumpApp(tester, ChatCardPage(chat: chat, initialScenario: ChatCardScenario.empty), textScale: 2.0);
+
+      expect(tester.takeException(), isNull, reason: 'the empty chat card overflowed at 2.0');
+    });
+
+    testWidgets('the chat card still SHOWS its files at 2.0, on a phone and in the desktop side sheet', (tester) async {
+      // The other half, and the one that fails silently. While the body was a
+      // fixed Column whose only flexible child was the files section, chrome
+      // that outgrew the surface made Expanded clamp to ZERO - and the list
+      // rendered at no height at all. Not clipped and not scrolled past:
+      // absent, with every attachment in the chat unreachable. An overflow
+      // assertion alone does not see it, so this one also demands that a file
+      // is actually on screen.
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      final chat = ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+      // The test DB is in-memory but PERSISTS across tests in one isolate, and
+      // the files of this card derive from chat_0's seeded thread. Cleared here
+      // so the seed runs fresh: without it whatever an earlier test left behind
+      // decides whether this one has anything to look for.
+      await getIt<AppDatabase>().clearEntireDatabase();
+
+      // Both widths, because the drawer header makes the desktop side sheet the
+      // TIGHTER of the two despite the bigger window (Constitution VI).
+      for (final surface in const [Size(360, 640), Size(1280, 800)]) {
+        tester.view.devicePixelRatio = 2.0;
+        tester.view.physicalSize = surface * 2.0;
+
+        // Bounded pumps, not pumpAndSettle: opening the card pulls its files
+        // window from the source and the reactive watch keeps a timer in
+        // flight, so settling either hangs or snapshots the spinner - which is
+        // exactly the state where "no file rendered" would be a false alarm.
+        await pumpApp(tester, ChatCardPage(chat: chat), textScale: 2.0, settle: false);
+        for (var i = 0; i < 24; i++) {
+          await tester.pump(const Duration(milliseconds: 150));
+        }
+
+        expect(tester.takeException(), isNull, reason: 'the chat card overflowed at 2.0 on $surface');
+
+        // REACHABLE, not merely present. A sliver list builds only what is on
+        // screen, and at this scale the chrome pushes the first row past the
+        // fold - so "find it" would fail on a healthy card. Scrolling to it is
+        // the invariant: it throws when there is nothing to scroll, which is
+        // precisely what a files section clamped to zero height looks like.
+        await tester.scrollUntilVisible(
+          find.byType(AppFileGlyphWidget),
+          200,
+          scrollable: find.descendant(of: find.byType(CustomScrollView), matching: find.byType(Scrollable)).first,
+        );
+        expect(find.byType(AppFileGlyphWidget), findsWidgets, reason: 'no attachment could be reached at all on $surface');
+      }
+    });
+  });
+}

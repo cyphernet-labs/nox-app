@@ -18,10 +18,11 @@ Scrim + centered Dialog (460): “New chat”, chat-name field (counter N/64), C
 
 ## Behavior
 - Mobile’s pushed 6.1 screen becomes a centered dialog over the (deselected) chats window.
-- Same validation: ≤64 chars, live uniqueness (spinner), taken → error + Create disabled, submitting → spinner.
+- Same validation: ≤64 chars, live uniqueness (spinner) — the local store always, the server only when it can answer at once — taken → error + Create disabled.
+- Create never waits for the server (phase 041): the chat is made on this device under an id minted there and the dialog closes onto it at once, with or without a connection; submitting is a local write, practically never visible. The outgoing queue creates it on the server before its messages, and a name taken by then marks the chat for a rename (01 Chats).
 
 ## Navigation
-- Create → opens the new thread in the right pane.
+- Create → opens the new thread in the right pane, at once.
 - Cancel / scrim → dismiss.
 
 ## Copy (EN)

@@ -1,6 +1,6 @@
 # Контракт: DI и app-bootstrap
 
-> **Источник:** блюпринт `docs/patterns/mobile/02-dependency-injection.md` (§3, §10) + `05-presentation-layer.md` §6.3; требование FR-006. Один Dart-пакет `nox_app` → один контейнер → один генератор.
+> **Источник:** блюпринт `docs/blueprints/mobile/02-dependency-injection.md` (§3, §10) + `05-presentation-layer.md` §6.3; требование FR-006. Один Dart-пакет `nox_app` → один контейнер → один генератор.
 
 ## 1. Единая точка входа DI
 

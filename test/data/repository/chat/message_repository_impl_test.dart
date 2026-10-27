@@ -1,0 +1,567 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/entity/base/error_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/chat_entity.dart';
+import 'package:nox_app/data/entity/chat/message_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
+import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
+import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'message_repository_impl_test.mocks.dart';
+
+/// Seeds a chat's history (first getMessages) then grows it past a single page
+/// by sending messages until the thread holds [target] rows (counted through
+/// the DAO - the wire reports only has_more), returning the final count. The
+/// deterministic mock seeds fewer than `pageSize` messages, so the
+/// newest-batch-first window only spans two pages once the thread is grown.
+/// The final message sent carries text `grow #${target - 1}` (the newest overall).
+Future<int> _seedThenGrowTo(MessageRepository repo, MessageDao dao, {required String chatId, required int target}) async {
+  await repo.getMessages(config: GetMessagesConfig.tail(chatId: chatId));
+  final seeded = await dao.countByChat(chatId);
+  for (var i = seeded; i < target; i++) {
+    await repo.sendMessage(chatId: chatId, clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'grow #$i');
+  }
+  return dao.countByChat(chatId);
+}
+
+@GenerateMocks([MessageRemoteDataSource])
+void main() {
+  late MessageRepository repo;
+  late MessageDao messageDao;
+
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+    await getIt<AppDatabase>().clearEntireDatabase();
+    repo = getIt<MessageRepository>();
+    messageDao = getIt<MessageDao>();
+  });
+
+  tearDown(() async {
+    await getIt.reset();
+  });
+
+  test('first getMessages seeds the chat history into the DB', () async {
+    final (messages, meta) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+    expect(messages, isNotEmpty);
+    expect(meta.hasMore, isFalse); // the deterministic seed fits one window
+  });
+
+  test('sendMessage persists a message that shows up on re-query', () async {
+    await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
+    final before = await messageDao.countByChat('chat_0');
+
+    final sent = await repo.sendMessage(
+      chatId: 'chat_0',
+      clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+      text: 'Hello from test',
+    );
+    expect(sent.hasData, isTrue);
+
+    expect(await messageDao.countByChat('chat_0'), before + 1);
+    final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+    expect(messages.any((m) => m.text == 'Hello from test'), isTrue); // in the newest batch
+  });
+
+  test('sendMessage preserves the attachment localPath through the wire echo (P6/F4)', () async {
+    await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
+    const att = MessageAttachment(id: 'a', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: '/tmp/shot.png');
+
+    final sent = (await repo.sendMessage(
+      chatId: 'chat_0',
+      clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+      attachment: att,
+    )).data!;
+    // The device-local path is re-attached after the (path-less) wire echo, so a sent
+    // image still previews/saves. It also survives to the DB (re-read below).
+    expect(sent.attachment?.localPath, '/tmp/shot.png');
+
+    final persisted = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!.$1;
+    expect(persisted.firstWhere((m) => m.attachment?.id == 'a').attachment?.localPath, '/tmp/shot.png');
+  });
+
+  test('re-querying reads from the DB without re-seeding', () async {
+    await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+    final first = await messageDao.countByChat('chat_0');
+    await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+    expect(await messageDao.countByChat('chat_0'), first);
+  });
+
+  group('reverse-windowing pagination (newest batch first)', () {
+    const chatId = 'chat_0';
+    // Grow just past one page so page 1 is a full newest batch and page 2 is a small
+    // older remainder. The deterministic seed is < pageSize, so growth is required.
+    const growTo = GetMessagesConfig.pageSize + 2;
+    const lastSentText = 'grow #${growTo - 1}'; // the newest message overall
+
+    test('page 2 returns the older batch, disjoint from and strictly older than page 1', () async {
+      final total = await _seedThenGrowTo(repo, messageDao, chatId: chatId, target: growTo);
+      expect(total, growTo);
+      expect(total, greaterThan(GetMessagesConfig.pageSize)); // the window genuinely spans two pages
+
+      final page1 = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: chatId))).data!;
+      final page2 = (await repo.getMessages(
+        config: GetMessagesConfig.olderThan(chatId: chatId, beforeSeq: page1.$1.first.seq),
+      )).data!;
+
+      // Page 1 is a full newest batch with older history behind it (the
+      // cursor path carries no page numbers).
+      expect(page1.$1.length, GetMessagesConfig.pageSize);
+      expect(page1.$2.hasMore, isTrue);
+      // The newest message overall sits in page 1, never in the older page 2.
+      expect(page1.$1.any((m) => m.text == lastSentText), isTrue);
+
+      // Page 2 is the older remainder — non-empty and the last page (two windows only).
+      expect(page2.$1, isNotEmpty);
+      expect(page2.$2.hasMore, isFalse);
+
+      // Disjoint by message id, and together they cover the whole history exactly once.
+      final page1Ids = page1.$1.map((m) => m.id).toSet();
+      final page2Ids = page2.$1.map((m) => m.id).toSet();
+      expect(page1Ids.intersection(page2Ids), isEmpty);
+      expect(page1Ids.union(page2Ids).length, total);
+
+      // Reverse windowing: every page-2 message is at least as old as every page-1 message.
+      final newestOfPage2 = page2.$1.map((m) => m.sentAt).reduce((a, b) => a.isAfter(b) ? a : b);
+      final oldestOfPage1 = page1.$1.map((m) => m.sentAt).reduce((a, b) => a.isBefore(b) ? a : b);
+      expect(newestOfPage2.isAfter(oldestOfPage1), isFalse);
+    });
+
+    test('a page past the end hits the end<=0 guard: empty slice, nextPage null', () async {
+      // No growth needed — the raw seed fits one page, so any high page is past the end.
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: chatId));
+      expect(await messageDao.countByChat(chatId), greaterThan(0));
+
+      // A cursor below the whole history: nothing is older than the genesis.
+      final all = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: chatId, limit: 100))).data!;
+      final beyond = (await repo.getMessages(
+        config: GetMessagesConfig.olderThan(chatId: chatId, beforeSeq: all.$1.first.seq),
+      )).data!;
+      expect(beyond.$1, isEmpty); // guarded empty slice
+      expect(beyond.$2.hasMore, isFalse); // nothing further back
+    });
+  });
+
+  group('the sync cursor is not moved by reads or sends (SC-004)', () {
+    late SyncRepository sync;
+
+    setUp(() => sync = getIt<SyncRepository>());
+
+    test('fetching a window leaves the cursor alone', () async {
+      expect(await sync.getCursor(), 0);
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0', limit: 100));
+
+      // The cursor promises "every event up to this seq is applied HERE". One
+      // chat's window says nothing about another chat's events with lower
+      // numbers, so advancing it would make the next catch-up skip them — the
+      // messages would be lost with no error anywhere.
+      expect(await sync.getCursor(), 0);
+    });
+
+    test('sending a message leaves the cursor alone', () async {
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-cursor', text: 'cursor probe');
+
+      // Own send at a high seq is not proof that everything below it arrived.
+      expect(await sync.getCursor(), 0);
+    });
+
+    test('the cursor still refuses to move backwards when it is moved', () async {
+      await sync.advanceCursor(100);
+      await sync.advanceCursor(50); // a stale duplicate at the replay boundary
+      expect(await sync.getCursor(), 100);
+    });
+  });
+
+  group('legacy pre-025 rows (upgraded-in-place DB)', () {
+    test('null-seq rows are backfilled below the real seqs so the cursor window still reaches all history', () async {
+      // A pre-025 store: rows persisted with NO seq field at all (upgraded DB,
+      // store non-empty -> the seed never runs).
+      for (var i = 0; i < 30; i++) {
+        await messageDao.upsert(
+          MessageEntity(
+            id: 'leg_${i.toString().padLeft(2, '0')}',
+            chatId: 'chat_legacy',
+            authorId: 'u_old',
+            authorLabel: 'Old',
+            text: 'legacy #$i',
+            sentAt: DateTime.utc(2026, 5, 1, 12, i).toIso8601String(),
+            status: 'none',
+            isSystem: false,
+            attachmentId: null,
+            attachmentType: null,
+            attachmentName: null,
+            attachmentSizeBytes: null,
+          ),
+        );
+      }
+
+      // Tail then walk older: pre-fix a legacy seq==0 cursor trimmed the whole
+      // window and stranded the older history; the backfill makes seqs unique.
+      final tail = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_legacy'))).data!;
+      expect(tail.$1.length, GetMessagesConfig.pageSize);
+      expect(tail.$2.hasMore, isTrue);
+
+      // Walk the cursor to the very beginning: every legacy row must still be
+      // reachable. Pre-fix, a legacy seq of 0 trimmed the whole window and the
+      // older history was stranded.
+      final seen = <String>{...tail.$1.map((m) => m.id)};
+      var oldest = tail.$1.first.seq;
+      for (var i = 0; i < 10; i++) {
+        final page = (await repo.getMessages(
+          config: GetMessagesConfig.olderThan(chatId: 'chat_legacy', beforeSeq: oldest),
+        )).data!;
+        if (page.$1.isEmpty) break;
+        seen.addAll(page.$1.map((m) => m.id));
+        oldest = page.$1.first.seq;
+      }
+      expect(seen.where((id) => id.startsWith('leg_')), hasLength(30));
+    });
+  });
+
+  group('sendMessage updates the parent chat row (US2)', () {
+    late ChatRepository chats;
+    late ChatDao chatDao;
+
+    setUp(() async {
+      chats = getIt<ChatRepository>();
+      chatDao = getIt<ChatDao>();
+      await chats.getChats(config: GetChatsConfig.firstPage()); // seed the chat rows into ChatDao
+    });
+
+    test('a text send sets the chat preview + time and reorders it newest-first', () async {
+      final before = await chatDao.getById('chat_5');
+      expect(before, isNotNull);
+      expect((await chatDao.getAllSorted()).first.id, isNot('chat_5')); // not the top row before
+
+      await repo.sendMessage(chatId: 'chat_5', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'Hello world');
+
+      final after = await chatDao.getById('chat_5');
+      expect(after!.lastMessagePreview, 'Hello world');
+      expect(DateTime.parse(after.lastMessageAt).isAfter(DateTime.parse(before!.lastMessageAt)), isTrue);
+      expect((await chatDao.getAllSorted()).first.id, 'chat_5'); // reordered to newest-first
+    });
+
+    test('an attachment-only send previews as "You: <filename>"', () async {
+      const att = MessageAttachment(id: 'a1', type: FileType.pdf, name: 'spec.pdf', sizeBytes: 10);
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att);
+      expect((await chatDao.getById('chat_0'))!.lastMessagePreview, 'You: spec.pdf');
+    });
+
+    test('an own send does not change the chat unread count', () async {
+      final before = (await chatDao.getById('chat_0'))!.unreadCount;
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'x');
+      expect((await chatDao.getById('chat_0'))!.unreadCount, before);
+    });
+
+    test('a failed send leaves the parent chat row untouched (FR-004)', () async {
+      final before = await chatDao.getById('chat_0');
+      final failingRemote = MockMessageRemoteDataSource();
+      when(
+        failingRemote.sendMessage(
+          chatId: anyNamed('chatId'),
+          clientMessageId: anyNamed('clientMessageId'),
+          text: anyNamed('text'),
+          attachment: anyNamed('attachment'),
+        ),
+      ).thenThrow(Exception('network down'));
+      final failingRepo = MessageRepositoryImpl(
+        getIt<MessageDao>(),
+        failingRemote,
+        getIt<MessageMapper>(),
+        getIt<MessageWireMapper>(),
+        getIt<ChatDao>(),
+        getIt<SessionRepository>(),
+      );
+
+      final result = await failingRepo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'should not persist',
+      );
+
+      expect(result.hasData, isFalse);
+      final after = await chatDao.getById('chat_0');
+      expect(after!.lastMessagePreview, before!.lastMessagePreview); // unchanged
+      expect(after.lastMessageAt, before.lastMessageAt);
+    });
+  });
+
+  group('simulateIncoming (US4, debug)', () {
+    late ChatDao chatDao;
+
+    setUp(() async {
+      chatDao = getIt<ChatDao>();
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // seed chat rows
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed the thread
+    });
+
+    test('appends an inbound message (author != me) with a seq a server could have issued', () async {
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+      final beforeTotal = await messageDao.countByChat('chat_0');
+      final head = await messageDao.highestSeq('chat_0');
+
+      await repo.simulateIncoming(chatId: 'chat_0');
+
+      expect(await messageDao.countByChat('chat_0'), beforeTotal + 1);
+      // One past the cached head, not a clock-derived number. A clock value sits
+      // fifteen digits above any journal seq, and the read mark - which only
+      // moves forward - would follow it there and kill this chat's badge for good.
+      expect(await messageDao.highestSeq('chat_0'), (head ?? 0) + 1);
+      // The row itself no longer carries the badge: it is recounted from the mark.
+      expect((await chatDao.getById('chat_0'))!.lastOpenedSeq, isNull);
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+      final inbound = messages.firstWhere((m) => m.text == 'Simulated incoming message');
+      expect(inbound.authorId, isNot('me')); // an inbound, not an own message
+    });
+  });
+
+  test('a failed envelope (success:false / null data) surfaces as RepositoryResult.error (S4)', () async {
+    // A session must be present for _seedChatIfEmpty to reach the remote.
+    await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-err', onboardingComplete: true, label: 'Err');
+    final errorRemote = MockMessageRemoteDataSource();
+    when(
+      errorRemote.getMessages(config: anyNamed('config')),
+    ).thenAnswer((_) async => const ResponseEntity<MessagesWireEntity>(success: false));
+    final errorRepo = MessageRepositoryImpl(
+      getIt<MessageDao>(),
+      errorRemote,
+      getIt<MessageMapper>(),
+      getIt<MessageWireMapper>(),
+      getIt<ChatDao>(),
+      getIt<SessionRepository>(),
+    );
+
+    final result = await errorRepo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+    expect(result.hasData, isFalse); // null-data envelope → _seedChatIfEmpty throws → error
+  });
+
+  test('wire error codes surface as distinct RepositoryException values (SC-005/025)', () async {
+    await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-err2', onboardingComplete: true, label: 'Err');
+
+    Future<BaseRepositoryException?> sendWith(String code) async {
+      final remote = MockMessageRemoteDataSource();
+      when(
+        remote.getMessages(config: anyNamed('config')),
+      ).thenAnswer((_) async => const ResponseEntity<MessagesWireEntity>(success: true, data: MessagesWireEntity(hasMore: false)));
+      when(
+        remote.sendMessage(
+          chatId: anyNamed('chatId'),
+          clientMessageId: anyNamed('clientMessageId'),
+          text: anyNamed('text'),
+          attachment: anyNamed('attachment'),
+        ),
+      ).thenAnswer(
+        (_) async => ResponseEntity<MessageWireEntity>(
+          success: false,
+          error: ErrorWireEntity(code: code, message: 'x'),
+        ),
+      );
+      final repo = MessageRepositoryImpl(
+        getIt<MessageDao>(),
+        remote,
+        getIt<MessageMapper>(),
+        getIt<MessageWireMapper>(),
+        getIt<ChatDao>(),
+        getIt<SessionRepository>(),
+      );
+      return (await repo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'x',
+      )).exception;
+    }
+
+    expect(await sendWith('payload_too_large'), RepositoryException.payloadTooLarge);
+    expect(await sendWith('attachment_gone'), RepositoryException.attachmentGone);
+    expect(await sendWith('name_taken'), RepositoryException.nameTaken);
+    expect(await sendWith('rate_limited'), RepositoryException.rateLimited);
+    expect(await sendWith('code_from_the_future'), RepositoryException.internal); // evolution rule
+  });
+
+  group('signed-in identity (feature 015)', () {
+    Future<void> signInAs(String identifier, String label) async {
+      await getIt<SessionRepository>().saveIdentifier(identifier: identifier, onboardingComplete: true, label: label);
+    }
+
+    test('seeded own rows are reconciled to the session identifier (not the sentinel)', () async {
+      await signInAs('sess-abc', 'Alice');
+
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+
+      // The mock seeds own rows with the "me" sentinel; with a session they are rewritten
+      // to the session identifier so own-detection follows the session.
+      expect(messages.any((m) => m.authorId == 'sess-abc'), isTrue); // own rows carry the session id
+      expect(messages.any((m) => m.authorId == 'me'), isFalse); // no un-reconciled sentinel left
+      // The reconciled own rows keep their sent status (own history).
+      expect(messages.where((m) => m.authorId == 'sess-abc').every((m) => m.status.name == 'sent'), isTrue);
+    });
+
+    test('sendMessage authors the persisted message with the session identity', () async {
+      await signInAs('sess-abc', 'Alice');
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
+
+      final sent = (await repo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'Mine',
+      )).data!;
+      expect(sent.authorId, 'sess-abc');
+      expect(sent.authorLabel, 'Alice');
+
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+      final persisted = messages.firstWhere((m) => m.text == 'Mine');
+      expect(persisted.authorId, 'sess-abc'); // persisted with the session identity
+    });
+
+    test('an own row stored with no status is repaired to sent by the next window', () async {
+      // What the live apply used to write for a message typed on another
+      // device of the same person. Keeping the stored status over the wire's
+      // answer would leave it without a tick for good.
+      await signInAs('sess-abc', 'Alice');
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
+      final own = (await messageDao.getByChatSorted('chat_0')).lastWhere((e) => e.authorId == 'sess-abc');
+      await messageDao.upsert(own.copyWith(status: 'none'));
+
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+
+      expect(messages.firstWhere((m) => m.id == own.id).status, MessageStatus.sent);
+    });
+
+    test('without a session, own rows fall back to the sentinel id', () async {
+      // No saveIdentifier — readSession resolves to null → fallback own-id.
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+      expect(messages.any((m) => m.authorId == 'me'), isTrue); // sentinel own rows remain recognisable
+    });
+  });
+
+  group('chatFiles (E3)', () {
+    test('derives the chat attachments newest-first; a newly sent file leads', () async {
+      // The seeded thread carries one attachment (design-spec.pdf).
+      final seeded = await repo.chatFiles(refresh: true, chatId: 'chat_0');
+      expect(seeded, hasLength(1));
+      expect(seeded.first.name, 'design-spec.pdf');
+
+      // Sending a new attachment makes it the newest (first).
+      const att = MessageAttachment(id: 'a-new', type: FileType.image, name: 'shot.png', sizeBytes: 100);
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att);
+
+      final after = await repo.chatFiles(refresh: true, chatId: 'chat_0');
+      expect(after, hasLength(2));
+      expect(after.first.name, 'shot.png'); // newest-first
+      expect(after.last.name, 'design-spec.pdf');
+    });
+
+    test('a chat whose messages have no attachments yields an empty list, isolated per chat', () async {
+      // A created chat (D5) seeds only a system line — no attachment.
+      final created = (await getIt<ChatRepository>().createChat(name: 'No files chat')).data!;
+      expect(await repo.chatFiles(refresh: true, chatId: created.id), isEmpty);
+      expect(await repo.chatFiles(refresh: true, chatId: 'chat_0'), isNotEmpty); // the other chat is unaffected
+    });
+  });
+
+  group('pagination answers come from the source, not the cache (fix review)', () {
+    test('has_more is taken from the wire, so scroll-up does not stop at the edge of the cache', () async {
+      // The cache holds only what has been read; deciding "no more history"
+      // from its size would strand everything the window did not cover.
+      final tail = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0', limit: 3))).data!;
+      expect(tail.$1, hasLength(3));
+      expect(tail.$2.hasMore, isTrue, reason: 'the source still holds older messages');
+    });
+
+    test('the opening line stays at the top as older history arrives', () async {
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_2', limit: 3));
+      final afterTail = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_2', limit: 100, cachedOnly: true))).data!.$1;
+      expect(afterTail.first.isSystem, isTrue);
+
+      // Pull a window older than the one the line was first anchored against.
+      final oldest = afterTail.where((m) => !m.isSystem).first.seq;
+      await repo.getMessages(
+        config: GetMessagesConfig.olderThan(chatId: 'chat_2', beforeSeq: oldest),
+      );
+      final afterOlder = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_2', limit: 100, cachedOnly: true))).data!.$1;
+
+      // Re-anchored, not stranded in the middle of the thread.
+      expect(afterOlder.first.isSystem, isTrue);
+      expect(afterOlder.where((m) => m.isSystem), hasLength(1));
+    });
+  });
+
+  group('a chat the server does not have yet (phase 041)', () {
+    const waitingId = 'c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5';
+    late MockMessageRemoteDataSource remote;
+    late MessageRepository local;
+
+    setUp(() async {
+      await getIt<ChatDao>().upsert(
+        const ChatEntity(
+          id: waitingId,
+          name: 'Kitchen',
+          lastMessagePreview: '',
+          lastMessageAt: '2026-01-01T00:00:00.000Z',
+          unreadCount: 0,
+          lastOpenedSeq: null,
+          creation: 'pending',
+        ),
+      );
+      remote = MockMessageRemoteDataSource();
+      local = MessageRepositoryImpl(
+        getIt<MessageDao>(),
+        remote,
+        getIt<MessageMapper>(),
+        getIt<MessageWireMapper>(),
+        getIt<ChatDao>(),
+        getIt<SessionRepository>(),
+      );
+      await local.seedCreatedChat(chatId: waitingId);
+    });
+
+    test('its window is served from the cache and never asks the server, which could only answer not_found', () async {
+      final page = await local.getMessages(config: GetMessagesConfig.tail(chatId: waitingId));
+
+      expect(page.hasData, isTrue);
+      expect(page.data!.$1.single.isSystem, isTrue, reason: 'the "Chat created by" line written here');
+      verifyZeroInteractions(remote);
+    });
+
+    test('its files are what is cached, with no trip to the server', () async {
+      expect(await local.chatFiles(chatId: waitingId, refresh: true), isEmpty);
+      verifyZeroInteractions(remote);
+    });
+
+    test('once the server has it, the window is asked of the server again', () async {
+      when(
+        remote.getMessages(config: anyNamed('config')),
+      ).thenAnswer((_) async => const ResponseEntity<MessagesWireEntity>(success: true, data: MessagesWireEntity(hasMore: false)));
+      await getIt<ChatDao>().update(waitingId, (c) => c.copyWith(creation: null));
+
+      await local.getMessages(config: GetMessagesConfig.tail(chatId: waitingId));
+
+      verify(remote.getMessages(config: anyNamed('config'))).called(1);
+    });
+  });
+}

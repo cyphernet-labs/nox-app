@@ -1,0 +1,730 @@
+# 14 — Сеть и авторизация
+
+> **Назначение:** зафиксировать сетевой слой приложения NOX — как поднимается HTTP-клиент (`ApiClient` на Dio), откуда он берёт `baseUrl` и токен (`AppConfigRepository`), и как это стыкуется с REST-слоем из [04-data-layer.md](04-data-layer.md) (`RequestBuilder` → API-класс → `ResponseEntity<T>`). Базовая часть (§1–3) — **канон блюпринта**: один Dio в синглтоне `ApiClient` с одним `AuthInterceptor`, читающим `getUserAuthIdToken()` → `Bearer`, и адрес спаренного сервера из ссылки спаривания — `initBase(address:)`. У NOX **один** бэкенд — Go-сервер `noxd` (`client_backend/`, встроенный SQLite), второго хоста нет. Основной транспорт контракта v0 — **WebSocket-конверт**; клиент конверта построен фазой 026 (`NoxSocketClient`, `lib/data/remote/socket/nox_socket_client.dart`). Каждое соединение — `wss` для команд и каждая передача `https` для байтов — это **канал нативного модуля** `packages/nox_tor` (§6.0): TCP или поток Tor → TLS 1.3 → проверка `POST /auth` → `POST /auth2`, в которой устройство доказывает свой ключ, а сервер — свой, и канал открывается, только если это ключ из ссылки спаривания; ключи и подписи считает RustSecureBox. Центр сертификации и сертификат сервера ничего не решают. Порт — тот, что несёт ссылка; 443 нигде не зашит. До сервера два пути — прямой адрес и встроенный Tor к его onion-сервису; какой из них, решает выбор пути перед каждой попыткой (§6): сначала всегда прямой, Tor — только с включённым `Use Tor`. Чужой ключ на прямом адресе значит «не дома», и выбор идёт дальше. Чужой ключ за onion-адресом — собственная терминальная фаза сессии (`SessionPhase.serverMismatch`), и **не** путь `unauthenticated`: тот заканчивается принудительным выходом с полным стиранием, то есть предъявление чужого ключа стало бы способом стереть данные на всех устройствах человека. Ни один отказ канала к выходу не ведёт. REST остаётся только под blob-обмен (`file.uploadBegin` → `PUT` → `message.send{attachment:{file_id}}`; `file.downloadBegin` → `GET` с `Range`, одноразовые 10-минутные токены; с фазы 043 обе стороны продолжаются после обрыва и не ограничены по времени — §6.3б), поэтому §1–3 описывают именно REST-плечо. **Аутентификацию даёт канал**, а доступ устройство получает спариванием (контракт §8A): заголовков авторизации и токенов контракт v0 не несёт. §4 — размеченный пример авторизации **запросов** (собственная токен-модель: короткий access-JWT + opaque refresh, и подписанные запросы: HMAC-SHA256 + security-заголовки + replay-окно + build-gate) — он даёт **структуру** интерсепторов, а не контракт.
+> **Когда читать:** перед поднятием `lib/data/remote/` (Dio-клиент, auth-interceptor), перед подключением `AppConfigRepository` к `ApiClient` и `main.dart`, и обязательно — перед любой правкой канала, спаривания и пути до сервера (§6) и перед реализацией auth-флоу (login / refresh / logout) клиента.
+> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`), [04-data-layer.md](04-data-layer.md) (`ApiClient`/`BaseApiRepository`/`RequestBuilder`/`ResponseEntity`/`EntityConverter`, `BaseRepositoryHelper`), [02-dependency-injection.md](02-dependency-injection.md) (`AppFlavorType`, `AppConfig`, `configureDependencies`, bootstrap `main.dart`), [13-deep-links.md](13-deep-links.md) (входные web-deep-link ссылки — какие пути могут обходить подпись; deep links в приложении не реализованы, конкретный набор таких путей — открытый вопрос), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`dio`, `flutter_secure_storage`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейвор несёт только `app.flavor`, адреса сервера в сборке нет; `apiSignatureKey` — пример/TBD-поле схемы §4).
+
+---
+
+## 0. Назначение, когда читать, связанные
+
+Этот документ — единственный дом сетевого контракта клиента. Он отвечает на три вопроса:
+
+1. **Как поднят HTTP-клиент** — `ApiClient` (Dio + `AuthInterceptor`) с `initBase(address:)`, `BaseApiRepository` как база API-классов. §1.
+2. **Откуда адрес и токен** — адрес соединения приходит ссылкой спаривания и попадает в `ApiClient.initBase(address:)` от `LiveSessionStarter`; `AppConfigRepository` держит флейвор-резолвед конфиг, источник bearer-токена (без писателя) и лимиты приветствия. Здесь его контракт фиксируется. §2.
+3. **Как это стыкуется с REST-слоем** — `RequestBuilder` / `RequestBuilderHelper` и envelope `ResponseEntity<T>` / `EntityConverter<E>` (полные шаблоны — в [04-data-layer.md](04-data-layer.md), здесь — краткий мост). §3.
+
+§4 — **размеченный пример** авторизации запросов (HMAC-подпись + security-заголовки + собственная токен-модель с ротацией): структура интерсепторов, а не контракт. Аутентификацию в NOX даёт канал — проверка `POST /auth` → `POST /auth2` на каждом соединении (§6.0, контракт §1), — а доступ устройство получает спариванием (контракт §8A); заголовков авторизации контракт v0 не несёт. §5 — сетевое состояние и lifecycle-driven refresh. §6 — путь до сервера: канал нативного модуля, прямой адрес и встроенный Tor. §7 — чеклист.
+
+> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example, согласован с блюпринтом). Импорты — полные `package:nox_app/...`.
+>
+> **Что здесь код, а что пример.** §1 — реальный `ApiClient` (`lib/data/remote/api_client.dart`): `@LazySingleton(env: [Environment.dev])` — он есть только там, где есть живой канал, — с конструктором `ApiClient(this._config, this._channels)` (`AppConfigRepository` + `ChannelHttpClient`), одним `final Dio dio` и 30-сек таймаутами; `initBase({required String address})` — **идемпотентный метод экземпляра**, и зовёт его только `LiveSessionStarter`: при старте — с адресом из ссылки спаривания, затем на каждом приветствии — с адресом пути, по которому оно пришло. Адреса из сборки нет. Для команд `ApiClient` **инертен**: живой канал команд — WS-конверт (фаза 026), а Dio несёт только байты вложений — его инжектит один data source, `RealFileRemoteDataSource` (фаза 028). §2 — реальный `AppConfigRepository`. `BaseApiRepository` (§1) и request-builder-обвязка (§3) — **целевой** REST-каркас: в коде их нет, все четыре мок-API-класса — `GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi` (см. §3) — обходятся без них. §4 — размеченный пример. DI-флип 016 **сделан** (фаза 026): `Real*RemoteDataSource` забиндены на `[Environment.dev]`, моки сужены до `[prod, test]`.
+
+---
+
+## 1. `ApiClient` — Dio для байтов вложений
+
+Один экземпляр Dio — в синглтоне `ApiClient`, с одним `AuthInterceptor`. У NOX **один** бэкенд (`noxd`) — второго хоста нет. Адрес приходит только ссылкой спаривания: `initBase(address:)` вызывает только `LiveSessionStarter` — при старте с адресом из ссылки, затем на каждом приветствии с адресом пути, по которому оно пришло (§6). **Адреса из сборки нет** — по модели безопасности: у него не было бы ключа сервера, и канал не смог бы проверить соединение с ним. Таймауты — 30 с.
+
+`lib/data/remote/api_client.dart` (сокращённо):
+
+```dart
+import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+
+@LazySingleton(env: [Environment.dev])
+class ApiClient {
+  ApiClient(this._config, this._channels)
+    : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
+
+  final AppConfigRepository _config;
+  final ChannelHttpClient _channels;
+  final Dio dio;
+
+  // beginTransfer / endTransfer / cancelTransfers / pathGeneration - the
+  // registry of byte transfers (phase 043), see §6.3б and 16-file-upload.md.
+
+  /// Points the client at the paired server and installs the interceptor.
+  /// Idempotent for the interceptor; the base URL is re-pointed on every call.
+  ///
+  /// [address] is REQUIRED, and there is no build-time fallback. An address
+  /// that came from the build belongs to no pairing, so there is no key a
+  /// connection to it could be checked against.
+  void initBase({required String address}) {
+    final previous = dio.options.baseUrl;
+    if (address.isNotEmpty) {
+      dio.options.baseUrl = address.contains('://') ? address : 'https://$address';
+    }
+    // A new address is a new path: every transfer on the old one ends now and
+    // goes on by the new one.
+    if (previous.isNotEmpty && previous != dio.options.baseUrl) {
+      _pathGeneration++;
+      cancelTransfers();
+    }
+    _installAdapter();
+    // Dio's adapter asks for a client ONCE and caches it; the channel client
+    // throws its clients away when the binding changes.
+    _channels.onDiscarded = _installAdapter;
+    if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
+      dio.interceptors.add(AuthInterceptor(_config));
+    }
+  }
+
+  /// The transfers' own client, not the socket's: Dio writes its connect
+  /// timeout onto the client it is given, on every request.
+  void _installAdapter() {
+    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _channels.transferClient);
+  }
+}
+```
+
+Ключевое:
+
+- **Адрес — только из ссылки спаривания.** Base URL — `https://<host:port>` спаренного сервера, без суффикса пути; порт — тот, что несёт ссылка. Новый адрес — новый путь: передачи старого обрываются и сразу продолжаются по новому (`pathGeneration`, §6.3б).
+- **Каждое соединение — канал модуля.** `IOHttpClientAdapter` получает `ChannelHttpClient.transferClient` (свой у Dio: Dio пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр); каждое его соединение проходит TLS 1.3 и проверку `POST /auth` → `POST /auth2` само по себе (§6.0). Клиенты канала пересоздаются при `bind`/`unbind`, поэтому адаптер ставится заново через `onDiscarded`.
+- **Один auth-interceptor, читающий токен асинхронно на каждом запросе.** `AuthInterceptor` (`lib/data/remote/interceptor/auth_interceptor.dart`) зовёт `getUserAuthIdToken()` per request и ставит `Authorization: Bearer <token>` только для непустого значения; писателя токена нет — соединение аутентифицирует канал. `onError` ничего не решает и **всегда** пробрасывает ошибку дальше, `401` включительно: `401` от `/files` — неудавшаяся передача (ключа соединения нет среди спаренных, контракт §1), а не выход. Соединение доказывает ключ устройства в проверке канала, ещё до `/ws` и `/files`, и у принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` и событие `device.revoked` (§6.0). Выход по ответу файла позволил бы любому ответу `/files` стереть устройство. На non-2xx Dio бросает `DioException`, который ловится выше (см. §3 и [04-data-layer.md](04-data-layer.md) §5: `DioException` мапится по типу/статусу).
+- **Для команд инертен.** Команды идут WS-конвертом (`NoxSocketClient`, фаза 026); `ApiClient` инжектит один data source — `RealFileRemoteDataSource` (байты вложений, фаза 028).
+- **Один хост.** У NOX единственный бэкенд (`noxd`, `client_backend/`) — отдельного второго хоста (search/etc.) нет. Его адрес и порт приходят ссылкой спаривания и живут в сессии (§6), а не в `AppConfig`.
+
+### `BaseApiRepository`
+
+База API-классов отдаёт единственный клиент как геттер — у NOX один хост.
+
+`lib/data/remote/api/base/base_api_repository.dart` (целевой каркас — в реальном коде файла нет, ни один из четырёх мок-API-классов его не наследует, см. §3):
+
+```dart
+import 'package:dio/dio.dart' as dio;
+import 'package:nox_app/data/remote/api_client.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+
+abstract class BaseApiRepository {
+  dio.Dio get baseClient => getIt<ApiClient>().dio;
+}
+```
+
+> `baseClient` — единственный `Dio` синглтона `ApiClient`: тот же клиент, тот же адрес спаренного сервера, тот же канал. Свежесть авторизации даёт не пересоздание клиента, а `AuthInterceptor`, который читает токен на каждом запросе. `ApiClient` зарегистрирован только в `[Environment.dev]`, поэтому API-класс поверх `BaseApiRepository` живёт там же.
+
+---
+
+## 2. `AppConfigRepository` (контракт, от которого зависят `ApiClient` и `main.dart`)
+
+`ApiClient` (§1) и bootstrap в `main.dart` (см. [02-dependency-injection.md](02-dependency-injection.md)) ссылаются на `AppConfigRepository`; [04-data-layer.md](04-data-layer.md) и [02-dependency-injection.md](02-dependency-injection.md) его используют, а контракт выписан здесь. Observability у NOX идёт через `LogRepository` (см. [04-data-layer.md](04-data-layer.md)).
+
+> **Реальный контракт (6 членов).** Ниже выписан **фактический** интерфейс `AppConfigRepository` ([lib/domain/repository/app_config/app_config_repository.dart](../../../lib/domain/repository/app_config/app_config_repository.dart)). Две поправки к канон-паттерну блюпринта: (1) `getUserAuthIdToken()` — **метод**, а не геттер (он читает secure storage, поэтому вызывается со скобками); (2) геттера `baseApiUrl` **нет**, как нет и адреса сервера в конфиге: адрес приходит ссылкой спаривания (§6). Сам конфиг — класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`) с единственным полем `final AppFlavorType flavor`; поля `apiSignatureKey` в коде нет — это пример/TBD-поле схемы §4. Поверх auth-seam'а фичи 019 контракт дорос парой `limits` / `updateLimits(ServerLimits)` — границы полезной нагрузки из `session.hello` (контракт v0 §3): до первого живого хендшейка отдаются `ServerLimits.contractDefaults` (`maxMessageBytes` 65536, `maxAttachmentBytes` 104857600, `maxFrameBytes` 131072), а `LiveSessionStarter` (`lib/data/sync/live_session_starter.dart`) кладёт лимиты каждого приветствия через `updateLimits`.
+
+`lib/domain/repository/app_config/app_config_repository.dart`:
+
+```dart
+import 'package:nox_app/domain/model/app_config/app_config.dart';
+import 'package:nox_app/domain/model/app_config/server_limits.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
+
+/// Holds flavor-dependent config, initialized once after the DI container is ready
+/// (see contracts/di-bootstrap.md), plus the auth-token source of the transport
+/// seam. The server address is not config: it comes from the pairing link.
+abstract class AppConfigRepository {
+  Future<void> initialize({required AppFlavorType flavorType});
+
+  AppConfig get config;
+
+  /// A request-level token for the `Authorization` header, read from secure
+  /// storage (key `auth_id_token`). Nothing writes one - the channel check
+  /// authenticates the connection - so this is `null` in every build.
+  Future<String?> getUserAuthIdToken();
+
+  /// Server payload bounds from the last session.hello (contract §3), the
+  /// preflight seam for the composer/picker. Contract defaults until a live
+  /// handshake lands via [updateLimits] — which is every mock-backed flavor, and
+  /// the window before the first greeting on a live one.
+  ServerLimits get limits;
+
+  /// Stores the limits of a live handshake. Written by `LiveSessionStarter` on
+  /// every greeting (feature 026) — the server may revise them at any reconnect.
+  void updateLimits(ServerLimits limits);
+
+  /// True under the test environment — the future hook for bypassing real auth in tests.
+  /// Wired now (env-keyed); its consumers arrive with the backend.
+  bool get isTestEnvironment;
+}
+```
+
+Реализация — `@LazySingleton(as: AppConfigRepository, env: [Environment.dev, Environment.prod, Environment.test])` (полный env-список: репозиторий нужен во всех окружениях, иначе `getIt<AppConfigRepository>()` в `ApiClient` упадёт под недостающим env).
+
+`lib/data/repository/app_config/app_config_repository_impl.dart` (фактическая форма):
+
+```dart
+@LazySingleton(as: AppConfigRepository, env: [Environment.dev, Environment.prod, Environment.test])
+class AppConfigRepositoryImpl implements AppConfigRepository {
+  AppConfigRepositoryImpl(this._secureStorage, @Named('isTestEnvironment') this._isTestEnvironment);
+
+  final FlutterSecureStorage _secureStorage;
+  final bool _isTestEnvironment;
+
+  AppConfig? _config;
+
+  /// In-memory handshake limits: contract defaults until a greeting stores the
+  /// server's. In-memory is deliberate - a fresh greeting arrives on every
+  /// connection, there is nothing durable to persist.
+  ServerLimits _limits = ServerLimits.contractDefaults;
+
+  /// Secure-storage key of a request-level auth token. Nothing writes one: the
+  /// channel check (contract §1) authenticates every connection, so the token
+  /// stays read-only plumbing for the `Authorization` header.
+  static const String _kAuthIdToken = 'auth_id_token';
+
+  @override
+  Future<void> initialize({required AppFlavorType flavorType}) async {
+    _config = AppConfig(flavor: flavorType);
+  }
+
+  @override
+  AppConfig get config => _config ?? (throw StateError('AppConfigRepository.initialize was not called'));
+
+  @override
+  Future<String?> getUserAuthIdToken() async {
+    // Trim so a blank/whitespace-only stored value reads as absent (null) rather than
+    // producing a malformed `Bearer   ` header.
+    final token = (await _secureStorage.read(key: _kAuthIdToken))?.trim();
+    return (token == null || token.isEmpty) ? null : token;
+  }
+
+  @override
+  ServerLimits get limits => _limits;
+
+  @override
+  void updateLimits(ServerLimits limits) {
+    _limits = limits;
+  }
+
+  @override
+  bool get isTestEnvironment => _isTestEnvironment;
+}
+```
+
+> **Факты реализации.** `AppConfigRepositoryImpl` не подмешивает `BaseRepositoryHelper` (для конфигурации, не ходящей в сеть, он ничего не добавляет), хранит конфиг лениво (`AppConfig? _config`) и собирает его прямо в `initialize` как `_config = AppConfig(flavor: flavorType)`, а на чтение `config` до `initialize` бросает `StateError('AppConfigRepository.initialize was not called')`. Токен читается из `flutter_secure_storage` по ключу `auth_id_token` — **писателя нет** (соединение аутентифицирует канал, токенов контракт v0 не несёт), поэтому фактически всегда `null` → запрос уходит без `Authorization`. `isTestEnvironment` приходит из DI (`@Named('isTestEnvironment')`, env-keyed в `RegisterModule`), а не захардкожен.
+
+Связи:
+
+- **`config` — флейвор-резолвед.** Конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), который несёт только `flavor`; его производит `AppConfigRepositoryImpl.initialize()` и читают через `AppConfigRepository.config` (`@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])`, см. [02-dependency-injection.md](02-dependency-injection.md)). Адреса сервера в нём нет: `LiveSessionStarter` берёт спаренный адрес из сессии и отдаёт его `ApiClient.initBase(address:)` (§1, §6); prod остаётся на моках потому, что `Environment.prod` биндит `Mock*RemoteDataSource`. `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; секрето-несущие значения, когда появятся, придут из зашифрованных секретов через `dart-define-from-file` ([09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)).
+- **`initialize(flavorType:)`** вызывается в `main.dart` **после** `getIt.allReady()` (контейнер уже собран) — см. bootstrap-последовательность в [02-dependency-injection.md](02-dependency-injection.md) §«main.dart» и [05-presentation-layer.md](05-presentation-layer.md). Это место «поднять конфиг/observability после готового DI».
+- **`getUserAuthIdToken()`** — единственная точка, откуда auth-interceptor берёт токен; он читает secure storage напрямую (ключ `auth_id_token`, писателя нет). В примере §4 его бэкендит `AuthRepository` поверх того же `flutter_secure_storage` (пример схемы — контракт v0 её не содержит).
+- **`limits` / `updateLimits`** — сюда транспорт кладёт границы из `session.hello`; с фазы 026 это делает `LiveSessionStarter` (`lib/data/sync/live_session_starter.dart`); композер/пикер делают по ним preflight, вместо того чтобы ловить `payload_too_large` на отправке.
+- Резолв везде через `getIt<AppConfigRepository>()` **напрямую** — конфиг-репозиторий **не** алиасится в `global_aliases.dart` (там алиасы `logRepository`, `itemRepository`, `settingsRepository`, `chatRepository`, `appStateRepository`, `authRepository`, `sessionRepository` и три сервиса; см. [02-dependency-injection.md](02-dependency-injection.md) §8).
+
+---
+
+## 3. REST-слой: `RequestBuilder` / `RequestBuilderHelper` + envelope (мост к 04)
+
+Полные шаблоны REST-слоя — в [04-data-layer.md](04-data-layer.md) §7. Здесь — короткий мост, чтобы §1–2 замкнулись на реальный путь запроса.
+
+- **`RequestBuilder<T>` / `RequestBuilderHelper<T>`** ([04-data-layer.md](04-data-layer.md) §7в) — `RequestBuilder` превращает доменный конфиг в `body`/`path`/`headers`; `RequestBuilderHelper` (mixin) резолвит конкретный builder из `getIt` и форвардит вызовы, чтобы API-класс не разводил билдеры руками. API-класс расширяет `BaseApiRepository` (§1) и подмешивает `RequestBuilderHelper<TheBuilder>`.
+- **Envelope `ResponseEntity<T>` + `EntityConverter<E>`** ([04-data-layer.md](04-data-layer.md) §2–3) — каждый ответ data source'а обёрнут в единый envelope; `ResponseEntity<T>` — генерик-обёртка, `@EntityConverter()` резолвит `T` в конкретный entity. Фактическая форма (`lib/data/entity/base/response_entity.dart`), выровненная по контракту v0: `success` зеркалит проводной `ok`, `error` — объект `{code, message}` из §2.1 контракта:
+
+```dart
+@freezed
+abstract class ResponseEntity<T> with _$ResponseEntity<T> {
+  const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
+
+  factory ResponseEntity.fromJson(Map<String, dynamic> json) => _$ResponseEntityFromJson(json);
+}
+```
+
+  `ErrorWireEntity` (`lib/data/entity/base/error_wire_entity.dart`) — это ровно `{required String code, required String message}`.
+
+  `EntityConverter<E>` — рукописный реестр типов (`_isType<E, XxxEntity>()`-цепочки `fromJson` + зеркальные `object is XxxEntity` в `toJson`, иначе `throw ArgumentError('No converter found for type $E')`). Каждый entity, ходящий через `ResponseEntity<T>`, обязан быть в **обеих** цепочках. Полный шаблон + правило сопровождения — [04-data-layer.md](04-data-layer.md) §3.
+
+- **Поток запроса:** доменный конфиг → `RequestBuilder` (`path`/`body`/`headers`) → API-класс шлёт через `baseClient` (§1) → `ResponseEntity<T>.fromJson(response.data)` → репозиторий распаковывает через `BaseRepositoryHelper.unwrapEnvelope<T>(response, what)` и заворачивает в `RepositoryResult` через `BaseRepositoryHelper.execute<T>()`. У `execute` **четыре** catch-ветки (см. [04-data-layer.md](04-data-layer.md) §5; **нет** `ApiException`/`DaoException` — это правило блюпринта): `on BaseRepositoryException` — уже смапленный доменный сбой проходит насквозь и **не** разжижается в `unknown`; `on SocketUnavailableException` → `connection` (живой канал не поднят или команда осталась без ответа); `on DioException` — маппинг по типу/статусу (таймауты и `connectionError` → `connection`; 401 → `unauthenticated`; 403 → `authentication`; 404 → `notFound`; остальное → `internal`); catch-all → `unknown`. Конкретный код ошибки приходит **не** из ручной проверки `response.statusCode`, а из `unwrapEnvelope` → `RepositoryException.fromWireCode(error.code)` (`invalid_request`, `name_taken`, `payload_too_large`, `attachment_gone`, `rate_limited`, `unsupported_schema`, …; неизвестный клиенту код деградирует в `internal` по правилу эволюции контракта).
+
+> **`BaseMapper`** живёт в `lib/data/mapper/base_mapper.dart` (не `mapper/base/`), см. [04-data-layer.md](04-data-layer.md) §4 — упоминается здесь только чтобы зафиксировать путь, REST-слой его не трогает напрямую.
+>
+> **Мок-API-классы.** Ни один из четырёх сегодняшних API-классов не наследует `BaseApiRepository` и не использует `RequestBuilder`/`RequestBuilderHelper`: каждый — `@lazySingleton`-**мок**, собирающий `ResponseEntity<T>` напрямую (через `Future.delayed`). `GetChatsApi` / `GetMessagesApi` / `SendMessageApi` уже отдают **проводные формы контракта v0** (`ChatsWireEntity{chats, has_more}`, `MessageWireEntity`, фича 025); реальная отправка уже идёт командой `message.send` по WS-конверту (`RealMessageRemoteDataSource`, фаза 026), там же сделан и DI-флип на реальные источники — моки остались только под `[prod, test]`, а эти мок-API-классы обслуживают именно их.
+>
+> **`GetItemsApi` — намеренно замороженная верификационная нарезка**, а не продуктовый канон. `GetItemsApi` ([lib/data/remote/api/item/get_items_api.dart](../../../lib/data/remote/api/item/get_items_api.dart)) сохраняет **offset-пример** проводной обёртки `ItemsEntity{items, page, page_size, total}` и путь `v1/items` (без ведущего слеша), query-ключи `page`/`page_size`/`search`, пагинация **1-based** (`(config.page - 1) * pageSize`). Это исторический пример, который специально не трогают; **`total` живёт только в нём**: доменная `PageMetadata` поля `total` не имеет, и `ItemRepositoryImpl` сворачивает ответ в `PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null)`. Продуктовые пути — paged (`page`/`page_size` → `{chats, has_more}`) для списка чатов и seq-курсор (`before_seq` + `limit` → `{messages, has_more}`) для истории сообщений.
+
+---
+
+## 4. Авторизация запросов (размеченный пример)
+
+> **Это размеченный пример схемы авторизации запросов, не контракт.** Аутентификацию в NOX даёт канал: каждое соединение проходит проверку `POST /auth` → `POST /auth2`, где устройство доказывает свой ключ, а сервер — ключ из ссылки спаривания (§6.0, контракт §1); доступ устройство получает спариванием (контракт §8A). Заголовков авторизации, подписи запросов и токен-эндпоинтов контракт v0 не содержит. Ниже приведена **одна возможная** схема авторизации на уровне запросов: сервер требует не просто Bearer-токен, а собственную токен-модель (короткий access-JWT + opaque refresh) И подписанные запросы, по **двум** осям сразу — и токен-модель отдельная, и каждый запрос обязан быть подписан. Главное здесь — **структура интерсепторов**, которую надстраивают над `ApiClient` (§1) и `AppConfigRepository` (§2). **Конкретные** имена заголовков, формат строки подписи, алгоритм HMAC и контракт токен-эндпоинтов — **пример/TBD**; ввести любой из них — изменение контракта, а не правка клиента, и схему подписи «на глаз» здесь не изобретать. В коде живёт только простой `Bearer` в `AuthInterceptor` — шов без писателя (`auth_id_token`), — и никакого §4-pipeline'а.
+
+### 4.1 Пример: две оси требований к запросу
+
+(Пример — контракт v0 такой авторизации не содержит. Ниже — одна возможная форма требований.)
+
+| Ось | Простой Bearer | Пример: бэкенд NOX |
+|---|---|---|
+| Идентификация запроса | только `Authorization: Bearer <token>` | `Authorization: Bearer <access_jwt>` **+** HMAC-подпись запроса **+** security-заголовки **+** replay-окно **+** build-gate |
+| Токен-модель | один долгоживущий токен | **собственная**: короткий **access-JWT** (~15 мин) + **opaque refresh** (~45 дней) с **ротацией** и **reuse-detection** на refresh |
+| Подпись запроса | нет | **обязательна** на (почти) каждом запросе — без неё `403` ещё до исполнения endpoint'а |
+| Force-update | нет | невалидный/неполный `x-user-agent` → `403` ДО проверки timestamp/подписи; валидный UA с `buildNumber < min_build_number` → `426 Upgrade Required` (`error.code: upgrade_required`) |
+
+То есть надстраиваем **две** вещи: (a) дополнительные request-интерсепторы (подпись + security-заголовки + timestamp + build-UA), и (b) `getUserAuthIdToken()`, бэкенднутый `AuthRepository` поверх `flutter_secure_storage` с refresh→rotate→retry на 401.
+
+### 4.2 (a) Дополнительные request-интерсепторы — HMAC + security-заголовки + timestamp + build-UA
+
+Структура: **отдельный** `InterceptorsWrapper` (или цепочка), навешиваемый в `ApiClient.initBase(address:)` **после** `AuthInterceptor` из §1. Он на каждом запросе:
+
+1. ставит `x-request-timestamp` (epoch **ms**, в пределах ±5-мин replay-окна сервера);
+2. ставит security-заголовки: `x-trace-id` (uuid per request), `x-device-id` (стабильный id устройства);
+3. ставит `x-user-agent` в формате `'{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}'` — ровно 6 slash-сегментов; `os` покрывает все 5 целевых платформ (`ios`/`android`/`windows`/`linux`/`macos`, регистр lower-case — точный набор токенов пример/TBD), `buildNumber` — int, `isPhysical` — bool; пример: `ios/1.0.0/100/iPhone14,2/17.0/true`; канон — `UserAgentModel` (`user_agent_model.dart`). Невалидный/неполный UA → `403` ДО проверки timestamp/подписи; валидный UA с `buildNumber < min_build_number` → `426 Upgrade Required` (`error.code: upgrade_required`);
+4. вычисляет `x-request-signature = hex(HMAC-SHA256(signing_key, signature_input))` и ставит его последним (когда `body`/`path`/`timestamp` уже финализированы).
+
+В этом примере каждый запрос несёт ровно 5 security-заголовков — `x-request-timestamp`, `x-request-signature`, `x-user-agent`, `x-device-id`, `x-trace-id` (наличие всех проверяется одним «hasAllSecurityHeaders»-гейтом); отсутствие любого → `403` до проверки HMAC. (Точный набор и имена заголовков — пример/TBD.)
+
+#### `UserAgentModel` — определение (источник `x-user-agent`)
+
+Выше `UserAgentModel` цитировался как канон формата — здесь его контракт фиксируется (пример формы, как и вся схема §4). Модель собирает 6 сегментов значения `x-user-agent`, склеиваемых через `/` строго в этом порядке: `{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}`.
+
+| Сегмент | Тип | Источник | Правило |
+|---|---|---|---|
+| `os` | `String` | вычисляется по платформе (`Platform.isIOS`/`isAndroid`/`isWindows`/`isMacOS`/`isLinux`) | один из 5 целевых: `'ios'`/`'android'`/`'windows'`/`'macos'`/`'linux'`, регистр lower-case (точный набор токенов — пример/TBD) |
+| `appVersion` | `String` | `package_info_plus` (`PackageInfo.version`) | semver-строка, напр. `1.0.0` |
+| `buildNumber` | `int` | `package_info_plus` (`PackageInfo.buildNumber`) | целое; `buildNumber` ниже `min_build_number` → `426` build-gate (§4.4) |
+| `deviceModel` | `String` | плагин device-info (per-OS-ветка: model/computer-name по платформе — точный источник пример/TBD) | напр. `iPhone14,2` |
+| `osVersion` | `String` | плагин device-info (per-OS-ветка: версия ОС по платформе — точный источник пример/TBD) | напр. `17.0` |
+| `isPhysical` | `bool` | плагин device-info (физическое устройство vs симулятор/эмулятор; на десктопе — `true`/example-TBD) | `true` — реальное устройство, `false` — симулятор/эмулятор |
+
+> `package_info_plus` (пиннится в [01-stack-and-tooling.md](01-stack-and-tooling.md), `^10`) даёт только `appVersion`+`buildNumber`; `deviceModel`+`osVersion`+`isPhysical` приходят из отдельного плагина device-info (конкретный пакет ещё не выбран и в `pubspec.yaml` не подключён — пример/TBD; запиннить в [01-stack-and-tooling.md](01-stack-and-tooling.md) при подключении первым консьюмером). На десктопе (Windows/macOS/Linux) такой плагин имеет свои per-OS-ветки; точное соответствие сегментов десктопным полям — пример/TBD.
+
+`lib/domain/model/user_agent/user_agent_model.dart` (целевой скелет — Freezed-модель с фабрикой и `toHeaderValue()`; в коде этого файла ещё нет):
+
+```dart
+@freezed
+abstract class UserAgentModel with _$UserAgentModel {
+  const UserAgentModel._();
+
+  const factory UserAgentModel({
+    required String os,          // 'ios'|'android'|'windows'|'macos'|'linux' (набор — пример/TBD)
+    required String appVersion,  // package_info_plus
+    required int buildNumber,    // package_info_plus
+    required String deviceModel, // плагин device-info (per-OS ветка)
+    required String osVersion,   // плагин device-info (per-OS ветка)
+    required bool isPhysical,    // плагин device-info (на десктопе — true/example-TBD)
+  }) = _UserAgentModel;
+
+  /// Асинхронная сборка из package_info_plus + плагина device-info.
+  /// Зовётся ОДИН раз в DI-бутстрапе (см. ниже), не на каждом запросе.
+  static Future<UserAgentModel> build() async {
+    // os := по 5 платформам: Platform.isIOS/isAndroid/isWindows/isMacOS/isLinux → ios/android/windows/macos/linux
+    // appVersion/buildNumber := PackageInfo.fromPlatform()
+    // deviceModel/osVersion/isPhysical := плагин device-info — per-OS ветка (ios/android/windows/macos/linux)
+    throw UnimplementedError('TODO(auth-stage2): build from package_info_plus + a device-info plugin (5 platforms)');
+  }
+
+  /// Значение заголовка x-user-agent — ровно 6 сегментов через '/'.
+  String toHeaderValue() => '$os/$appVersion/$buildNumber/$deviceModel/$osVersion/$isPhysical';
+}
+```
+
+> **Где кешируется.** `UserAgentModel.build()` — асинхронная и читает плагины, поэтому собирается **один раз при старте** (значения неизменны на сессию) и регистрируется как DI-синглтон (`@lazySingleton` через `@preResolve`-провайдер, либо просто провайдер `DeviceContext`, поднимаемый в бутстрапе после `getIt.allReady()` — см. [02-dependency-injection.md](02-dependency-injection.md)). Security-interceptor (§4.2 п.3) берёт уже готовую строку через `userAgent.toHeaderValue()` синхронно — **не** дёргает `package_info_plus`/плагин device-info на каждом запросе.
+
+#### `x-device-id` — стабильный id устройства
+
+`x-device-id` (§4.2 п.2) — **стабильный** идентификатор устройства: генерируется **один раз** при первом запуске (uuid v4 через пакет `uuid`, [01-stack-and-tooling.md](01-stack-and-tooling.md)) и **сохраняется** в `flutter_secure_storage` под ключом `_device_id`; при последующих запусках читается из storage, не перегенерируется. Тот же id потом уходит и в push-регистрацию — детальный контракт хранения и его роль в дедупе push-токенов см. [15-push-notifications.md](15-push-notifications.md) §6.4.
+
+> **`x-device-id` НЕ участвует в подписи.** Строка подписи — `METHOD\nPATH\nBODY_SHA256\nTIMESTAMP` (ниже); `x-device-id` в неё **не** входит. Поэтому смена/ротация device-id **не** ломает HMAC-подпись — запрос всё равно подписан корректно и проходит security-pipeline. Реальное последствие неправильного/«плавающего» device-id — **не** ошибка авторизации, а **осиротевший push-токен**: при смене id сервер дедупит push-строку по fallback-ключу и создаёт новую строку вместо обновления старой (старая остаётся сиротой), плюс теряется различение устройств. Поэтому id обязан быть стабильным и непустым — см. [15-push-notifications.md](15-push-notifications.md) §6.4.
+
+Пример формы `signature_input` (пример, как и вся схема §4) — конкатенация через `\n`:
+
+```
+signature_input = METHOD + "\n" + PATH + "\n" + BODY_SHA256 + "\n" + TIMESTAMP
+x-request-signature = hex(HMAC-SHA256(signing_key, signature_input))
+```
+
+- **METHOD** — в этом примере **НЕ** uppercase-verb (`GET`/`POST`), а литеральная строка Dart-enum'а (`ApiRequestMethod.get`, `ApiRequestMethod.post`, …). Если финальная схема сохранит такой формат — третьесторонний клиент, пересчитывающий HMAC, обязан воспроизвести **эту** строку, а uppercase-verb упадёт на верификации. (Типичная ловушка такого формата подписи.)
+- **PATH** — в этом примере полный путь **с** query (например, `/api/v1/<resource>/?limit=20`). Реальный бэкенд может подписывать путь **с** или **без** query — конкретное правило пример/TBD.
+- **BODY_SHA256** — `hex(SHA256(request.bodyBytes))`, то есть hex-SHA-256 **сырых байтов тела, как они уходят на провод**. Конкретно по типу тела:
+  - **JSON POST** — тело сериализуется в JSON, кодируется в UTF-8, и хешируются именно эти байты (`hex(SHA256(utf8(json)))`). Хешировать надо **финальный** сериализованный байтовый поток, а не доменный объект.
+  - **`multipart/form-data`** — хешируется **всё тело целиком как передаётся**, включая boundary-разделители (а не только полезная нагрузка файла). Источник хеша — итоговый собранный multipart-поток.
+  - **GET/DELETE без тела** — `hex(SHA256(""))`, т.е. SHA-256 пустой строки (пустого набора байтов).
+- **TIMESTAMP** — значение `x-request-timestamp` (epoch ms как строка).
+- **signing_key** — `apiSignatureKey` из `AppConfig` (целевое пример/TBD-поле, per флейвор, из зашифрованных секретов, [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)).
+
+Скелет (имена/формат — placeholder под сверку):
+
+```dart
+// lib/data/remote/api/base/security_interceptor.dart — STRUCTURE, not final.
+// TODO(auth-stage2): the stage-2 authentication scheme is not finalized yet —
+// replace the header names, order and signature_input format with the real one.
+// Do not hardcode a signing scheme by guesswork.
+InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
+  return InterceptorsWrapper(
+    onRequest: (options, handler) async {
+      final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch.toString();
+      options.headers['x-request-timestamp'] = timestamp;
+      options.headers['x-trace-id'] = /* uuid v4 per request */ '';
+      options.headers['x-device-id'] = /* стабильный device id */ '';
+      options.headers['x-user-agent'] = /* 6 slash-сегментов (канон UserAgentModel, os по 5 платформам) */ '';
+
+      final method = /* 'ApiRequestMethod.<verb>' — НЕ uppercase! */ '';
+      final path = options.uri.path + (options.uri.hasQuery ? '?${options.uri.query}' : ''); // пример: путь с query
+      final bodyBytes = /* сырые байты тела (или пустая строка для GET) */ <int>[];
+      final bodyHash = /* hex(sha256(bodyBytes)) */ '';
+      final signatureInput = '$method\n$path\n$bodyHash\n$timestamp';
+      final signingKey = appConfig.config.apiSignatureKey;
+      options.headers['x-request-signature'] = /* hex(HMAC-SHA256(signingKey, signatureInput)) */ '';
+
+      return handler.next(options);
+    },
+  );
+}
+```
+
+> **Web-deep-link исключение (пример/TBD).** Если у финальной схемы появятся endpoint'ы, открываемые по входящей web-ссылке в браузере (`requiresWebDeepLink = true`), такие пути HMAC/security-заголовки **не требуют** и не подписываются — их обрабатывает [13-deep-links.md](13-deep-links.md). Учесть при разводке interceptor'а (пропускать подпись для этих путей). Конкретный набор таких endpoint'ов — открытый вопрос (deep links в приложении не реализованы) — у NOX идентичность анонимная (ID + label, без email/телефона), поэтому email-verification / password-reset ссылки здесь неприменимы.
+
+### 4.3 (b) `getUserAuthIdToken()` поверх `AuthRepository` + refresh→rotate→retry
+
+`AppConfigRepository.getUserAuthIdToken()` (§2) в этой схеме отдавал бы **access-JWT** из `AuthRepository` (в коде он читает secure storage напрямую, писателя нет). Структура (пример):
+
+- **`AuthRepository`** хранит пару `access` + `refresh` в **`flutter_secure_storage`** ([01-stack-and-tooling.md](01-stack-and-tooling.md)); контракт — `RepositoryResult`-форма ([03-domain-layer.md](03-domain-layer.md)), как у остального слоя данных. Десктоп-бэкенд хранилища refresh-токена под будущий auth-флоу — Keychain (macOS) / DPAPI/wincreds (Windows) / libsecret (Linux), см. ниже «Secure storage — desktop backends & local wipe».
+- **`getUserAuthIdToken()`** возвращает текущий access-JWT (или `null`, если разлогинен → запрос идёт без `Authorization`, §1).
+- **refresh-on-401**: отдельный response-interceptor (или обёртка в `AuthRepository`): при `401` (token expired) — дёрнуть refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`) с `refresh_token` → получить **новую** пару → перезаписать в secure storage → **повторить** исходный запрос. В примере сервер делает **ротацию** refresh-токена и **reuse-detection**: предъявление уже отозванного refresh блэклистит всю сессию — поэтому клиент обязан хранить только **последнюю** выданную пару и не гонять параллельные refresh'и (нужен single-flight lock на refresh, иначе можно сжечь собственную сессию).
+
+Контракт токен-эндпоинта (пример — в контракте v0 такого эндпоинта нет):
+
+| Поле ответа | Смысл |
+|---|---|
+| `access_token` | короткий JWT для `Authorization: Bearer` |
+| `refresh_token` | opaque-токен для refresh-эндпоинта (в примере — `POST /api/v1/auth/token/refresh/`) |
+| `access_token_valid_timestamp` | ISO-8601 UTC — до когда валиден access |
+| `refresh_token_valid_timestamp` | ISO-8601 UTC — до когда валиден refresh |
+
+Алгоритм клиента: использовать access до `access_token_valid_timestamp`; на истечении (или на `401 token_expired`) — refresh → rotate → retry. При провале refresh (refresh истёк / блэклистнут) — разлогин → экран входа.
+
+> **Secure storage — desktop backends & local wipe.** `flutter_secure_storage` (`^10`) кросс-платформен и покрывает все 5 целевых платформ (iOS, Android, Windows, Linux, macOS): на macOS — Keychain, на Windows — DPAPI/wincreds, на Linux — libsecret/gnome-keyring (или KWallet). Продуктовое правило «one identity per device» опирается на этот ОС-keystore — он есть на всех 5 платформах. «Full local wipe на Logout» = `secureStorage.deleteAll()` + очистка Sembast/`shared_preferences` + (фаза 048) файлы баз и ключ локальной базы — **единый путь без платформенных веток** (один и тот же вызов на всех 5). Linux-нюанс: рабочий keyring (libsecret/gnome-keyring или KWallet) — **рантайм-предусловие** и **known-risk** именно для launch-deferred платформ Windows/Linux (их desktop-запуск отложен; в CI — только compile-smoke на всех трёх десктопах). В реальном коде secure storage уже подключён: `SessionRepositoryImpl` хранит там анонимный идентификатор (`session.identifier`), пару ключей устройства (`session.device_key`), ключ сервера из ссылки спаривания (`session.server_key`), настройки связи (`session.server_addresses`, §6.4), ожидание одобрения (`session.pending_pairing`, §6.4а) и ключ локальной базы (`device.storage_key`, фаза 048) — все записи «только для этого устройства» (`SecureStoreOptions` на единственном экземпляре хранилища, [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)); `AppConfigRepositoryImpl` читает оттуда `auth_id_token` (писателя нет), а `AuthRepositoryImpl.logout({forced})` выполняет описанный выше wipe: добровольный выход сначала отзывает свой ключ (§6.4а), затем `SessionRepository.clear()` (записи сессии по имени, ожидание одобрения среди них, затем `secureStorage.deleteAll()` и удаление ключей prefs), и только на его успехе — очистка sembast-сторов, где `sync`-курсор сбрасывается **первым**, до чатов и сообщений, а в конце база закрывается под своим ключом, ключ локальной базы забывается и файлы баз удаляются ([04-data-layer.md](04-data-layer.md) §6г). Токен-модели §4 (access + refresh с ротацией) в коде нет: контракт v0 её не содержит.
+
+### 4.4 Обработка статусов: 503 «initializing», 429, 426 build-gate
+
+Клиент обязан понимать стартовые/защитные коды сервера (форма — пример из чужой схемы; в контракте v0 эти состояния приходят кодами ошибок §2.1, например `rate_limited`, которые уже мапятся через `RepositoryException.fromWireCode`). Сами мeханики обработки (где принимается решение о повторе, лимит попыток, раздельные ветки) — переносимы под любую финальную схему:
+
+- **`503 service_unavailable` («initializing»)** — в примере сразу после деплоя на свежую БД сервер отдаёт retryable-503, пока идёт out-of-band provisioning схемы. Это семантически **retryable**, **но** retry **НЕ** делается автоматически внутри interceptor'а — `503 initializing` пробрасывается наверх и **возвращается в `BLoC`** как ошибка. Решение «повторить» (короткий backoff + повтор) принимает уже слой презентации/`BLoC` (например, splash/initialisation-экран показывает спиннер и ретраит), а не сетевой interceptor. Так первый «холодный» запрос не зависает в transparent-retry-цикле, скрытом от UI. (Это согласуется с инвариантом §5.5: решение о повторе принадлежит презентации/`BLoC`.)
+- **`429 Too Many Requests`** — в примере превышен per-category rate-limit (auth 10 req/60s и т.п.). Источник retry-инфо зависит от транспорта (пример/TBD): либо HTTP-заголовок `Retry-After`, либо поле `error.details.retry_after` (int, секунды) в JSON body — реальный бэкенд NOX может уметь одно или другое. **Контракт повтора (переносим):** при наличии retry-after-значения — ждать ровно столько секунд перед повтором; при **отсутствии** — экспоненциальный backoff (с потолком **5 минут**). В обоих случаях — **не более 3 попыток на одно пользовательское действие**; после исчерпания попыток ошибка отдаётся в `BLoC`/UI. Не долбить сервер чаще, чем разрешает retry-after.
+- **426 build-gate / 403 невалидный UA** — в примере: невалидный/неполный `x-user-agent` → `403` ДО проверки timestamp/подписи; валидный UA с `buildNumber < min_build_number` → `426 Upgrade Required` (`error.code: upgrade_required`): показать force-update-экран, увести в стор. Это РАЗНЫЕ коды — `403` и `426` обрабатываются **отдельными** ветками. Build для гейта берётся из `x-user-agent` (§4.2).
+
+### 4.5 Правила этой схемы (пример)
+
+- **Собственная токен-модель, не внешний identity-провайдер.** В этом примере NOX не использует чужой identity-токен как bearer — токен-модель собственная (§4.3). `AppConfigRepository.getUserAuthIdToken()` бэкендит `AuthRepository`, а не сторонний auth-SDK. (Это согласуется с продуктовой моделью NOX: анонимная идентичность ID + label, без телефона/email — никакого внешнего identity-провайдера на клиенте.)
+- **Подписанные запросы.** В этом примере без HMAC-подписи запрос отвергается `403` до исполнения — interceptor §4.2 обязателен.
+
+> **FLAG (пример, не контракт).** §4.2–4.3 описывают **структуру** на примере одной схемы. Контракт v0 авторизует соединение каналом (§6.0), а не запрос: конкретных имён заголовков, формата `signature_input`, HMAC-варианта, пути и тела токен-эндпоинта в нём нет. Ввести любой из них — изменение контракта, которое согласуется с `client_backend/` и контрактом v0 до кода; в скелете §4.2 для этого стоит `TODO(auth-stage2)`.
+
+---
+
+## 5. Сетевое состояние и lifecycle-driven refresh
+
+> **Зачем эта секция.** Сетевой контур из §1–4 (HMAC + custom access/refresh JWT, `ApiClient`-интерсепторы, `401 → refresh`) описывает поведение *в момент запроса*. Здесь добавляются два ортогональных наблюдателя, питающих этот контур контекстом: (1) `ConnectivityService` — реактивный поток «онлайн/офлайн» для UX-деградации и (2) app-lifecycle observer, который на возврате приложения из background инициирует превентивную проверку/refresh access-токена. Оба — best-effort слой поверх обязательного контура; ни один не заменяет реактивную обработку ошибок в `ApiClient`.
+
+> **Форма из блюпринта.** Оба слоя следуют уже зафиксированным формам: (1) форма сервиса-обёртки над плагином (`@LazySingleton(as: Interface, env: [dev, prod])` + мок под `[test]`, потоковый геттер) — ровно как `CameraPermissionService` / `FilePickerService`; (2) форма lifecycle-наблюдателя (`WidgetsBindingObserver` → `bloc.add(AppResumed())` с re-entrancy guard) — ровно как app-root-страница блюпринта.
+
+> **Forward-ref.** `AuthBloc` / `AuthRepository.ensureFreshAccessToken()` — часть примера §4 (в коде их нет); здесь они используются как делегаты. До поднятия auth-флоу observer можно подключать только под connectivity-сигнал.
+
+### 5.1 Принцип: два наблюдателя поверх обязательного контура
+
+Сетевой контур из §1–4 — **единственный источник истины** о реальной доступности API. `connectivity_plus` сигнализирует только наличие сетевого интерфейса (Wi-Fi/cellular поднят), а **не** реальный интернет: туннель может быть поднят, но трафик не ходить (captive portal, DNS-дыра, упавший backend). Поэтому правило разделения ответственности:
+
+| Слой | Источник истины | Что решает |
+|---|---|---|
+| `ApiClient`-интерсепторы (§1–4) | фактический ответ/ошибка от backend | `401 → refresh`, маппинг `DioException → RepositoryException`, реальная «нет сети» |
+| `ConnectivityService` (5.2) | состояние сетевого интерфейса ОС | UX-баннер «нет подключения», подавление заведомо-провальных ретраев |
+| app-lifecycle observer (5.4) | переход `paused → resumed` | превентивный refresh access-токена до первого запроса после долгого background |
+
+> **Инвариант.** `ConnectivityService.watchOnline()` НЕ управляет авторизацией и НЕ решает, делать ли запрос — он только красит UX. Финальное решение «запрос провалился» всегда принимает `ApiClient` по фактической `DioException`. Не городить «офлайн-гейт», который блокирует запрос до проверки connectivity — это даёт ложные негативы (интерфейс «none», но VPN/прокси работает) и расходится с источником истины.
+
+### 5.2 `ConnectivityService` — доменный контракт
+
+Пакет: `connectivity_plus` (пиннится в `pubspec.yaml`, сейчас `^7.3.1`; см. [01-stack-and-tooling.md](01-stack-and-tooling.md)). Seam оформлен **сервисом**, а не репозиторием (рядом с `CameraPermissionService` / `FilePickerService`): у него нет ни кеша, ни доменной модели — только обёртка над плагином, чтобы блоки оставались тестируемыми. (Doc-comment в цитате ниже воспроизведён из кода и всё ещё называет фазу 027: транспорт и session-фазы приехали в фазе 026, и продуктовые блоки на них уже перешли — см. §5.4.)
+
+`lib/domain/service/connectivity_service.dart`:
+
+```dart
+/// Domain seam over device connectivity. "Online" = the device reports at least one
+/// active network. This is a PROXY for the design's Offline state: real reachability
+/// becomes a session phase (no socket → connecting → catching-up → live) with the
+/// transport in phase 027, which is what these consumers move onto.
+abstract class ConnectivityService {
+  /// The current online state (one-shot).
+  Future<bool> isOnline();
+
+  /// Emits the CURRENT online state on listen (seed), then a value on every change.
+  Stream<bool> watchOnline();
+}
+```
+
+> **Гарантия типов.** Оба члена отдают «голый» `bool`, без `RepositoryResult`: это горячий UX-сигнал без режима ошибки (отсутствие интерфейса — не исключение, а валидное состояние `false`), и seam — сервис, а не репозиторий, поэтому контракт `data-XOR-exception` из [03-domain-layer.md](03-domain-layer.md) здесь не применяется.
+
+### 5.3 `ConnectivityServiceImpl` — реализация
+
+`lib/data/service/connectivity_service_impl.dart`:
+
+```dart
+@LazySingleton(as: ConnectivityService, env: [Environment.dev, Environment.prod])
+class ConnectivityServiceImpl implements ConnectivityService {
+  final Connectivity _connectivity = Connectivity();
+
+  bool _online(List<ConnectivityResult> results) => results.any((r) => r != ConnectivityResult.none);
+
+  @override
+  Future<bool> isOnline() async => _online(await _connectivity.checkConnectivity());
+
+  @override
+  Stream<bool> watchOnline() async* {
+    yield await isOnline(); // seed the current value (onConnectivityChanged does not replay it)
+    yield* _connectivity.onConnectivityChanged.map(_online).distinct();
+  }
+}
+```
+
+`connectivity_plus` отдаёт `List<ConnectivityResult>` (устройство может держать несколько интерфейсов одновременно); правило online = «список содержит хотя бы один не-`none`». `.distinct()` гасит дубли — поток эмитит только при фактической смене online↔offline, а первый `yield` подсевает текущее значение, которого `onConnectivityChanged` не реплеит. **DI env-split обязателен:** реальная импл биндится на `[dev, prod]`, а под `[test]` работает `MockConnectivityService` (`lib/data/service/mock/`, всегда online) — плагину нужен platform channel, иначе падают widget/BLoC-тесты. Ручной регистрации нет: аннотации подхватывает генератор `configureDependencies(env)` ([02-dependency-injection.md](02-dependency-injection.md)).
+
+### 5.4 App-lifecycle observer — превентивный refresh на resume
+
+Когда приложение уходит в background надолго, access-токен может протухнуть к моменту возврата. Реактивный `401 → refresh` из §4 это покроет — но **первый** запрос после resume словит `401`, отыграет refresh-раунд и повторится, добавив задержку к первому экрану. Lifecycle-observer убирает этот лишний раунд: на переходе `paused → resumed` он превентивно дёргает `AuthBloc` сделать проверку/refresh **до** первого пользовательского запроса. Наблюдатель ставится **один раз** на app-root `State` (`_AppRootState`, см. [05-presentation-layer.md](05-presentation-layer.md) §6.2), а не на каждой странице:
+
+`lib/presentation/app/app_root.dart` (фрагмент `_AppRootState`):
+
+Это **дельта поверх существующего** `_AppRootState` (05 §6.2 + 13 §5.1), а не замещающий класс: уже присутствуют `_bloc` (`AppRootBloc`) и `_navigatorKey` (= `MaterialApp.navigatorKey`), а `_deepLinkSub` появится вместе с deep links (13 §5.1, в коде их пока нет) — жизненный цикл всех трёх (`_bloc.close()`, `_deepLinkSub?.cancel()` в `dispose`) **сохраняется**; добавляются только `with WidgetsBindingObserver`, connectivity-подписка и lifecycle-хук. `_AppRootState` connectivity не слушает вовсе: сигнал потребляют сами блоки, и подписаны они не на `connectivityService.watchOnline()` и не на `SessionPhaseService.watchPhase()`, а на `ConnectionStatusService.watchStatus()` (`ChatsListBloc` / `ChatThreadBloc` / `ChatCardBloc` — под офлайн-баннер, §6.5; ещё `ConnectBloc`, `ConnectionSettingsBloc` и индикатор связи); `ChatThreadBloc` дополнительно слушает фазу сессии и на возврате в `live` дёргает `OutboxService.flush()`, сам ничего не отправляя — app-root-подписка нужна именно как триггер auth-контура §4.
+
+```dart
+class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
+  // late final AppRootBloc _bloc;                 // из 05 §6.2
+  // final _navigatorKey = GlobalKey<NavigatorState>(); // из 05 §6.2 (MaterialApp.navigatorKey)
+  // StreamSubscription<DeepLink>? _deepLinkSub;    // из 13 §5.1
+  late final AuthBloc _authBloc = getIt<AuthBloc>();
+  late final ConnectivityService _connectivity = getIt<ConnectivityService>();
+  StreamSubscription<bool>? _connectivitySub;
+
+  @override
+  void initState() {
+    super.initState();
+    // _bloc = AppRootBloc()..add(...);  _deepLinkSub = _deepLinkRepository.watchDeepLink().listen(...);  // 05 §6.2 / 13 §5.1
+    WidgetsBinding.instance.addObserver(this);
+    _connectivitySub = _connectivity.watchOnline().listen(
+          (online) => _authBloc.add(ConnectivityChanged(isOnline: online)),
+        );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _authBloc.add(const AppResumed()); // ← превентивный refresh access-токена
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _connectivitySub?.cancel();
+    // _deepLinkSub?.cancel();  _bloc.close();      // СОХРАНИТЬ из 05 §6.2 / 13 §5.1
+    super.dispose();
+  }
+}
+```
+
+> **Re-entrancy guard (обязателен).** Хендлер `_onAppResumed` в `AuthBloc` ОБЯЗАН защититься от лавины событий: ОС шлёт `resumed` при каждом дёрганье foreground/background (шторка, переключатель приложений, системный диалог). Без guard'а — двойной/тройной параллельный refresh, гонка ротации refresh-токена и ложное срабатывание reuse-detection на backend (см. §4.3: предъявление уже-ротированного токена блэклистит сессию).
+
+`lib/presentation/app/bloc/auth_bloc.dart` (фрагмент):
+
+```dart
+bool _refreshing = false;
+
+Future<void> _onAppResumed(AppResumed event, Emitter<AuthState> emit) async {
+  if (_refreshing) return;           // guard: глушим параллельные resume-волны
+  if (!_hasValidSession()) return;   // нет сессии — нечего рефрешить, не дёргаем сеть
+  _refreshing = true;
+  await executeLogic(
+    () async {
+      await _authRepository.ensureFreshAccessToken(); // делегат контуру §4
+    },
+    onError: (String? error, dynamic exception, StackTrace stackTrace) {
+      logRepository.error(target: 'auth', error: exception, stackTrace: stackTrace);
+      // best-effort: тихий провал — реактивный 401→refresh покроет на первом запросе
+    },
+  );
+  _refreshing = false;
+}
+```
+
+> **Делегирование, не дублирование.** Observer НЕ реализует refresh сам — он только триггерит `AuthRepository.ensureFreshAccessToken()`, чья логика (валидность access-JWT по `exp`, ротация refresh-токена, HMAC-подпись запроса) целиком описана в §4. Observer — лишь *ранний триггер* того же кода, что отрабатывает реактивно на `401`.
+
+### 5.5 Связь с `ApiClient`-интерсепторами и офлайн-деградация
+
+Правила деградации в офлайне (best-effort; **демона опроса нет** — чтения по таймеру не ретраятся; отправка идёт через durable-очередь, а скачивание вложений — через свою лестницу повторов, п. 4):
+
+1. **Не блокировать запрос по connectivity.** Запрос уходит в `ApiClient` всегда; если интерфейса нет — `Dio` бросит `DioException` (`connectionError`/таймаут), `BaseRepositoryHelper.execute` смаппит его в `RepositoryException.connection` (именно `connection`, а не `internal` — маппинг идёт по типу/статусу, см. §3 и [04-data-layer.md](04-data-layer.md)), презентация покажет понятную ошибку. Это и есть «корректная деградация» — единый путь ошибки, без спец-кейса.
+2. **`401 ≠ офлайн`.** Офлайн даёт `connectionError`/таймаут, а не `401`. Поэтому refresh-интерсептор (§4) НЕ должен срабатывать на сетевую ошибку — refresh запускается строго на `401 unauthenticated` от backend. Зацикливание «офлайн → 401 → refresh → офлайн» исключено по построению.
+3. **UX-баннер — не транспортный гейт.** С фазы 040 баннер ведёт `ConnectionStatusService.watchStatus()` (`ChatsListBloc` / `ChatThreadBloc` / `ChatCardBloc`, см. §5.4 и §6.5): в окружении `dev` (флейвор `stage`) статус складывается из фазы сокета, раунда выбора пути и статуса Tor-клиента (`LiveConnectionStatusService`), а под `[prod, test]` он остаётся проекцией фазы сессии (`PhaseConnectionStatusService`), которая там сама проекция `watchOnline()` (`ConnectivitySessionPhaseService`, `lib/data/service/session_phase_service_impl.dart`). Ни та, ни другая ветка на транспортный слой не влияет.
+4. **Ретраи — реактивные, не по таймеру, кроме передач.** Чтение повторяет пользователь (pull-to-refresh / повторный тап) или событие: экраны перечитывают сервер, когда канал снова становится текущим, — фоновый ретрай-демон чтений не заводим. Исключения — передачи: `OutboxService` (интерфейс — `lib/domain/service/outbox_service.dart`, реализация `OutboxServiceImpl` — `lib/data/sync/outbox_service_impl.dart`, фаза 027) сливает durable-очередь по входу сессии в `live`, а повторяемый отказ планирует следующую попытку по нарастающей паузе; `AttachmentDownloadService` (`lib/data/sync/attachment_download_service_impl.dart`, фаза 043) так же повторяет скачивание вложения по общей лестнице `RetryLadder` и просыпается, когда канал возвращается. Это не демон опроса: пауза существует только пока есть что передать.
+
+   Очередь — store `outbox` в Sembast, а не состояние экрана: она переживает и закрытие экрана, и перезапуск. Ключ записи в нём и есть `client_message_id`, поэтому повторная постановка той же отправки не создаёт второй строки, а отправитель ровно один (про `client_message_id` как ключ идемпотентности — [16-file-upload.md](16-file-upload.md) §1 и §4).
+
+> **Итог.** `ConnectivityService` и lifecycle-observer — два тонких UX/превентивных слоя поверх обязательного auth-контура; источник истины о доступности API остаётся за `ApiClient` и его интерсепторами (`401 → refresh`, `DioException → ошибка`). Любая логика, которая *решает*, делать ли запрос, на основе connectivity — анти-паттерн в этом проекте.
+
+---
+
+## 6. Путь до сервера: канал, прямой адрес и Tor
+
+> **Зачем.** Сервер человека стоит дома за NAT. Дома приложение ходит к нему напрямую, а вне дома, если человек включил `Use Tor`, — через встроенный Tor-клиент (Arti, пакет `packages/nox_tor`) к onion-сервису сервера. Onion-сервис публикует отдельная служба tor на машине сервера и ведёт его на основной порт; сервер про Tor не знает и хранит только свой onion-адрес. Оба пути ведут в один и тот же канал (§6.0): кто на другом конце, решает проверка `/auth` и `/auth2`, а не путь, — поэтому onion-адрес открыт любому, кто его знает, ключей доступа Tor нет, и человек может сам поправить любой адрес. Всё нужное для выбора пути дают контракт и сам человек: `addresses` в ответе на приветствие и событие `server.addresses` (прямые адреса, публичный, onion), адреса из ссылки спаривания версии 3, правка на экране подключения (`ConnectPage`) и в разделе настроек «Связь» (`ConnectionPage`).
+
+### 6.0 Канал: TLS 1.3 и проверка `/auth` в нативном модуле
+
+Каждое соединение с сервером — сокет команд (`wss`) и каждое соединение передачи байтов (`https`) — открывает Rust-модуль `packages/nox_tor` (C ABI `nox_chan_*`, контракт `specs/044-secure-channel/contracts/ffi-channel.md` с дополнением `specs/050-rust-secure-box/contracts/ffi-box.md`; провод — контракт v0 §1). Слои:
+
+1. **Транспорт** — TCP до адреса (`DirectTarget`) или поток Arti до onion-адреса (`OnionTarget`, порт 443; подключение с подстраховкой — второе в новой группе изоляции через 15 с, в пределах 45 с; группа, в которой подстраховка выиграла, запоминается для каждого onion-сервиса отдельно, и следующие подключения к нему идут в ней).
+2. **TLS 1.3** на rustls (провайдер ring), ALPN `http/1.1`. Сертификат сервера технический: модуль принимает любой, но подпись рукопожатия TLS 1.3 проверяет. TLS 1.2 и ниже — отказ; SNI не отправляется; нет ни возобновления сессий, ни раннего отправления данных — каждое соединение проходит полное рукопожатие с подписью сервера.
+3. **Проверка `POST /auth` → `POST /auth2`** — два первых запроса HTTP/1.1 по тому же соединению (`src/channel/auth.rs`). Модуль берёт у RustSecureBox челлендж и открытый ключ устройства и шлёт `POST /auth {pk, challenge}`; сервер отвечает `200 {pk, challenge, signature}`. Модуль проверяет подпись сервера над своим челленджем — не сходится: `protocol`, — затем сверяет ключ сервера с ключом из ссылки спаривания — не тот: `wrongServer`; только после обеих проверок подписывает челлендж сервера и шлёт `POST /auth2 {signature}`, и канал открывается на ответ `200`. Тела — JSON, значения — base64url без `=`. Заголовки ответов модуль читает побайтно и не съедает ни одного байта, который принадлежит Dart. Чужая машина по сохранённому адресу предъявляет не тот ключ; машина, не знающая закрытого ключа сервера, не подпишет челлендж. Отпечатка соединения в проверке нет: по допущению схемы соединение TLS считается неперехватываемым, и посредника между двумя TLS-сессиями проверка не ловит.
+
+   Ключи, челленджи и подписи считает **RustSecureBox** — крейт `packages/rust_secure_box`, один код с сервером (там — его WebAssembly, переведённая в Go): четыре функции без состояния — `generate_keys`, `get_challenge`, `sign_challenge`, `check_signature`; ключи по 32 байта, челлендж 32, подпись 64. Модуль зависит от крейта по пути и зовёт его напрямую. Сейчас внутри заглушка; настоящая реализация встаёт на её место без правок вокруг.
+4. **Байты — в Dart.** До открытия канала по нему не уходит ни одного байта приложения: ни команды, ни токена.
+
+**Dart-сторона.**
+
+- **`package:nox_tor/channel.dart`** — `NoxChannelApi` (`NativeNoxChannelApi` — над модулем), `NoxChannel` (входящие байты, запись, `flush`, `shutdownWrite`, `close`), `ChannelTarget`, `ChannelFailure`, `ChannelOpenException`. Модуль не блокирует: `nox_chan_open` сразу возвращает дескриптор, дальше модуль отправляет события из своих потоков в один родной порт изолята (`NativeApi.postCObject`), каждое — отдельным сообщением, которым Dart владеет целиком. Не обратным вызовом `NativeCallable`: тот удаляется вместе с изолятом, и следующий вызов в него роняет процесс, а каналы модуля переживают изолят (горячий перезапуск, движок, снятый Android по «Назад»). Пост в порт умершего изолята не принимается, и модуль закрывает такой канал сам; новый изолят перед первым каналом вызывает `nox_chan_reap`, который закрывает оставшиеся каналы умерших. Окна — 1 МиБ в обе стороны: модуль держит не больше 1 МиБ неподтверждённых входящих байтов, запись сверх окна ждёт `WRITABLE`, а он приходит, как только очередь вернулась в окно, — примерно через кусок, так что прогресс медленной загрузки идёт кусками и не упирается в 45-секундного сторожа. Ключ сервера из события открытия Dart сверяет ещё раз — от этого факта зависит всё дальнейшее.
+- **`package:nox_tor/secure_box.dart`** — `SecureBoxApi` (`NativeSecureBoxApi` над `nox_box_*`): те же четыре функции RustSecureBox для Dart, синхронные; отрицательный код — `SecureBoxException`. Своей криптографии ключей в Dart нет: пару устройства создаёт `DeviceKeys.generate()` через эту обёртку.
+- **`ChannelSocket`** (`lib/data/remote/channel/channel_socket.dart`) — `dart:io` `Socket` поверх `NoxChannel`, с обратным давлением в обе стороны. `HttpClient` получает его из `connectionFactory` и на прямом соединении своего TLS поверх не накладывает, поэтому WebSocket и Dio над ним не меняются, а адреса остаются `wss://`/`https://`.
+- **`ChannelHttpClient`** (`lib/data/remote/channel/channel_http_client.dart`, `[Environment.dev]`) — единственное место, где открываются соединения для HTTP и WebSocket (пробы прямых адресов открывают и сразу закрывают свои каналы сами, §6.1). Два `HttpClient` на процесс: `client` — сокету (`WebSocketChannelFactory`), `transferClient` — Dio (`ApiClient`): `WebSocket.connect` переданный клиент не закрывает, а Dio на каждом запросе пишет свой таймаут подключения в отданный ему клиент. У обоих `findProxy` — `DIRECT`, `connectionFactory` открывает канал (`.onion`-хост — `OnionTarget`, остальное — `DirectTarget`), `badCertificateCallback` всегда отвечает `false`. `LiveSessionStarter.start()` на каждом старте зовёт `bind(serverKey:, devicePrivateKey:)` — ключи не захватываются при создании синглтона, они приезжают со спариванием; смена ключей сбрасывает оба клиента вместе с пулом соединений, потому что проверенное соединение заново не проверяется. `unbind()` при остановке канала забывает ключи (копия закрытого ключа устройства затирается) и закрывает оба клиента. Живой WebSocket после ответа 101 клиенту уже не принадлежит: его закрывает `NoxSocketClient`, и `LiveSessionStarter.stop()` делает это до `unbind()`.
+- **Сроки.** Открытие канала — 30 с напрямую и 45 с через onion: транспорт, TLS и проверка вместе. Набор сокета — 10 с и 45 с (`WebSocketChannelFactory`), и тот же срок ставится в `connectionTimeout` клиента сокета: `HttpClient` отменяет набор, у которого вышел срок, и отмена доходит до модуля (`NoxChannelApi.open(cancel:)` → `nox_chan_close`), так что брошенное открытие не доживает в модуле до конца своего срока.
+- **Закрытый ключ устройства** (`session.device_key` — JSON с закрытым и открытым ключом пары от RustSecureBox, `SessionRepository.deviceKey()`) модуль получает при каждом открытии и держит в затираемом буфере на время проверки; копии закрытого ключа в Dart затираются, когда больше не нужны. В логах — ни ключей, ни челленджей, ни подписей; строка открытия называет только вид пути, время и исход.
+
+**Отказы канала** (`ChannelFailure`): `network`, `timeout`, `tls`, `protocol` (ответ на `/auth` или `/auth2` не по контракту: подпись сервера не сходится, отказ, тело не той формы — или на другом конце не сервер NOX), `wrongServer` (сервер доказал другой ключ), `torNotReady`, `torOnionInvalid`, `torOnionNotFound`, `torOnionUnreachable`, `torClientAuth` (оставлен в нумерации и не возникает: ключей доступа у клиента нет), `internal` (в том числе ошибка RustSecureBox). Транспорты заворачивают отказ в свои исключения — WebSocket в `WebSocketChannelException`, Dio в `DioException`; вид достаёт `channelFailureOf` (`lib/data/remote/channel/channel_failure.dart`). Что значит `wrongServer`, зависит от пути (§6.1); любой другой вид — неудавшаяся попытка и лестница переподключения. **Ни один отказ канала не ведёт к выходу.** У принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` (ключа устройства нет среди спаренных; так выглядит и отзыв, и пересобранное хранилище сервера) и событие `device.revoked`. `401` от `/files` — неудавшаяся передача; `AuthInterceptor` его только пробрасывает.
+
+**Приветствие и спаривание** не несут ни ключа устройства, ни подписи: сервер знает ключ по соединению (контракт §3, §8A). Незнакомому ключу доступны только `pair` и `pair.cancel` (§6.4а).
+
+**Ссылка спаривания** — `nox://pair/` версии 3 (`PairingLink`, `lib/general/pairing/pairing_link.dart`, контракт §8A): ключ сервера, токен и адреса по типам (IPv4, IPv6, имя, onion; неизвестный тип пропускается по длине). Отказы разбора — `malformed` (сканировать или вставить снова) и `newerVersion` (ссылка новее приложения — обновить приложение); оба говорит экран входа до попытки соединиться: `LoginBloc` ссылку только читает, а читаемую отдаёт экрану подключения (`ConnectPage`, §6.4). Ключ сервера из ссылки хранится как `session.server_key` (base64, защищённое хранилище); что ещё сохраняется из ссылки — §6.4.
+
+**Сессия без ключа сервера** не продолжается: `AuthRepository.retireLegacySession()` в `main.dart` один раз стирает сессию, у которой есть идентификатор, но нет `session.server_key`, — принудительным выходом, — и человек спаривается заново: такой сессии нечем проверить соединение. Так же стирается сессия, чья пара ключей устройства сделана не RustSecureBox этой сборки (`SessionRepository.predatesSecureBox()`: записи `session.device_key` нет или хранимый открытый ключ не тот, что RustSecureBox даёт для хранимого закрытого): сервер такой ключ не узнает. Ошибка чтения хранилища не стирает ничего. Перед ней `AuthRepository.openLocalData()` (фаза 048) снимает тем же принудительным выходом локальные данные, которые не открыть, — ключа локальной базы нет при базе или ключ её не открывает ([04-data-layer.md](04-data-layer.md) §6г).
+
+### 6.1 Выбор пути — перед каждой попыткой
+
+Сокет не держит адрес. Перед каждой попыткой он спрашивает `SocketTargetProvider` (`lib/data/remote/socket/socket_target_provider.dart`), а провайдер — `ConnectionPathSelector` (`lib/data/sync/connection/`).
+
+1. **Прямые кандидаты**, по порядку и без повторов (`ServerAddresses.candidates`): последний работавший адрес, адрес, вписанный человеком, публичный адрес сервера, адреса, которые сервер нашёл в своих сетях, первый прямой адрес ссылки спаривания. Проверяет их `ChannelDirectProber` (`direct_prober.dart`): открывает к адресу канал через `NoxChannelApi` — транспорт, TLS 1.3 и проверка `/auth` и `/auth2` — и сразу закрывает, не отправив ни одного запроса сверх проверки (`/health` основной порт не обслуживает). Итог по адресу — «мой сервер» (канал открылся), «другой ключ» (`wrongServer`: адрес сейчас не ведёт домой и молча пропускается) или «не ответил». Попытка — 4,5 с: разрешение имени, TCP, TLS и два шага проверки — пять обменов, так что отвечает путь с задержкой до 900 мс; первый кандидат сразу, остальные через 300 мс разом; первый, где сервер доказал свой ключ, побеждает; весь раунд — не дольше 5 с, и открытия, не успевшие к его концу, модуль бросает сразу. У раунда свои копии ключа сервера и закрытого ключа устройства (вызывающий может затереть свой, пока поздние попытки раунда ещё идут); копия закрытого ключа затирается по окончании раунда. Проба только выбирает адрес: соединение сокета проходит проверку заново, на своём канале.
+2. **Tor**, если одновременно: человек включил `Use Tor` (`ServerAddresses.useTor`, по умолчанию выключен), onion-адрес известен (`ServerAddresses.effectiveOnion`: правка человека, иначе адрес от сервера), платформа его умеет (`TorCapability.isAvailable` — нативный модуль загрузился; на всех пяти платформах, Linux включительно), сеть Tor не объявила эту версию клиента устаревшей. `TorService.start` → готовность за 90 с → `wss://<onion>/ws`. Заранее клиенту не передаётся ничего — ни цели, ни ключа: канал набирает onion-адрес сам (§6.2). С выключенным `Use Tor` выбор пути Tor не запускает вовсе — ни в раунде, ни заранее. Клиент, чей запуск провалился, останавливается и запускается заново, а ожидание готовности кончается в тот момент, когда он упал: иначе каждый следующий раунд тратил бы весь бюджет на клиента, который уже не пытается.
+3. **Иначе** — «пути нет», и сокет уходит на лестницу переподключения.
+
+Если последнее приветствие пришло через Tor (`ServerAddresses.viaTorLast`, в записи адресов) и `Use Tor` по-прежнему включён, Tor запускается одновременно с проверкой прямых адресов, а не после неё: тёплый подъём — около секунды, холодный — несколько. Прямой ответ побеждает и здесь, и его приветствие останавливает Tor. Значит, дома после поездки это стоит одного запуска Tor на несколько секунд.
+
+| Ответ | Значение |
+|---|---|
+| `wrongServer` на прямом адресе | «не дома»: адреса переиспользуются, и в другой сети тот же адрес — чужая машина. Адрес отпадает, выбор идёт дальше; баннера нет |
+| `wrongServer` за onion-адресом | `SessionPhase.serverMismatch`, причина `otherServer` — плашка `This onion address belongs to a different server.`: за onion-адресом отвечает машина с другим ключом сервера — вписан чужой onion-адрес или сервер заведён заново с новым ключом. Терминально — без лестницы — до `Try again` (перезапуск канала), применённой правки в разделе «Связь» (она тоже перезапускает канал), перезапуска приложения или нового спаривания; **не** путь `unauthenticated` |
+
+Отладочный ключ `--dart-define=nox.forceTor=true` пропускает прямых кандидатов. Он действует только в debug-сборке и `Use Tor` не отменяет: с выключенным `Use Tor` пути нет вовсе.
+
+### 6.2 Tor-транспорт
+
+- **Onion-хост набирает модуль.** `ChannelHttpClient` превращает хост на `.onion` в `OnionTarget`, и модуль открывает канал потоком Arti клиента, которого поднял `TorService.start`; поверх — тот же TLS 1.3 и та же проверка `/auth` и `/auth2`, что на прямом пути. Ни локального порта, ни слушающего сокета у приложения нет. Цель заранее не задаётся, ключей доступа нет (контракт `specs/045-tor-service-addresses/contracts/ffi-tor.md`): хранилища ключей у клиента нет вовсе (`storage.keystore.enabled = false`; фича `keymgr` собрана только ради этого выключателя), а отказ onion-сервиса по ключу доступа закрыл бы канал как `torOnionUnreachable`. Исход подключения к onion модуль пишет в снимок состояния Tor (`error`, только вид); решений на нём не держится — причину неудачи раунда даёт отказ самого канала (§6.5).
+- **Таймауты набора** (`WebSocketChannelFactory`): 10 с для прямого адреса, 45 с для onion — подключение к onion-сервису может заново скачивать его описание и застревать, а под нагрузкой сервиса ещё и решать его задачу.
+- **PoW.** Arti собран с фичей `hs-pow-full`, версия закреплена точно (`arti-client =0.47.0`): onion-сервис с включённой защитой (`HiddenServicePoWDefensesEnabled 1` в настройках tor на сервере) под нагрузкой пускает первыми тех, кто решил его задачу (Equi-X), и клиент решает её сам. Новая версия Arti — отдельное решение с повторной проверкой PoW.
+- **Команды во время подъёма ждут.** Пока путь поднимается через Tor, команда ждёт приветствия до `NoxSocketClient.slowPathBudget` (145 с), а не 10 с. `pair` на медленном пути ждёт ответа столько же.
+- **`pair` переживает потерю соединения.** Один набор может выбрать весь свой срок, а следующий пройти; смена сети рвёт соединение посреди спаривания. Токен предъявляется снова на следующем соединении, в пределах одного бюджета на всё спаривание. Это безопасно, что бы ни стало с первым предъявлением: тот же токен от того же ключа устройства сервер встречает той же личностью (контракт §8A).
+- **Кадры ждут открытия соединения.** До того как соединение открылось, кадры держит само соединение, а не канал: буфер канала уходит на сервер, как только завершится апгрейд, даже после закрытия, и токен, отданный брошенному набору, дошёл бы до сервера за спиной приложения. Закрытие ещё не открывшегося соединения возвращается сразу и ничего не отправляет: закрытие канала ждёт набора, а неудавшийся набор не завершает его никогда — так зависали переподключение, выход и откат входа. Закрытие открытого соединения ограничено 2 с.
+- **Байты вложений** идут тем же путём: каждое приветствие переставляет `ApiClient.initBase` на адрес соединения, через которое оно пришло.
+- **Приветствие привязано к своему соединению.** Ключ устройства соединение доказало ещё до приветствия, в проверке `/auth` и `/auth2`; само приветствие ни ключа, ни подписи не несёт. Приветствие, пережившее своё соединение (смена сети, оборванная цепочка Tor, перезапуск), молча отбрасывается: ему больше нечего сказать, а его ветки отказа рвали бы и повторяли соединение, которое ему не принадлежит.
+- **Запуск не ждёт выбора пути.** `NoxSocketClient.start` начинает первую попытку и сразу возвращается: первый экран приложения ждёт этот вызов, и вне дома он ждал бы, пока поднимется Tor.
+
+### 6.3 Возврат на прямой путь и сон
+
+- **Пока путь — Tor**: при каждой смене сети (`NetworkChangeService`), раз в 2 минуты и при каждой перемене адресов — прямых адресов сервера, его публичного адреса, вписанного человеком адреса или действующего onion-адреса — прямые кандидаты проверяются заново. Ответил — сокет переподключается на проверенный адрес (`NoxSocketClient.reconnect`), а Tor останавливается на приветствии прямого соединения.
+- **`Use Tor` выключен — Tor останавливается сразу**, а не на следующем раунде: выбор пути видит перемену в `watch()` настроек связи, останавливает клиента и обрывает соединение, которое шло через Tor (`NoxSocketClient.reconnect`), — следующий раунд идёт только напрямую. С выключенным `Use Tor` приложение не открывает через Tor ни одного соединения.
+- **Пока путь прямой**: смена сети проверяет текущий адрес. Не отвечает — новый выбор пути.
+- **Без потерь** — по устройству протокола, а не двумя сокетами: пропущенное докатывается по `since`, повтор отбрасывается по `seq`, повторная отправка идемпотентна по `client_message_id`, повторное создание чата — по `chat_id` (фаза 041).
+- **`since` опускается только когда курсора нет вовсе** (`SyncRepository.hasCursor`): устройство ни разу не здоровалось или стёрто с тех пор. Курсор пишется и при 0: первое приветствие принимает курсор сервера, а у пустого журнала он равен 0. Прочитанный как «первое подключение», такой 0 заставил бы следующее приветствие принять голову журнала за старт и пропустить всё, что пришло между ними, — сообщение с другого устройства потерялось бы, пока что-нибудь не перечитает чат. Сохранённый 0 уходит как `since: 0`, и сервер докатывает журнал с `seq` 1.
+- **Фон (iOS и Android)**: `AppLifecycleService` усыпляет Tor при уходе в фон. При возврате Tor просыпается, путь выбирается заново без ожидания лестницы, а клиент, не готовый за 10 с, перезапускается из тех же каталогов. Слушающих сокетов, которые iOS отбирает у приостановленного приложения (Apple TN2277), у приложения нет: каждое соединение — исходящий канал модуля. Desktop не спит.
+- **Tor, который не запустился**, — не путь в этом раунде, и раунд не ждёт его весь бюджет: запуск, отвергнутый библиотекой или обогнанный остановкой, заканчивает раунд сразу. Причина такого раунда — `torNetwork` (§6.5).
+
+### 6.3а Попытки не останавливаются, и их можно начать заново (фаза 042)
+
+- **Выбор пути ограничен.** Сокет ждёт `SocketTargetProvider.nextTarget()` не дольше `NoxSocketClient.defaultPathChoiceBudget` — 120 с: больше проверки прямых адресов (5 с) и бюджета готовности Tor (90 с), так что медленный выбор он не обрывает. Не дождался — «пути нет», обычная пауза лестницы и следующая попытка; поздний ответ отбрасывает номер попытки. Без предела выбор, внутри которого не завершился, например, запуск Tor-клиента, держал бы попытку — и все следующие — до перезапуска приложения.
+- **`Try again` на плашке `No connection` — перезапуск канала** (`SessionPhaseService.reconnect()` → `LiveSessionStarter.restart()`), тот же путь, что у плашки «чужой сервер». Выбор пути заканчивает сессию и начинает новую: забывает всё, что держал в памяти, снимает флаг неудачного круга (плашка уступает «подключаемся») и идёт с прямых адресов. Сохранённое не трогается: настройки связи (адреса, ручная правка, `Use Tor`) и вердикт сети Tor о версии клиента. Тем же перезапуском кончается любая применённая правка в разделе «Связь» (§6.4). Для сервера, который не поддерживает эту сборку, действия на плашке нет.
+- **Перезапуск сохраняет только здоровый Tor.** `ConnectionPathSelector.end(keepTor: true)` оставляет клиент, если он готов, спит или поднимается меньше бюджета готовности с момента, когда выбор пути его запустил. Упавший и застрявший на подъёме клиент останавливается, новый круг запускает его заново. Повторное нажатие поэтому не теряет прогресс подъёма. Клиент остаётся, только пока `Use Tor` включён: значение читается из хранилища в момент перезапуска, потому что сам перезапуск мог быть ответом на выключение `Use Tor`.
+- **Перезапуски не наслаиваются.** `LiveSessionStarter.restart()` во время идущего перезапуска возвращает его же: иначе остановка одного переплелась бы с запуском другого.
+- **Передний план и смена сети** не меняются: смена сети без связи начинает попытку сразу, возврат на передний план — тоже, если сокет ждёт паузу; идущую попытку он не трогает, её ограничивает предел выбора пути.
+
+### 6.3б Байты файлов идут дальше при любом пути (фаза 043)
+
+- **Передача файла продолжается, а не повторяется**, в обе стороны: загрузка — с `received`, который назвал сервер, скачивание — с части на устройстве, через `Range` и `If-Range`. Подробности цепочки — [16-file-upload.md](16-file-upload.md) §1 и §3.
+- **Предела времени на передачу нет.** Медленный путь — это путь вне дома, и предел на всю передачу обрывал бы именно его. Обрыв — только застой: 45 с без движения байтов в приложении (свой сторож на прогрессе отправки; для скачивания — сторож, заведённый уже с заголовками, потому что часы Dio идут только с первого куска тела), 60 с на сервере. После последнего отданного байта загрузка ждёт ответа до 3 минут: «отдан сокету» не значит «дошёл», и через Tor буферы держат мегабайты.
+- **Смена пути переносит передачи.** `ApiClient` ведёт реестр идущих передач (`beginTransfer`/`endTransfer`, у каждой свой токен отмены). Когда приветствие пришло другим путём и `initBase` переводит REST на другой адрес, он поднимает `pathGeneration` и обрывает все передачи старого пути: иначе уход из дома замечал бы только предел застоя. Оборванная так передача возвращается как `pathChanged`, и репозиторий продолжает её сразу, в той же попытке, по новому пути — без паузы и без счёта. Тот же обрыв — `cancelTransfers()` при выходе и смене мира, но там это обычный обрыв.
+- **У сокета и у передач — разные `HttpClient`** одного `ChannelHttpClient` (`client` и `transferClient`), собранные одним `_build()` и открывающие каналы одной `connectionFactory` (§6.0). Dio на каждом запросе пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр: на общем клиенте передача дома обрезала бы первый набор сокета через Tor до 30 с вместо 45. Передача через onion получает срок подключения сокета — 45 с, а не 30 с Dio.
+
+### 6.4 Настройки связи: адреса, ручная правка, `Use Tor`; эпоха
+
+- **Настройки связи** — `ServerAddresses` (`lib/domain/model/connection/server_addresses.dart`) за `ServerAddressesRepository`, в защищённом хранилище под ключом `session.server_addresses` (JSON): onion-адрес позволяет спросить сеть Tor, в сети ли сервер. Что сервер сказал о себе — `direct` (адреса в его локальных сетях), `public` (публичный `host:port`), `onion` (`<56>.onion:443`); что поправил человек — `manualAddress` и `manualOnion` (пустая строка — человек очистил поле: onion-адреса нет); `useTor` — по умолчанию `false`, только на этом устройстве, не синхронизируется; `lastGood` — последний прямой адрес, где ответил этот сервер; `viaTorLast` — последнее приветствие пришло через Tor.
+- **Действующие значения.** Поле «адрес сервера» — `fieldAddress`: `manualAddress ?? public ?? session.server_address` (первый прямой адрес ссылки). Onion-адрес — `effectiveOnion`: `manualOnion ?? onion`. Кандидаты прямого пути — §6.1.
+- **Сервер — источник истины о своих адресах.** `addresses` из ответа на приветствие и событие `server.addresses` (seq 0, курсор не двигает) — один объект `{direct, public?, onion?}`; разбирает его `ServerAddressesParser` (публичный адрес — `host:port`, не onion-имя; неверная запись отбрасывается, а не валит ответ). `saveFromServer` (зовут `LiveSessionStarter` на приветствии и `SyncService` на событии): значение, которое сервер назвал, заменяет ручную правку того же поля; поле, которого нет, правку оставляет, а прежнее значение сервера стирает. Ручная правка нужна, когда до сервера не достучаться, и действует, пока сервер не назовёт своё. `lastGood` записывается на приветствии прямого соединения, `viaTorLast` — на приветствии через Tor. Записи идут одна за другой (чтение-изменение-запись в одной очереди), и запись, которая ничего не меняет, не пишется; `watch()` отдаёт сохранённое при подписке и каждую перемену — выбору пути и разделу «Связь».
+- **Эпоха** локальных данных — `key:<base64 ключа сервера>`: мир называет ключ, который доказывает каждое соединение, а не адрес — адрес лишь место, и сервер переезжает между ними. Смена адреса или пути ничего не стирает. Любое другое имя эпохи (`live:<адрес>`, `fp:<отпечаток>`) принадлежит серверу, сессии с которым у установки больше нет: локальный мир стирается один раз, миграций нет.
+- **Спаривание и экран подключения.** Ссылка версии 3 (§6.0) несёт ключ сервера, токен, прямые адреса (публичный, если сервер его задал, — первым) и onion-адрес — открытым ключом onion-сервиса. Экран подключения (`ConnectPage`) показывает первый прямой адрес и onion-адрес, выведенный из ключа сервиса (`TorService.onionFromPublicKey`), даёт их поправить и отдаёт `AuthRepository.signIn` ссылку вместе с `ConnectionSettings {serverAddress, onionAddress?, useTor}` (`lib/domain/model/connection/connection_settings.dart`). Вход разбирает ссылку, `saveServer` записывает ключ сервера (`session.server_key`) и адрес старта (`session.server_address`: первый прямой адрес ссылки, у ссылки без прямых — вписанный адрес; без обоих — отказ `connection` до соединения), а `saveFromLink` записывает настройки связи заново — это новый сервер: прямые адреса ссылки по порядку и её onion-адрес — как слово сервера, поля, изменённые на экране, — как ручную правку (очищенное onion-поле — «onion-адреса нет»), `useTor` — как отмечено. Дальше адреса сервера заменяют адреса из приветствий.
+- **Спаривание идёт тем же выбором пути**, что любое соединение: сначала напрямую, затем — при включённом `Use Tor` и известном onion-адресе — через Tor, в том числе самое первое — по ссылке с машины сервера. Ключа доступа `pair` не несёт. `pair` уходит только по каналу, где сервер уже доказал ключ из ссылки: машина с другим ключом токена не видит, какой бы адрес ни вписал человек. Чужой ключ за onion-адресом обрывает ожидание `pair` сразу — фаза сессии терминальна, и ждать бюджет до конца незачем.
+- **Раздел «Связь»** (`ConnectionPage`, тело — `ConnectionBody`) пишет правку через `saveManual` и `Use Tor` через `setUseTor`. Значение, равное слову сервера (без него — адресу из ссылки), правкой не считается: поле снова следует серверу. Любое применённое изменение перезапускает канал (`SessionPhaseService.reconnect()`), так что следующая попытка идёт по новым данным; сменившийся onion-адрес вписывается без переспаривания.
+- **После спаривания** вход ждёт приветствия не больше 2 с: дома оно приходит за миллисекунды, перезапуск канала к этому моменту уже сделан, и приветствие приходит само.
+- **Новый сервер — с чистого листа.** `saveServer` сначала стирает настройки связи прежнего сервера (`ConnectionStorage.delete`: адреса, ручную правку, `Use Tor`). Неудачный вход останавливает канал (и Tor за ним) до того, как откатить записи; `discardSignIn` стирает и настройки связи.
+
+### 6.4а Спаривание с подтверждением (фаза 046)
+
+Устройство добавляется двумя путями (контракт §8A): **ссылкой с машины сервера** (служебная страница или `noxd link`; спаривает сразу — заводит человека или присоединяет к нему) и **приглашением** со спаренного устройства, которое спаривает только после `Allow` на нём. Обе — ссылки `nox://pair/` версии 3; тип токена знает только сервер, и приложение предъявляет обе одной командой `pair`. Различает их ответ.
+
+- **Ответ `pair`.** Ссылка с машины — `identity` (спарено; `identity.created` решает онбординг). Приглашение — `{status: "pending", request_id, expires_at}`: запрос ждёт ответа выдавшего устройства. Повтор `pair` с тем же токеном от того же ключа возвращает записанное: `pending`, пока запрос ждёт; `identity` после `Allow`; `denied`, `expired` или `cancelled` после закрытия без спаривания.
+- **Новое устройство ждёт на том же соединении** (`LiveIdentityHandshake`): оно не здоровается (`GreetingCredentials.unpaired()`), и по нему ходят только `pair` и `pair.cancel` (`NoxSocketClient.pair` / `cancelPairing`), а приходит событие `pair.resolved`. `AuthRepository.watchAwaitingApproval()` говорит экрану подключения, что запрос ждёт ([05-presentation-layer.md](05-presentation-layer.md): `ConnectBloc` → `waiting`).
+- **Исход читается повтором токена.** `pair.resolved` — только подсказка: запроса он не называет и обрыв не переживает. По нему, на каждом новом соединении (`NoxSocketClient.connectionOpened`) и по своему сроку устройство предъявляет тот же токен снова и читает записанный исход: `identity` — спарено, дальше как после ссылки с машины (`created: false`, выбора имени нет); `denied` → `PairRefusal.declined` → `PairingException.declined`; `expired` → `PairRefusal.expired` → `RepositoryException.notFound` (строка истёкшей ссылки); `cancelled` → `PairingException.cancelled`.
+- **Свой срок устройства** — 10 минут жизни приглашения и 30 с сверху, от первого `pending` по своим часам, а не по `expires_at` сервера: часы устройства и сервера не обязаны совпадать. На сроке устройство отзывает запрос, который всё ещё ждёт, и читает исход повтором.
+- **`Cancel`** — `AuthRepository.cancelPairing()` → `pair.cancel {token}`; исход затем читается тем же повтором, поэтому `Allow`, дошедший до сервера раньше отзыва, всё-таки спаривает. Вход, кончившийся отказом, отзывом или сроком, откатывается, как любой неудавшийся (`discardSignIn`).
+- **Ожидание переживает перезапуск** (FR-011). Пока запрос ждёт, `SessionRepository.savePendingPairing` держит `PendingPairing {link, waitUntil, connection}` (`lib/domain/model/session/pending_pairing.dart`) в защищённом хранилище под ключом `session.pending_pairing` — ссылка несёт токен, а токен — средство входа. Экран входа при открытии спрашивает `AuthRepository.pendingPairing()`, и живое ожидание сразу ведёт на экран подключения, который предъявляет ту же ссылку с теми же настройками: тот же ключ устройства и тот же токен — тот же запрос. Повторное ожидание держит первый срок, а не начинает новый. Ожидание, срок которого вышел, откатывается, как неудавшийся вход, и не предлагается. Запись стирается, когда ожидание кончилось любым исходом, а также `discardSignIn()` и `clear()` — значит, и выходом, и стартом, который снимает данные с потерянным ключом (фаза 048): тот уносит и ключ устройства, с которым шло ожидание, а экран входа спрашивает об ожидании только после старта (`AppStateRepository.holdUntil`), так что продолжать нечего. Как и всякая запись сейфа, она «только для этого устройства» (048).
+- **Выдавшее устройство** — `PairRequestService` (`lib/domain/service/pair_request_service.dart`) / `PairRequestServiceImpl` (`lib/data/sync/pair_request_service_impl.dart`, `@Singleton`, `[Environment.dev]`). Синглтон **ранний**, а не ленивый: сервер спрашивает сразу после приветствия, и первое приветствие может прийти раньше, чем экран что-то у службы попросит. Список ждущих запросов (`watchRequests()`, старые первыми) строится из `device.pairRequested` — один раз на запрос, сколько бы раз сервер ни повторил его после приветствия, — и `device.pairResolved`, и живёт, только пока соединение, сообщившее о них, поприветствовано: при обрыве список пустеет, следующее приветствие возвращает ровно те запросы, что ещё ждут. Закрывшийся за время обрыва запрос иначе висел бы вечно.
+- **Ответ** — `answer(requestId, allow)` → `device.approve` только по поприветствованному соединению (`waitForConnection: false`): ответ, отложенный до следующего соединения, мог бы прийти к запросу, который закрылся в промежутке. `not_found` — не ошибка: запрос уже закрыт (срок, `Cancel` нового устройства, ответ с другого соединения). `watchClosed()` сообщает id каждого закрытого запроса, каким бы путём он ни закрылся, — по нему 7.8 убирает карточку приглашения: приглашение сгорает при любом исходе.
+- **Ничего с провода — на экран и в лог.** Семейство ОС нового устройства — одно из пяти (`DevicePlatform`), иное — `unknown`; приложение называет его своими словами. Собственное семейство устройство берёт из `PlatformUtils.family` — сервер иное, чем пять, отвергает `invalid_request`. Лог говорит только, что новое устройство просится, — без семейства, ключа и срока.
+
+### 6.5 Состояние связи и логи
+
+- **`ConnectionStatusService`**. В `dev` — `LiveConnectionStatusService`: фаза сокета, раунд выбора пути и статус Tor-клиента. `offline` наступает после неудачного полного раунда и держится до первого приветствия: «No connection» не мигает на каждой ступени лестницы. Попытка, прерванная сменой сети, — не проваленный раунд. Перезапуск канала (вход, переименование, правка в «Связи») показывается как подключение, а не как «нет связи». Рядом с состоянием едет причина неудачи — `ConnectionStatus.problem` (ниже).
+- **Логи.** `LoggerLogRepository.scrub` заменяет любой onion-хост v3 на `[onion]`, а любую ссылку спаривания — на `[link]` во всех строках, включая текст чужих исключений: `dart:io` кладёт URI запроса в `HttpException`, `FormatException` цитирует свой источник, а репозитории логируют пойманное. Ключи, челленджи, подписи и токены не логируются никогда; отказ канала логируется видом (`ChannelFailure`), без адреса и ключа.
+- **Выход — сначала отзыв своего ключа** (`device.revoke` с ключом этого устройства, контракт §8A), но только по поприветствованному соединению (`SessionPhase.live` или `catchingUp`): без него стирание идёт сразу, а осиротевший ключ отзывают с другого устройства — ожидание соединения, которое через Tor может подниматься минутами, ничего бы не дало. Отзыв выход не держит: человек, решивший выйти, выходит. **Выход идёт один**: второй, начатый во время идущего, присоединяется к нему (`AuthRepositoryImpl.logout`). Это ради собственного эха выхода: на отзыв сервер отвечает `device.revoked` на все соединения ключа, включая это, а событие — триггер принудительного выхода; присоединённый, он и есть добровольный выход — то же стирание и без сообщения об истёкшей сессии. Стирание после отзыва — сессия, хранилища, затем база под ключом, ключ локальной базы и файлы баз (фаза 048, [04-data-layer.md](04-data-layer.md) §6г) — идёт один раз.
+- **Выход** останавливает Tor-клиент и стирает его каталоги (`TorService.wipe`) после остановки канала. Каталог, который клиент ещё держит открытым, пробуется удалить снова: Windows не удаляет открытые файлы. Настройки связи после остановки канала стираются ещё раз — на случай приветствия, пришедшего между стиранием и остановкой, — через ту же очередь, что их записывает (`ServerAddressesRepository.clear`): запись, начатая до остановки, ложится раньше стирания, а не после.
+- **Ключи, которые больше никто не читает** — записи приглашения версии 2 (`session.invite_onion`, `session.invite_access_key`), отпечаток сертификата сервера (`session.server_fingerprint`) и ключ доступа к onion-сервису с отметкой о его регистрации (`session.access_key`, `session.access_key_registered`; `ConnectionStorage.sweepLegacy`), — стираются при каждом запуске (`SessionRepository.sweepLegacyKeys`, `main.dart`), до `retireLegacySession` (§6.0). Ключи стираются с теми же параметрами, с какими были записаны (`unlocked_this_device` на iOS, старая связка ключей на macOS): удаление с другими параметрами их не находит.
+
+**Причина неудачи** — `ConnectionProblem` (`lib/domain/model/connection/connection_problem.dart`). Сокет сообщает выбору пути, чем кончился каждый набор, не дошедший до приветствия (`SocketTargetProvider.reportFailed(url, ChannelFailure?)`; истёкший срок набора WebSocket считается `timeout`), и выбор пути переводит неудавшийся раунд в причину:
+
+| Причина | Откуда |
+|---|---|
+| `invalidOnion` | набор через Tor — `torOnionInvalid` |
+| `onionNotFound` | набор через Tor — `torOnionNotFound`: по onion-адресу нет сервиса |
+| `onionUnreachable` | набор через Tor — `torOnionUnreachable`, `timeout`, `tls`, `protocol` (и `torClientAuth`): сервис есть, а сервер за ним не отвечает как этот сервер |
+| `otherServer` | `wrongServer` за onion-адресом — фаза `serverMismatch` |
+| `torNetwork` | набор через Tor — `torNotReady`, `network`; Tor не поднялся за бюджет готовности, упал или не запустился |
+| `turnOnTor` | прямой путь не ответил (или прямой набор после удачной пробы не дошёл до приветствия), `Use Tor` выключен, onion-адрес известен, Tor здесь есть и не объявлен устаревшим |
+
+Без причины остаются `internal`, отсутствие библиотеки, устаревший клиент и неизвестный onion-адрес — экраны говорят `No connection`. Причина держится в `PathSelection.problem` вместе с `roundFailed` и снимается приветствием; раунд, причину которого не определить, заменяет прежнюю на «без причины» — экраны показывают причину последнего раунда. `ConnectionStatus.problem`: в `LiveConnectionStatusService` — `otherServer` при `serverMismatch`, причина раунда при `offline`, иначе `null`; в `PhaseConnectionStatusService` — `otherServer` при `serverMismatch`. Текст причины — в одном месте, `ConnectionProblemText.text(l10n)` (`lib/presentation/helpers/connection_problem_text.dart`): плашка 5.1, 5.2 и 5.4 вместо `No connection`, строка над полями раздела «Связь», строка под `Connect` на экране подключения; `invalidOnion` экраны с полями показывают у самого поля — тем же текстом они отказывают и вписанному onion-адресу, который не прошёл проверку формата (`AddressFormat`, `lib/general/connection/address_format.dart`), ещё до записи ([05-presentation-layer.md](05-presentation-layer.md)).
+
+### 6.6 Связь не держит экран
+
+Команда, отправленная без приветствия, ждёт его — через Tor до `slowPathBudget` (145 с). Для записи это правильно: `pair`, отправка из очереди, создание чата на сервере (его тоже делает очередь, фаза 041) должны дождаться канала. Экран при этом не ждёт: сообщение и сам чат сначала ложатся на устройство. Для чтения, у которого есть локальный ответ, ожидание неверно: список чатов и лента стояли бы за спиннером, пока поднимается Tor. Поэтому:
+
+- **`NoxSocketClient.send(..., waitForConnection: false)`** — без завершённого приветствия команда сразу бросает `SocketUnavailableException`, и репозиторий отдаёт кэш (ветка `connection` в `execute`). Так идут `chats.list`, `messages.list` и `chat.nameAvailable` (`Real*RemoteDataSource`): проверка имени при наборе не держит `Create` выключенной.
+- **Экран читает кэш, сервер пишет в кэш.** `ChatsListBloc` и `ChatThreadBloc` берут первую страницу / хвост с `cachedOnly: true` и сразу выводят; запрос к серверу (`_syncFirstPage` / `_syncTail`) идёт **вне** обработчика загрузки — иначе обновления по `watch()` вставали бы за ним в `sequential()`. Ответ ложится в базу и приходит тиком `watch()`; по завершении блок перечитывает кэш сам (`FirstPageSynced` / `WindowSynced` → `refresh`), потому что `watch().skip(1)` пропускает первый снимок, а запись, успевшая до него, в нём и окажется. `ChatCardBloc` так же показывает файлы из кэша и тянет новейшее окно в фоне.
+- **Спиннер — только для пустого кэша**, пока сервер спрашивают (`syncing`); без канала пустой экран показывается сразу. Подъём канала (`SessionPhase` / `ConnectionStatus` становятся текущими) запускает запрос к серверу снова.
+- Следующие страницы (прокрутка за край кэша) по-прежнему просят сервер в обработчике — человек сам ушёл за то, что есть на устройстве, — но и это чтение не ждёт отсутствующего канала.
+- **Создание чата не ждёт канала** (фаза 041): `createChat` пишет чат на устройство под id, который придумало устройство, и `Create` сразу ведёт в ленту. На сервер чат доносит очередь — `chat.create {name, chat_id}` раньше его сообщений; повтор с тем же `chat_id` сервер узнаёт и возвращает тот же чат, без второй записи и второго события. Окно сообщений и файлы чата, которого ещё нет на сервере, у сервера не спрашиваются. Подробности очереди — `04-data-layer.md` §6б.
+
+---
+
+## 7. Чеклист
+
+- [ ] **§6.0 канал:** каждое соединение (`wss` и каждое `https`) открывает модуль `packages/nox_tor` — TCP или поток Arti → TLS 1.3 (rustls/ring; любой сертификат, подпись рукопожатия проверяется; без SNI, возобновления и раннего отправления данных) → проверка `POST /auth` → `POST /auth2` с RustSecureBox (сначала подпись сервера, затем его ключ против ключа из ссылки, только потом `/auth2`) → байты в Dart; `ChannelSocket implements Socket` через `HttpClient.connectionFactory`; `ChannelHttpClient` (`[dev]`): `client` сокету, `transferClient` Dio, `bind(serverKey:, devicePrivateKey:)` на каждом старте, `unbind()` при остановке; открытие 30 с / 45 с через onion, отмена набора доходит до `nox_chan_close`; ключ из события открытия сверяется в Dart ещё раз; ни один отказ канала не ведёт к выходу — принудительный выход только по `unauthenticated` на `session.hello` и `device.revoked`, `401` от `/files` — неудавшаяся передача; приветствие и `pair` без ключа и подписи; ссылка `nox://pair/` версии 3 (`malformed` / `newerVersion`), ключ сервера — `session.server_key`; сессия без него или с парой ключей устройства не от RustSecureBox этой сборки снимается один раз при запуске (`retireLegacySession`).
+- [ ] **§6 путь до сервера:** сокет спрашивает цель перед каждой попыткой (`SocketTargetProvider` → `ConnectionPathSelector`) и сообщает, чем кончился набор, не дошедший до приветствия (`reportFailed`); прямые кандидаты — последний работавший, вписанный человеком, публичный, найденные сервером, адрес из ссылки — проверяет `ChannelDirectProber` (канал с проверкой `/auth` и `/auth2`, открыть и закрыть, 4,5 с на адрес, 5 с на раунд, итог «мой» / «другой ключ» / «не ответил»); Tor — только при включённом `Use Tor` (по умолчанию выключен), известном onion-адресе, поддержке платформы (все пять, Linux включительно) и клиенте, которого сеть не объявила устаревшим; ключей доступа Tor нет, цель заранее не задаётся; Arti `=0.47.0` с `hs-pow-full`; выключение `Use Tor` останавливает Tor сразу и обрывает соединение через него; упавший клиент перезапускается; приветствие привязано к своему соединению; старт не ждёт выбора пути; `wrongServer` на прямом адресе — «не дома», за onion — `serverMismatch` (причина `otherServer`); onion-хост открывает модуль потоком Arti, проверка `/auth` и `/auth2` та же, локального порта нет; команды ждут медленный путь до 145 с; возврат на прямой — при смене сети, раз в 2 мин и при перемене адресов; спаривание — тем же выбором пути, через Tor тоже; настройки связи — `ServerAddresses` (`public`, `manualAddress`, `manualOnion`, `useTor`), слово сервера заменяет правку того же поля; причина раунда — `ConnectionProblem` в `ConnectionStatus.problem`, текст — `ConnectionProblemText`; эпоха `key:<ключ сервера>`; в логах onion-хосты — `[onion]`, ссылки — `[link]`.
+- [ ] **§6.4а спаривание с подтверждением (фаза 046):** `pair` одной командой для ссылки с машины и приглашения; `pending` → ожидание на неприветствованном соединении (`pair`, `pair.cancel`, событие `pair.resolved`), `AuthRepository.watchAwaitingApproval()`; исход — повтором токена (по `pair.resolved`, на каждом новом соединении, по своему сроку — 10 мин + 30 с от первого `pending` по часам устройства, на сроке ждущий запрос отзывается): `identity` / `PairingException.declined` / `RepositoryException.notFound` / `PairingException.cancelled`; `cancelPairing()` → `pair.cancel`, исход читается повтором; ожидание в `session.pending_pairing` (защищённое хранилище) переживает перезапуск, экран входа возвращает к нему (`pendingPairing()`); выдавшее устройство — ранний `PairRequestServiceImpl` (`[dev]`): запросы из `device.pairRequested`/`device.pairResolved` живут, пока соединение поприветствовано, `answer` → `device.approve` только по нему, `not_found` — не ошибка, `watchClosed()` для 7.8; семейство — одно из пяти; выход отзывает свой ключ только по поприветствованному соединению, второй выход присоединяется к первому.
+- [ ] **§5 connectivity/lifecycle:** `ConnectivityService` (`watchOnline()` со seed'ом + `isOnline()`, оба «голый» `bool`; `@LazySingleton(as: ConnectivityService, env:[dev,prod])` + `MockConnectivityService` под `[test]`, `connectivity_plus`); app-lifecycle observer на `_AppRootState` (`WidgetsBindingObserver`, `resumed → AppResumed` превентивный refresh, **re-entrancy guard** в `AuthBloc`); connectivity НЕ гейтит запрос — источник истины остаётся за `ApiClient`.
+- [ ] `ApiClient` — плоский `lib/data/remote/api_client.dart`: `@LazySingleton(env: [Environment.dev])` с `AppConfigRepository` и `ChannelHttpClient` в конструкторе, один `Dio` с 30-сек таймаутами и **идемпотентный метод** `initBase({required String address})`: `baseUrl` — адрес спаренного сервера (`https://<host:port>`, без суффикса пути), адаптер — на `ChannelHttpClient.transferClient` (заново через `onDiscarded`), `AuthInterceptor` навешивается один раз и читает `getUserAuthIdToken()` async per request → `Bearer` только для непустого токена, ошибки (`401` включительно) только пробрасывает. `initBase` зовёт только `LiveSessionStarter` — с адресом из ссылки спаривания и с адресом пути каждого приветствия; адреса из сборки нет. Для команд `ApiClient` инертен (живой канал команд — WS-конверт фазы 026); инжектит его только `RealFileRemoteDataSource` — байты вложений фазы 028.
+- [ ] **Один хост.** У NOX единственный бэкенд — Go-сервер `noxd` (`client_backend/`), отдельного второго хоста (search/etc.) нет; его адрес и порт приходят ссылкой спаривания и живут в сессии, а не в `AppConfig` и не в сборке.
+- [ ] `BaseApiRepository` (целевой) отдаёт единственный `baseClient` геттером — `getIt<ApiClient>().dio`; API-классы наследуют его. В коде файла нет — все четыре API-класса (`GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi`) — моки, собирающие `ResponseEntity<T>` напрямую, без `BaseApiRepository`/`RequestBuilder`. `GetItemsApi` — намеренно замороженная верификационная нарезка (`ItemsEntity{items, page, page_size, total}`, путь `v1/items`, 1-based); её `total` **не** попадает в доменную `PageMetadata{hasMore, nextPage}`.
+- [ ] `AppConfigRepository` — фактический контракт (6 членов): `initialize(flavorType:)` / `config` / `getUserAuthIdToken()` (**метод**) / `limits` / `updateLimits(ServerLimits)` / `isTestEnvironment` в `domain/`; геттера `baseApiUrl` нет; импл — `@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])` с `FlutterSecureStorage` + `@Named('isTestEnvironment')` в конструкторе, без `BaseRepositoryHelper`, `StateError` на чтение `config` до `initialize`; резолв через `getIt<AppConfigRepository>()` напрямую (в `global_aliases.dart` не алиасится).
+- [ ] `AppConfig` несёт только `flavor` ([02-dependency-injection.md](02-dependency-injection.md), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)); адреса сервера в нём нет — он приходит ссылкой спаривания; `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; собирается в `AppConfigRepositoryImpl.initialize(flavorType:)`, который вызывается в `main.dart` после `getIt.allReady()`.
+- [ ] REST-мост: `RequestBuilder`/`RequestBuilderHelper` + `ResponseEntity<T>`/`EntityConverter<E>` — по [04-data-layer.md](04-data-layer.md) §2–3, §7; envelope = `{success, ErrorWireEntity? error, T? data}` (контракт v0, `error` = `{code, message}`); распаковка — `unwrapEnvelope`, у `execute` четыре catch-ветки (`BaseRepositoryException` насквозь → `SocketUnavailableException` → `connection` → `DioException` по типу/статусу → catch-all `unknown`), нет `ApiException`/`DaoException`; конкретный код ошибки даёт `RepositoryException.fromWireCode(error.code)`, а не ручная проверка `statusCode`.
+- [ ] **§4 (пример; контрактом v0 не требуется):** дополнительный security-interceptor — в примере ровно 5 security-заголовков: `x-request-timestamp` (epoch ms, ±5 мин), `x-request-signature`, `x-user-agent`, `x-device-id`, `x-trace-id` (отсутствие любого → `403` до проверки HMAC); `x-user-agent` — 6 slash-сегментов `'{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}'` (канон `UserAgentModel`); `x-request-signature` — HMAC-SHA256 по `METHOD\nPATH\nBODY_SHA256\nTIMESTAMP` (METHOD = `ApiRequestMethod.<verb>`, **не** uppercase; PATH — в примере **с** query); пропуск подписи для web-deep-link endpoint'ов.
+- [ ] **§4 (пример; контрактом v0 не требуется):** `getUserAuthIdToken()` бэкендит `AuthRepository` поверх `flutter_secure_storage` (access-JWT + opaque refresh); refresh→rotate→retry на 401 через refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`); single-flight lock на refresh (reuse-detection блэклистит сессию); разлогин при провале refresh; десктоп-бэкенды хранилища — Keychain/DPAPI/libsecret, local wipe = `secureStorage.deleteAll()` + Sembast/`shared_preferences` (единый путь, 5 платформ). В коде уже есть secure storage, `AuthRepositoryImpl.logout({forced})` с полным wipe и чтение ключа `auth_id_token` (писателя нет); токен-модели нет — контракт v0 авторизует соединение каналом (§6.0).
+- [ ] **§4 (пример; контрактом v0 не требуется):** `UserAgentModel` определён (6 сегментов `os`/`appVersion`/`buildNumber`/`deviceModel`/`osVersion`/`isPhysical`; `package_info_plus` → appVersion+buildNumber, плагин device-info → deviceModel+osVersion+isPhysical с per-OS-ветками; `os` по 5 платформам `ios`/`android`/`windows`/`macos`/`linux` — набор пример/TBD; `buildNumber` int, `isPhysical` bool); собирается **один раз** в DI-бутстрапе (синглтон/`DeviceContext`), interceptor берёт готовую строку.
+- [ ] **§4 (пример; контрактом v0 не требуется):** `x-device-id` стабильный — генерируется uuid v4 **один раз** на первом запуске, persist в `flutter_secure_storage` (ключ `_device_id`, см. [15-push-notifications.md](15-push-notifications.md) §6.4); **НЕ** входит в `signature_input` (его смена не ломает подпись; последствие неправильного id — осиротевший push-токен, не auth-fail).
+- [ ] **§4 (пример; контрактом v0 не требуется):** обработка `503 initializing` — **не** авторетраить в interceptor'е, отдать в `BLoC` (повтор решает презентация); `429` — ждать retry-after-значение (заголовок `Retry-After` или поле `error.details.retry_after` — транспорт пример/TBD), при отсутствии — экспоненциальный backoff (потолок 5 мин), **макс 3 попытки на одно пользовательское действие**; `403` невалидного/неполного UA, `426 upgrade_required` build-gate при `build < min_build_number` (force-update-экран — отдельная ветка от `403`).
+- [ ] **FLAG:** HMAC-подпись (имена заголовков, `signature_input`, алгоритм) и токен-эндпоинт §4 — пример: контракт v0 авторизует соединение каналом (проверка `/auth` и `/auth2`, §6.0), а не запрос; ввести любой из них — изменение контракта, согласованное с `client_backend/` до кода; в скелете — `TODO(auth-stage2)`, не изобретать схему здесь.

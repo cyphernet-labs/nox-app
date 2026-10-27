@@ -90,9 +90,13 @@ const AppBar = ({ t, title, wordmark = false, leading = null, actions = [], onCo
           <span style={{ ...ty('titleLarge'), color: fg, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{title}</span>
         ) : null}
       </div>
+      {/* An action is either a glyph name or {name, color}. The colour exists
+          for ONE case: a permanently disabled action, dimmed to the M3 38% the
+          same way IconButton has always allowed. Hardcoding onSurfaceVariant
+          here is what kept the mobile invite seam undrawable. */}
       {actions.map((a, i) => (
         <div key={i} style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <Icon name={a} size={24} color={t.onSurfaceVariant} />
+          <Icon name={a.name || a} size={24} color={a.color || t.onSurfaceVariant} />
         </div>
       ))}
     </div>
@@ -207,9 +211,12 @@ const Spinner = ({ size = 24, color = '#000', width = 3 }) => (
 );
 
 // Generated chat avatar
-const Avatar = ({ name, size = 40 }) => {
+// `initials` overrides the chat-row rule for a PERSON: the app derives a
+// person's initials differently (User7421 -> U, not US), and showing the same
+// human two ways on two screens is the drift this override exists to prevent.
+const Avatar = ({ name, size = 40, initials }) => {
   const pal = avatarFor(name);
-  const ini = initialsFor(name);
+  const ini = initials !== undefined ? initials : initialsFor(name);
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', background: pal.bg,

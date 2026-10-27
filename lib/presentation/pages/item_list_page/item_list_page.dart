@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/item_list_page/bloc/item_list_bloc.dart';
 
 /// Scaffold-DEMO verification harness on MOCK data (NOT a product feature — FR-013).
-/// Wired as the Chats-tab body to prove the layered vertical compiles end-to-end.
-/// Rendered inside AppShell's body (no own Scaffold).
+/// Proves the layered vertical (page → BLoC → repository) compiles end-to-end.
+/// Not currently mounted: the app starts at `SplashPage` (the app-state spine); this
+/// and AppShell are kept as the Feature-001 skeleton until real chat features land.
 class ItemListPage extends StatefulWidget {
   const ItemListPage({super.key});
 
@@ -42,8 +44,8 @@ class _ItemListPageState extends State<ItemListPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(TextConstants.errorGeneralTitle),
-                  TextButton(onPressed: () => _bloc.add(const ItemListEvent.initialize()), child: const Text(TextConstants.actionTryAgain)),
+                  Text(context.l10n.errorGeneralTitle),
+                  TextButton(onPressed: () => _bloc.add(const ItemListEvent.initialize()), child: Text(context.l10n.actionTryAgain)),
                 ],
               ),
             ),
@@ -54,9 +56,9 @@ class _ItemListPageState extends State<ItemListPage> {
                 itemBuilder: (context, item, index) => ListTile(key: ValueKey(item.id), title: Text(item.name), subtitle: Text(item.id)),
                 firstPageProgressIndicatorBuilder: (_) => const Center(child: CircularProgressIndicator()),
                 newPageProgressIndicatorBuilder: (_) => const Center(child: CircularProgressIndicator()),
-                noItemsFoundIndicatorBuilder: (_) => const Center(child: Text(TextConstants.noData)),
+                noItemsFoundIndicatorBuilder: (_) => Center(child: Text(context.l10n.noData)),
               ),
-              separatorBuilder: (context, index) => const Divider(height: 1),
+              separatorBuilder: (context, index) => const AppHairlineDividerWidget(),
             ),
           };
         },

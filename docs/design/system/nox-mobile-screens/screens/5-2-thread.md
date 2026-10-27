@@ -5,30 +5,54 @@
 **Purpose.** Read and send messages + files within one chat.
 
 ## Anatomy
-App bar (back + chat name). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
+App bar (back + chat name + a disabled **Invite a person** action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
+> **The invite is a disabled seam (phase 037).** The client server serves one person; talking to anybody else goes through a relay that does not exist yet, and the invite action is the place it will attach to. The live screen in `_src/` draws it too, dimmed to the M3 disabled 38% exactly as the app dims it (`AppBar` actions there take `{name, color}`).
+
 
 ## States
 - `filled` — Filled
 - `empty` — Empty
 - `attachment` — Attachment
+- `connecting` — Connecting (corner)
+- `tor` — Through Tor (corner badge)
 - `offline` — Offline
+- `offline-cause` — Offline, cause known
+- `server-mismatch` — Wrong server
+
+Connection corner (phase 040): the same rule as 5.1 — only deviations, right of the app bar before the invite action: a `Tor` badge on the Tor path, “Connecting…” (with the badge on Tor) while the path comes up. A message sent meanwhile waits as `pending`, it does not fail. The No connection strip appears only after a whole round of path finding found nothing, and it says the cause in place of “No connection” whenever the app can tell (feature 045) — the same five sentences and the same no-signal glyph as 5.1. The wrong-server banner is for the onion address only.
 
 ## Behavior
 - Messages group by author; an AuthorHeader precedes each group (no per-message avatars in the feed).
 - Own bubbles = primaryContainer (right, bottom-right corner clipped); others = surfaceContainerHigh (left, bottom-left clipped).
-- Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry).
+- Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry). An own message that came from the server is sent, including one typed on another device of the same person (contract §5).
+- A message with a file shows how far its bytes have got while they go up: a picture carries a ring on a contrasting disc over its middle (`inverseSurface`: dark in the light theme, light in the dark; it keeps the ring legible over any photo); any other file swaps its size line for “Sending… 45%” over a bar. Before the first byte moves — the server is still issuing the upload pass, which takes seconds through Tor — the ring spins and the bar runs without a percent. The ring stays for the whole send, the message itself included, and gives way to the tick once the server has it. If an attempt fails and will be retried, the ring goes while the clock waits and starts again from the beginning with the next attempt. A text has no indicator of its own: clock → tick is its whole journey.
 - Date separators: Today / Yesterday / 12 May. A system line marks chat creation.
 - Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.
+- Try again on No connection (phase 042): the strip carries Try again, which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.
+- The connection never holds the thread: the messages already on the device show at once and the server's newest window arrives in the background. A centered spinner only when the device holds nothing for this chat and the server is being asked; with no connection the empty thread shows at once and the server is asked again when the connection returns. Writing works offline: a message waits in the queue with its clock and goes out over whichever path comes up first.
+- Wrong server: the server reached through its ONION address presented a key the pairing link did not name. Another key at a direct address is “not home”, never this state. A persistent banner “This onion address belongs to a different server.” with a “Try again” action, INSTEAD of the offline one — something answered, so “No connection” would be false — and with the error glyph rather than wifi_off. Nothing local is thrown away, and nothing on screen is cleared: the banner sits over what was already there. It does not pass on its own; the action is the only way out. A message written in this state waits as `pending` exactly as it does offline, and must never show as an error: the server never saw it, so the failure is not the person's.
 - Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.
+- A chat made on this device that the server does not have yet (phase 041) opens at once and can be written into at once: its messages wait in the queue with their clock and never turn into errors while the chat is not there. Its window and files are never asked of the server, which could only answer `not_found`. ONE notice strip sits over the thread, picked in this order: wrong server → name taken (“Another chat already has this name. Rename this one to finish creating it.” + “Rename”, which opens the rename dialog; the rename is done on the device and the creation goes out again by itself) → refused (“This chat couldn't be created on your server.” + “Try again”, which puts the chat back in line) → waiting (“This chat isn't on your server yet. It will be once NOX connects.”, ONLY while the channel is not current — with a current channel the creation is going out right now and the notice would only flash; it stands INSTEAD of “No connection”, since it says more) → “No connection”, or its cause when known. The strip reads the chat row live and goes the moment the server has the chat. Locked by the goldens `chat_thread_page_creation_pending` and `chat_thread_page_creation_name_taken` (no live-design chip yet).
+- The invite action is permanently disabled and raises nothing when tapped: a missing control answers «how do I add somebody?» with silence, an error answers it with a fault, and the truth is that the relay it needs does not exist yet. Its screen-reader name is the action alone — a disabled control is already announced as unavailable, and the caption that says it comes later lives under the button in 5.4, where there is room for it.
+- Attachments in the feed, in THREE states (owner decision): an image with a real local file renders an inline thumbnail (rounded, bubble-bounded); an image whose bytes have not arrived yet takes the same box with a picture glyph and a spinner - so the fetch already running is visible, and nobody taps to start a second download of the same bytes; every other type - and an image that will never be a thumbnail, such as an svg - renders the type-icon chip. A composer draft never gets the placeholder: its file is on disk and nobody is fetching it. While the bytes of a received picture come in, the placeholder's spinner becomes a ring that fills with them. The fetch starts when the thread loads, on every refresh of it (a picture that arrives while the thread is open comes in this way) and when the connection returns.
 
 ## Navigation
 - Back → Chats list (5.1).
-- Attachment chip / file bubble → File view (5.3).
-- (Header affordances to chat card exist on desktop; mobile reaches files via 5.4 entry.)
+- Attachment chip / file bubble → File view (5.3); an image thumbnail → full-screen image viewer (zoom / close) (F4).
+- Tapping the chat name in the app bar opens the chat card (5.4).
+- Invite action → nowhere: it is disabled and stays disabled until a relay exists.
+- “Rename” on the name-taken notice → the rename dialog. “Try again” on the refused notice → the chat waits to be created again, and the queue tries at once.
 
 ## Copy (EN)
 - System: Chat created by Aria
 - Composer placeholder: Message
+- Invite action (screen-reader name): Invite a person
+- Corner: Connecting… · Tor
+- Offline strip: No connection, or its cause when known (as 5.1) · Try again
+- Wrong-server strip: This onion address belongs to a different server. · Try again
+- Waiting notice: This chat isn't on your server yet. It will be once NOX connects.
+- Name-taken notice: Another chat already has this name. Rename this one to finish creating it. · Rename
+- Refused notice: This chat couldn't be created on your server. · Try again
 
 ## Design-system components
 - AppBar (title)

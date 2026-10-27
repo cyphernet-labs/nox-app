@@ -1,0 +1,482 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/entity/chat/chat_entity.dart';
+import 'package:nox_app/data/entity/chat/message_entity.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
+import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
+import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
+import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/sync/sync_service.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/app_state_repository.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../remote/socket/fake_socket.dart';
+
+/// Applying an event has to leave device-local state alone and move the cursor
+/// only once the write succeeded — both are contract rules (§6, §9.4), and both
+/// are invisible until something goes wrong in production.
+void main() {
+  late FakeSocketFactory factory;
+  late NoxSocketClient socketClient;
+  late SyncService service;
+  late SyncRepository sync;
+  late ChatDao chatDao;
+  late MessageDao messageDao;
+
+  /// Waits for a condition instead of a fixed pause: applies run through an
+  /// async queue and several store writes, and a hard-coded delay is exactly
+  /// the kind of test that passes on a quiet machine and flakes under load.
+  Future<void> waitUntil(Future<bool> Function() done, {String reason = ''}) async {
+    for (var i = 0; i < 200; i++) {
+      if (await done()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    fail('condition never became true${reason.isEmpty ? '' : ': $reason'}');
+  }
+
+  Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 20));
+
+  Map<String, dynamic> chatFrame(String id, {String name = 'Live chat', int at = 1788000000}) => {
+    'chat_id': id,
+    'name': name,
+    'created_at': at,
+    'created_by_label': 'Anna',
+    'last_message_preview': '',
+    'last_activity_at': at,
+  };
+
+  Map<String, dynamic> messageFrame(String id, String chatId, {required int seq, String text = 'hi', int at = 1788000100}) => {
+    'message_id': id,
+    'seq': seq,
+    'chat_id': chatId,
+    'author_id': 'u_other',
+    'author_label': 'Boris',
+    'sent_at': at,
+    'body': {'type': 'text', 'text': text},
+  };
+
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+    await getIt<AppDatabase>().clearEntireDatabase();
+    sync = getIt<SyncRepository>();
+    chatDao = getIt<ChatDao>();
+    messageDao = getIt<MessageDao>();
+    factory = FakeSocketFactory();
+    socketClient = NoxSocketClient(factory, sync);
+    service = SyncService(
+      socketClient,
+      sync,
+      chatDao,
+      messageDao,
+      getIt<ChatMapper>(),
+      getIt<ChatWireMapper>(),
+      getIt<MessageMapper>(),
+      getIt<MessageWireMapper>(),
+      getIt<OutboxRepository>(),
+      getIt<ServerAddressesRepository>(),
+    );
+    service.start();
+  });
+
+  tearDown(() async {
+    await service.stop();
+    await socketClient.stop();
+    await getIt.reset();
+  });
+
+  Future<FakeSocket> connected({int cursor = 0}) async {
+    await socketClient.start(url: Uri.parse('ws://127.0.0.1:8080/ws'));
+    final socket = factory.latest;
+    socket.pushGreeting();
+    // Wait for the greeting to actually be on the wire rather than for a guess
+    // at how long that takes: the client answers only after an async cursor
+    // read, and since feature 032 also after signing the challenge.
+    for (var i = 0; i < 200 && socket.commandNamed('session.hello') == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    socket.replyToHello(cursor: cursor);
+    await settle();
+    return socket;
+  }
+
+  test('device.revoked is acted on, not discarded as a duplicate', () async {
+    // It carries seq 0, and every cursor is at least that - so the ordinary
+    // duplicate guard would drop it, and the contract obligation to wipe and
+    // return to pairing would be silently unimplemented.
+    final session = getIt<SessionRepository>();
+    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+    expect((await session.readSession()).data, isNotNull, reason: 'precondition: this device is paired');
+
+    final expiries = <bool>[];
+    final sub = getIt<AppStateRepository>().watchAppState().listen((r) => expiries.add(r.data?.sessionExpired ?? false));
+    addTearDown(sub.cancel);
+
+    final socket = await connected(cursor: 5);
+    socket.pushEvent(seq: 0, event: 'device.revoked', data: const {'device_key': 'k'});
+    await settle();
+    await settle();
+
+    expect((await session.readSession()).data, isNull, reason: 'a revoked device keeps nothing');
+    // And the person is told why: a forced logout carries the expiry reason,
+    // which is what raises the notice instead of dropping them at the pairing
+    // screen with no explanation.
+    expect(expiries, contains(true));
+  });
+
+  test('a revocation echo of our OWN sign-out is ignored', () async {
+    // Logout revokes this very key, so the server echoes the same event back.
+    // Acting on it would run a second, forced logout and tell the person their
+    // session expired when they simply signed out.
+    final socket = await connected(cursor: 5);
+
+    // The session being empty is the SETUP, not the assertion: a sign-out has
+    // just left it that way. What must not happen is the second, forced logout
+    // - so what is watched is the expiry reason, which is the only thing that
+    // distinguishes "you signed out" from "your session expired".
+    final expiries = <bool>[];
+    final sub = getIt<AppStateRepository>().watchAppState().listen((r) => expiries.add(r.data?.sessionExpired ?? false));
+    addTearDown(sub.cancel);
+    await settle();
+    expiries.clear();
+
+    socket.pushEvent(seq: 0, event: 'device.revoked', data: const {'device_key': 'k'});
+    await settle();
+    await settle();
+
+    expect(expiries, isNot(contains(true)), reason: 'signing out is not an expiry');
+  });
+
+  test('a rename made on another device lands here without a reconnect', () async {
+    final session = getIt<SessionRepository>();
+    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true, label: 'Anna');
+    await session.adoptServerIdentity(authorId: 'u_1', label: 'Anna');
+
+    final socket = await connected(cursor: 5);
+    socket.pushEvent(seq: 0, event: 'identity.updated', data: const {'label': 'Bobbi'});
+    await settle();
+    await settle();
+
+    final after = (await session.readSession()).data;
+    expect(after?.label, 'Bobbi');
+    // The id is untouched: this event says nothing about it, and a guess there
+    // would mark strangers' messages as this user's own.
+    expect(after?.authorId, 'u_1');
+  });
+
+  test('a rename arriving before anyone has paired is ignored', () async {
+    // Nothing to attach a name to. Stamping one on an empty session would hand
+    // the next person to sign in somebody else's.
+    final socket = await connected(cursor: 5);
+    socket.pushEvent(seq: 0, event: 'identity.updated', data: const {'label': 'Bobbi'});
+    await settle();
+
+    expect((await getIt<SessionRepository>().readSession()).data, isNull);
+  });
+
+  test('an own message coming back settles its queue entry instead of being re-sent', () async {
+    // Contract §5: the echo and message.new of an OWN message carry the key it
+    // was sent with, expressly so the queue can settle against replay after a
+    // restart without an idle resend.
+    final outbox = getIt<OutboxRepository>();
+    await outbox.clean();
+    final queued = (await outbox.enqueue(chatId: 'c_1', text: 'sent before the crash')).data!;
+
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 7,
+      event: 'message.new',
+      data: {...messageFrame('m_1', 'c_1', seq: 7), 'client_message_id': queued.clientMessageId},
+    );
+    await waitUntil(() async => (await outbox.watchQueue().first).isEmpty, reason: 'the entry settles');
+
+    expect(await messageDao.getById('m_1'), isNotNull); // and the message itself landed
+    await outbox.clean();
+  });
+
+  test('an own message typed on another device lands as sent, not without a status', () async {
+    // Contract §5: own means the identity, not the device, so the key comes
+    // with it - and an own message that came from the server is `sent`. This
+    // device has no queue entry for it; storing the wire's empty status left
+    // it with no tick, which reads as "not sent".
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 9,
+      event: 'message.new',
+      data: {...messageFrame('m_3', 'c_1', seq: 9), 'client_message_id': 'key-minted-on-the-phone'},
+    );
+    await waitUntil(() async => await messageDao.getById('m_3') != null, reason: 'the event applies');
+
+    expect((await messageDao.getById('m_3'))!.status, 'sent');
+  });
+
+  test('a message without the key is not taken for an own one', () async {
+    final socket = await connected();
+    socket.pushEvent(seq: 10, event: 'message.new', data: messageFrame('m_4', 'c_1', seq: 10));
+    await waitUntil(() async => await messageDao.getById('m_4') != null, reason: 'the event applies');
+
+    expect((await messageDao.getById('m_4'))!.status, 'none');
+  });
+
+  test('a message from someone else leaves the queue alone', () async {
+    // Only an own message carries the key, so nothing here may touch a queue
+    // entry — a stray removal would silently drop an unsent message.
+    final outbox = getIt<OutboxRepository>();
+    await outbox.clean();
+    await outbox.enqueue(chatId: 'c_1', text: 'still mine to send');
+
+    final socket = await connected();
+    socket.pushEvent(seq: 8, event: 'message.new', data: messageFrame('m_2', 'c_1', seq: 8));
+    await waitUntil(() async => await messageDao.getById('m_2') != null, reason: 'the event applies');
+
+    expect(await outbox.pending(), hasLength(1));
+    await outbox.clean();
+  });
+
+  // Phase 039's server.addresses (seq 0) is not journal content: it says where
+  // the machine can be found, so it is stored and the cursor is left alone
+  // (contract §8A; phase 040, FR-010).
+  test('a server.addresses event is stored, and the cursor does not move for it', () async {
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 0,
+      event: 'server.addresses',
+      data: {
+        'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
+        'onion': '${'a' * 56}.onion:443',
+      },
+    );
+    final addresses = getIt<ServerAddressesRepository>();
+    await waitUntil(() async => (await addresses.read()).data?.direct.isNotEmpty ?? false, reason: 'the addresses are stored');
+
+    final stored = (await addresses.read()).data!;
+    expect(stored.direct, ['192.168.1.20:8080', '[fd12:3456::20]:8080']);
+    expect(stored.onion, '${'a' * 56}.onion:443');
+    expect(await sync.getCursor(), 0, reason: 'seq 0 is not a journal position');
+
+    // And the journal goes on past it.
+    socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
+    await waitUntil(() async => await sync.getCursor() == 5, reason: 'the journal goes on past the address event');
+    expect((await chatDao.getById('c_1'))?.name, 'Live chat');
+  });
+
+  test('an address event that says nothing usable changes nothing', () async {
+    final addresses = getIt<ServerAddressesRepository>();
+    await addresses.saveFromServer(direct: const ['192.168.1.20:8080'], onion: null);
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 0,
+      event: 'server.addresses',
+      data: {
+        'direct': ['not an address', 42, '/etc/passwd'],
+        'onion': 'example.com:443',
+      },
+    );
+    socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
+    await waitUntil(() async => await sync.getCursor() == 5, reason: 'the journal goes on');
+
+    final stored = (await addresses.read()).data!;
+    expect(stored.direct, isEmpty, reason: 'the server said its list is empty of anything dialable');
+    expect(stored.onion, isNull, reason: 'only an onion address is an onion address');
+  });
+
+  test('a new chat event lands in the store and the cursor follows it', () async {
+    final socket = await connected();
+    socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
+    await waitUntil(() async => await sync.getCursor() == 5, reason: 'the chat event is applied');
+
+    expect((await chatDao.getById('c_1'))?.name, 'Live chat');
+  });
+
+  test('applying a chat event keeps the unread badge, which the wire does not carry', () async {
+    await chatDao.upsert(
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Old name',
+        lastMessagePreview: 'p',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 7,
+        lastOpenedSeq: null,
+      ),
+    );
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 6,
+      event: 'chat.updated',
+      data: chatFrame('c_1', name: 'Renamed'),
+    );
+    await settle();
+
+    final stored = await chatDao.getById('c_1');
+    expect(stored?.name, 'Renamed'); // the wire owns the name
+    expect(stored?.unreadCount, 7); // the device owns the badge
+  });
+
+  test('the server\'s chat.created for a chat made on this device ends its wait and keeps its read mark (phase 041)', () async {
+    // The device minted the id, so the server's event names the very row the
+    // device wrote - nothing is renamed, the wait simply ends.
+    const id = 'c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5';
+    await chatDao.upsert(
+      const ChatEntity(
+        id: id,
+        name: 'Kitchen',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: 4,
+        creation: 'pending',
+        creationAttempts: 2,
+      ),
+    );
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 7,
+      event: 'chat.created',
+      data: chatFrame(id, name: 'Kitchen'),
+    );
+    await waitUntil(() async => await sync.getCursor() == 7, reason: 'the chat event is applied');
+
+    final stored = await chatDao.getById(id);
+    expect(stored?.creation, isNull, reason: 'the server has it: nothing is left to create');
+    expect(stored?.creationAttempts, isNull);
+    expect(stored?.lastOpenedSeq, 4, reason: 'the read mark is the device\'s and survives');
+  });
+
+  test('an incoming message raises the chat row itself, because the server sends no chat.updated for it', () async {
+    await chatDao.upsert(
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
+    );
+    final socket = await connected();
+    socket.pushEvent(seq: 7, data: messageFrame('m_1', 'c_1', seq: 7, text: 'ping'));
+    await waitUntil(() async => await messageDao.getById('m_1') != null);
+
+    expect((await messageDao.getById('m_1'))?.text, 'ping');
+    final chat = await chatDao.getById('c_1');
+    expect(chat?.lastMessagePreview, contains('ping'));
+    // The row carries preview and activity time only. The badge is recounted
+    // from the read mark when the list is read, so applying an event does not
+    // touch a counter - which is what makes a duplicate free.
+    expect(chat?.unreadCount, 0);
+  });
+
+  test('a duplicate at the replay boundary is dropped instead of applied twice', () async {
+    await chatDao.upsert(
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
+    );
+    final socket = await connected();
+    socket.pushEvent(seq: 9, data: messageFrame('m_9', 'c_1', seq: 9));
+    await settle();
+    socket.pushEvent(seq: 9, data: messageFrame('m_9', 'c_1', seq: 9));
+    await settle();
+
+    // The message row is the observable now: exactly one, no matter how many
+    // times the same event arrives. The badge cannot double-count either, since
+    // it counts a set rather than accumulating - which is why the contract
+    // forbids an incrementing counter in the first place (§6).
+    expect(await messageDao.countByChat('c_1'), 1);
+  });
+
+  test('an echo does not erase the local file path of a message already stored', () async {
+    await chatDao.upsert(
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
+    );
+    await messageDao.upsert(
+      const MessageEntity(
+        id: 'm_att',
+        chatId: 'c_1',
+        seq: 20,
+        authorId: 'me',
+        authorLabel: 'Me',
+        text: null,
+        sentAt: '2026-01-01T00:00:00.000Z',
+        status: 'sent',
+        isSystem: false,
+        attachmentId: 'f_1',
+        attachmentType: 'image',
+        attachmentName: 'shot.png',
+        attachmentSizeBytes: 10,
+        attachmentLocalPath: '/tmp/shot.png',
+      ),
+    );
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 21,
+      data: {
+        ...messageFrame('m_att', 'c_1', seq: 21),
+        'body': null,
+        'attachment': {'file_id': 'f_1', 'name': 'shot.png', 'size': 10, 'mime': 'image/png', 'expires_at': 1900000000},
+      },
+    );
+    await settle();
+
+    // The wire has no localPath; losing it would break preview and save.
+    expect((await messageDao.getById('m_att'))?.attachmentLocalPath, '/tmp/shot.png');
+  });
+
+  test('a failed apply halts the tail, and a fresh catch-up resumes it', () async {
+    final socket = await connected(cursor: 0);
+    // Close the database under the applier so the write fails for real.
+    await getIt<AppDatabase>().clearEntireDatabase();
+    await chatDao.upsert(
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
+    );
+
+    // A malformed payload fails to parse inside the apply.
+    socket.pushEvent(seq: 30, data: const {'message_id': 'bad'});
+    await settle();
+    final afterFailure = await sync.getCursor();
+
+    // The tail is held: a later event must NOT move the cursor past the gap,
+    // or the failed one would never be redelivered.
+    socket.pushEvent(seq: 31, data: messageFrame('m_31', 'c_1', seq: 31));
+    await settle();
+    expect(await sync.getCursor(), afterFailure);
+
+    // A reconnect starts a new catch-up, which redelivers the gap — applying
+    // has to resume, or one transient failure would silence the device forever.
+    await socketClient.stop();
+    final second = await connected(cursor: 0);
+    second.pushEvent(seq: 31, data: messageFrame('m_31', 'c_1', seq: 31));
+    await settle();
+    expect(await sync.getCursor(), 31);
+  });
+}

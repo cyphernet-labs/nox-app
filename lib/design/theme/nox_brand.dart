@@ -57,3 +57,18 @@ String? noxInitials(String name) {
   final matches = alnum.allMatches(name).map((m) => m.group(0)!).take(2).toList();
   return matches.isEmpty ? null : matches.join().toUpperCase();
 }
+
+/// Account-avatar initials — DISTINCT from the chat-row [noxInitials]. Tokenizes
+/// the display `label` on whitespace and the `.`, `_`, `-` separators (NOX labels
+/// have no spaces, charset `[A-Za-z0-9._-]`), then takes the first alphanumeric
+/// letter of the FIRST and LAST token (2 letters); a single token yields ONE
+/// letter. Returns null when no alphanumeric letter exists (caller shows the
+/// `forum` glyph fallback). Examples: `User7421`→`U`, `john.doe`→`JD`,
+/// `john_doe_smith`→`JS`, `Alice`→`A`.
+String? noxAccountInitials(String label) {
+  final alnum = RegExp(r'[A-Za-z0-9]');
+  final letters = label.split(RegExp(r'[\s._-]+')).map((token) => alnum.firstMatch(token)?.group(0)).whereType<String>().toList();
+  if (letters.isEmpty) return null;
+  if (letters.length == 1) return letters.first.toUpperCase();
+  return (letters.first + letters.last).toUpperCase();
+}

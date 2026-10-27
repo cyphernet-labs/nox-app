@@ -12,7 +12,7 @@ BottomAppBar (surfaceContainer, elev 2) with a circular notch; two tabs (Chats f
 - `settings` — Settings tab
 
 ## Behavior
-- Two destinations switch via an IndexedStack with a ≤150ms fade (tabFade); state is preserved per tab.
+- Two destinations switch with a ≤150ms fade (tabFade); both stay mounted in one Stack (the hidden one ignores input), so state is preserved per tab.
 - Selected tab → primary + filled icon; unselected → onSurfaceVariant + outlined icon.
 - The “+” is an action (create chat), NOT a third tab — it is visible on both tabs.
 

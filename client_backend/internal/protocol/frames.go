@@ -1,0 +1,217 @@
+// Package protocol defines the v0 wire envelope: the four frame kinds and
+// the wire models of the 022 slice. Field names come from
+// docs/client-backend/protocol/contract-draft.md verbatim; nothing here may
+// deviate from it without a contract edit first.
+package protocol
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+// ErrMissingCmd marks a frame that parsed as a JSON object but carries no
+// command name. The frame's id (if any) is still returned, so the caller can
+// answer invalid_request instead of dropping the connection.
+var ErrMissingCmd = errors.New("missing cmd")
+
+// SchemaVersion is the contract schema this server speaks.
+const SchemaVersion = 1
+
+// Greeting is the server frame sent exactly once when a socket opens.
+type Greeting struct {
+	Srv GreetingBody `json:"srv"`
+}
+
+// GreetingBody carries the maximum supported schema and nothing else. The
+// challenge it once carried for the device to sign is gone (feature 044): the
+// device proved its key in the channel check - POST /auth and POST /auth2 on
+// this very connection - before this frame was written, so there is nothing
+// left to sign here.
+type GreetingBody struct {
+	SchemaMax int `json:"schema_max"`
+}
+
+// Command is an incoming client frame. Data stays raw for two-phase decoding;
+// unknown fields inside are ignored by design (v0 evolves).
+type Command struct {
+	ID   int64           `json:"id"`
+	Cmd  string          `json:"cmd"`
+	Data json.RawMessage `json:"data"`
+}
+
+// Reply answers exactly one Command, correlated by ID.
+type Reply struct {
+	ID   int64      `json:"id"`
+	OK   bool       `json:"ok"`
+	Data any        `json:"data,omitempty"`
+	Err  *WireError `json:"error,omitempty"`
+}
+
+// WireError is the error half of a failed Reply. Code is one of the Err*
+// constants from errors.go.
+type WireError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Event is a server-pushed frame with the global sequence number that doubles
+// as the sync cursor.
+type Event struct {
+	Seq   int64           `json:"seq"`
+	Event string          `json:"event"`
+	Data  json.RawMessage `json:"data"`
+}
+
+// Event type names of the stage-1 slice.
+const (
+	EventChatCreated = "chat.created"
+	EventChatUpdated = "chat.updated"
+	EventMessageNew  = "message.new"
+)
+
+// Command names.
+const (
+	CmdSessionHello      = "session.hello"
+	CmdChatsList         = "chats.list"
+	CmdChatGet           = "chat.get"
+	CmdChatCreate        = "chat.create"
+	CmdChatRename        = "chat.rename"
+	CmdChatNameAvailable = "chat.nameAvailable"
+	CmdChatFiles         = "chat.files"
+	CmdMessagesList      = "messages.list"
+	CmdMessageSend       = "message.send"
+	CmdFileUploadBegin   = "file.uploadBegin"
+	CmdFileDownloadBegin = "file.downloadBegin"
+
+	// Pairing (§8A). CmdPair and CmdPairCancel are the ONLY commands accepted
+	// before the greeting: an unpaired device's key is one the server does not
+	// know, and a greeting from it is refused - so a device waiting for Allow
+	// has to be able to withdraw its request without greeting too.
+	CmdPair             = "pair"
+	CmdPairCancel       = "pair.cancel"
+	CmdDeviceList       = "device.list"
+	CmdDeviceRevoke     = "device.revoke"
+	CmdDeviceInvite     = "device.invite"
+	CmdDeviceApprove    = "device.approve"
+	CmdIdentitySetLabel = "identity.setLabel"
+	// device.setAccessKey is gone with the onion access keys (045): the onion
+	// address is open to whoever knows it, and the server answers the command
+	// invalid_request like any other it does not know.
+)
+
+// EventDeviceRevoked is delivered to the device being cut off, immediately
+// before its socket is closed.
+const EventDeviceRevoked = "device.revoked"
+
+// EventIdentityUpdated is delivered to the OTHER live connections of a person
+// who has just renamed. Like device.revoked it carries seq 0 and never enters
+// the event log: the log is global, and who a person is has no business waking
+// every other client (invariant 3). Without it a second device holds the old
+// name until it reconnects - and stamps that old name into message history,
+// which is frozen at send time.
+const EventIdentityUpdated = "identity.updated"
+
+// EventDevicePaired tells a person's OTHER live connections that a device has
+// just been added, so an open device list refreshes itself instead of showing
+// a stale one until somebody leaves the screen and comes back.
+//
+// Not journal content either: seq 0, no cursor, and it does not survive a
+// disconnect. That is sound here because the device list is always read from
+// the server when the screen opens - unlike a revocation, nothing breaks from
+// having missed it.
+const EventDevicePaired = "device.paired"
+
+// The three events of pairing with approval (046). Off-journal like the ones
+// above - seq 0, no cursor, never replayed - because who may join the machine
+// is not the shared world the journal records. Each has a reliable half that
+// survives a disconnect: a repeat of `pair` answers with the recorded outcome,
+// and a greeting re-sends every request still waiting for an answer.
+const (
+	// EventPairResolved tells the NEW device, waiting on its connection, how
+	// its request ended: allowed (with the identity it now speaks as),
+	// denied, expired or cancelled.
+	EventPairResolved = "pair.resolved"
+	// EventDevicePairRequested asks the device that issued an invite to answer
+	// a request: the new device's OS family and the deadline, nothing else.
+	EventDevicePairRequested = "device.pairRequested"
+	// EventDevicePairResolved tells the issuing device a request no longer
+	// waits for its answer, whichever way it closed.
+	EventDevicePairResolved = "device.pairResolved"
+)
+
+// EventServerAddresses tells greeted connections where this machine can be
+// reached now - the addresses it finds on its networks and, when they are
+// set, its public and onion address (039, 045, contract §3, §8A).
+// Off-journal like the three above. It has ONE sender, the address watcher,
+// and never overtakes the greeting reply that carries the same object: that
+// reply is its reliable half.
+const EventServerAddresses = "server.addresses"
+
+// Chat is the wire model of contract §4 (022: preview served but unused by
+// any implemented command; it feeds chats.list in phase 023).
+type Chat struct {
+	ChatID             string `json:"chat_id"`
+	Name               string `json:"name"`
+	CreatedAt          int64  `json:"created_at"`
+	CreatedByLabel     string `json:"created_by_label"`
+	LastMessagePreview string `json:"last_message_preview"`
+	LastActivityAt     int64  `json:"last_activity_at"`
+}
+
+// Attachment is the wire model of contract §5/§7: metadata comes from
+// file.uploadBegin, never from the bytes.
+type Attachment struct {
+	FileID    string `json:"file_id"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Mime      string `json:"mime"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// Message is the wire model of contract §5.
+type Message struct {
+	MessageID       string          `json:"message_id"`
+	Seq             int64           `json:"seq"`
+	ChatID          string          `json:"chat_id"`
+	AuthorID        string          `json:"author_id"`
+	AuthorLabel     string          `json:"author_label"`
+	ClientMessageID string          `json:"client_message_id,omitempty"`
+	SentAt          int64           `json:"sent_at"`
+	Body            json.RawMessage `json:"body,omitempty"`
+	Attachment      *Attachment     `json:"attachment,omitempty"`
+}
+
+// MarshalFrame encodes any outbound frame as a single JSON object.
+func MarshalFrame(frame any) ([]byte, error) {
+	raw, err := json.Marshal(frame)
+	if err != nil {
+		return nil, fmt.Errorf("marshal frame: %w", err)
+	}
+	return raw, nil
+}
+
+// ParseCommand decodes an incoming frame into a Command. A frame that is not
+// a JSON object fails outright; a JSON object without a command name returns
+// ErrMissingCmd together with the parsed Command (id preserved) so the caller
+// can still answer it. Unknown sibling fields are ignored.
+func ParseCommand(raw []byte) (Command, error) {
+	var cmd Command
+	if err := json.Unmarshal(raw, &cmd); err != nil {
+		return Command{}, fmt.Errorf("parse command frame: %w", err)
+	}
+	if cmd.Cmd == "" {
+		return cmd, fmt.Errorf("parse command frame: %w", ErrMissingCmd)
+	}
+	return cmd, nil
+}
+
+// OKReply builds a successful reply for id.
+func OKReply(id int64, data any) Reply {
+	return Reply{ID: id, OK: true, Data: data}
+}
+
+// ErrReply builds a failed reply for id with a contract error code.
+func ErrReply(id int64, code, message string) Reply {
+	return Reply{ID: id, OK: false, Err: &WireError{Code: code, Message: message}}
+}

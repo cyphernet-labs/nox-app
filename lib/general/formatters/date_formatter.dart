@@ -1,4 +1,6 @@
 import 'package:intl/intl.dart';
+import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/l10n/app_localizations.dart';
 
 /// Static date-formatting helpers for consistent display app-wide.
 class DateFormatter {
@@ -10,4 +12,56 @@ class DateFormatter {
   static String short(DateTime date) => _short.format(date);
 
   static String time(DateTime date) => _time.format(date);
+
+  /// Relative-time ladder for the chats list (5.1) and file/card screens (M4):
+  /// `now` (<1 min) / `N min` (<1 h) / `N h` (<1 day) / `Yesterday` / `d MMM` (same
+  /// year) / `d MMM y` (older). Source: `overview.md`. [now] is injectable for tests.
+  static String relative(DateTime when, {required AppLocalizations l10n, DateTime? now}) {
+    final ref = now ?? AppClock.now();
+    final diff = ref.difference(when);
+    // Clamp future timestamps (clock skew / a server time slightly ahead) to "now".
+    if (diff.isNegative || diff.inSeconds < 60) return l10n.timeNow;
+    if (diff.inMinutes < 60) return '${diff.inMinutes} ${l10n.timeMinuteSuffix}';
+    // Hours only within the same calendar day; a previous day is Yesterday / a date.
+    final today = DateTime(ref.year, ref.month, ref.day);
+    final thatDay = DateTime(when.year, when.month, when.day);
+    final dayDiff = today.difference(thatDay).inDays;
+    if (dayDiff == 0) return '${diff.inHours} ${l10n.timeHourSuffix}';
+    if (dayDiff == 1) return l10n.timeYesterday;
+    return _dateTail(when, ref, l10n);
+  }
+
+  /// Date-separator label for the chat thread (5.2): `Today` / `Yesterday` /
+  /// `12 May` (same year) / `12 May 2025` (older / future). [now] is injectable for tests.
+  static String daySeparator(DateTime when, {required AppLocalizations l10n, DateTime? now}) {
+    final ref = now ?? AppClock.now();
+    final today = DateTime(ref.year, ref.month, ref.day);
+    final thatDay = DateTime(when.year, when.month, when.day);
+    final dayDiff = today.difference(thatDay).inDays;
+    if (dayDiff == 0) return l10n.dateToday;
+    if (dayDiff == 1) return l10n.dateYesterday;
+    // A future-dated message (clock skew) falls through to its actual date, not Today.
+    return _dateTail(when, ref, l10n);
+  }
+
+  /// A moment precise enough to tell two devices apart, short enough for one
+  /// line: `8 Jun 14:32` within the current year, `8 Jun 2025` beyond it.
+  ///
+  /// The time is what does the work — the reason a moment is shown at all is
+  /// that two devices of the same platform, paired on the same day, are
+  /// otherwise identical rows. On something paired a year ago the minute is
+  /// noise, and the year is what places it.
+  static String momentShort(DateTime when, {required AppLocalizations l10n, DateTime? now}) {
+    final ref = now ?? AppClock.now();
+    if (when.year != ref.year) return DateFormat('d MMM y', l10n.localeName).format(when);
+    return '${DateFormat('d MMM', l10n.localeName).format(when)} ${_time.format(when)}';
+  }
+
+  /// Shared date tail: `d MMM` within the same year, otherwise `d MMM y`. Month names
+  /// are localized to the active UI locale (en → "8 Jun", uk → "8 черв.") — the tail
+  /// must match the surrounding relative-time words, which are already localized.
+  static String _dateTail(DateTime when, DateTime ref, AppLocalizations l10n) {
+    final pattern = when.year == ref.year ? 'd MMM' : 'd MMM y';
+    return DateFormat(pattern, l10n.localeName).format(when);
+  }
 }

@@ -1,0 +1,200 @@
+import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
+import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
+
+/// Desktop/wide navigation rail for the [TabBarShell] (4.1 desktop branch). A
+/// custom rail built to the design `NavRail` (NOT Material's `NavigationRail`,
+/// whose stock metrics/indicator do not match): an 80-wide `surface` strip with a
+/// right hairline and, top-to-bottom — the two destinations (Chats / Settings)
+/// evenly spaced (gap 12), each a rounded-square cell that fills when selected,
+/// then a `Spacer`, and the account avatar pinned to the bottom.
+///
+/// **No create FAB.** The design leads the rail with a 56dp rounded-square `+`,
+/// and with only two destinations under it that button was the heaviest thing on
+/// the window — for an action that belongs beside the list it creates into. It
+/// moved to the Chats pane header (owner decision). One consequence, stated
+/// rather than hidden: on the wide branch there is no create affordance while the
+/// Settings tab is open. The phone is untouched — the docked `+` is still there,
+/// on both tabs.
+///
+/// The account avatar (design: size 36 + subtle ring) renders the user's
+/// [accountLabel] initials via [noxAccountInitials] over the hashed avatar color;
+/// tapping it routes to Settings / Account ([onAccount]). All press/hover feedback
+/// is clipped to the rounded shapes (destination cells / avatar circle).
+class AppNavigationRailWidget extends StatelessWidget {
+  const AppNavigationRailWidget({
+    super.key,
+    required this.active,
+    required this.onSelect,
+    required this.accountLabel,
+    required this.onAccount,
+  });
+
+  final AppTab active;
+  final ValueChanged<AppTab> onSelect;
+
+  /// Display label whose initials + hashed color render the bottom account avatar.
+  final String accountLabel;
+
+  /// Tap on the account avatar → switch to Settings and land on the Account section.
+  final VoidCallback onAccount;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    // FOREGROUND border: the rail owns its right hairline (design: NavRail borderRight),
+    // but a background BoxDecoration border sits BEHIND the opaque Material child and is
+    // painted over — invisible. Painting it in the foreground draws the 1px outlineVariant
+    // seam on top of the surface, so the rail↔list divider actually shows.
+    return DecoratedBox(
+      position: DecorationPosition.foreground,
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: colorScheme.outlineVariant, width: AppDimensionTokens.border.hairline),
+        ),
+      ),
+      child: Material(
+        color: colorScheme.surface,
+        child: SizedBox(
+          width: AppSpacingTokens.s80,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s20),
+            child: Column(
+              // Stretch, so both destinations are the same cell. Left to size
+              // themselves they were as wide as their own label - `Settings`
+              // noticeably wider than `Chats` - and the selected fill hugged the
+              // word instead of marking a destination.
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _NavRailDestination(
+                  icon: NoxIcons.forum,
+                  selectedIcon: NoxIcons.forumFill,
+                  label: context.l10n.chats,
+                  selected: active == AppTab.chats,
+                  onTap: () => onSelect(AppTab.chats),
+                ),
+                SizedBox(height: AppSpacingTokens.s12),
+                _NavRailDestination(
+                  icon: NoxIcons.settings,
+                  selectedIcon: NoxIcons.settingsFill,
+                  label: context.l10n.settings,
+                  selected: active == AppTab.settings,
+                  onTap: () => onSelect(AppTab.settings),
+                ),
+                const Spacer(),
+                // Centred explicitly: the stretch above would otherwise pull the
+                // avatar's tap target across the whole rail.
+                Center(
+                  child: _NavRailAccountAvatar(accountLabel: accountLabel, onAccount: onAccount),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Destination cell (icon + label) — a rounded-square ink target that FILLS with
+/// `secondaryContainer` when selected.
+///
+/// The corpus puts a 56×32 pill indicator behind the icon alone. Two rounded
+/// shapes then marked the same one destination - a pill around its glyph, inside
+/// a cell that also took the press feedback - and the settings menu had just been
+/// cleared of exactly that. One shape, around the whole cell (owner decision).
+class _NavRailDestination extends StatelessWidget {
+  const _NavRailDestination({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SvgGenImage icon;
+  final SvgGenImage selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    // This is a custom rail (not Material's NavigationRail), so it must supply the
+    // destination semantics itself — mirror the mobile bottom bar's _Tab so a screen
+    // reader announces each destination as a selectable button with its selected
+    // state on desktop too (R4 parity; otherwise the rail reads as a plain tappable).
+    // NB: no explicit `label` here — the child Text(label) already contributes the
+    // accessible name to this node; re-setting it would concatenate into a duplicated
+    // "Chats\nChats" announcement.
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected ? colorScheme.secondaryContainer : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s10, horizontal: AppSpacingTokens.s4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppIconWidget(
+                  selected ? selectedIcon : icon,
+                  size: AppDimensionTokens.icon.xl,
+                  color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant,
+                ),
+                SizedBox(height: AppSpacingTokens.s4),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  // The cell is a fixed width now, so a long label at a doubled
+                  // text scale has to end somewhere other than outside it.
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelMedium?.copyWith(color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom account avatar — the ringed generated avatar; a tap routes to
+/// Settings / Account.
+class _NavRailAccountAvatar extends StatelessWidget {
+  const _NavRailAccountAvatar({required this.accountLabel, required this.onAccount});
+
+  final String accountLabel;
+  final VoidCallback onAccount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: context.l10n.settingsAccountTitle,
+      child: InkResponse(
+        onTap: onAccount,
+        customBorder: const CircleBorder(),
+        child: AppRingedAvatarWidget(
+          name: accountLabel,
+          initials: noxAccountInitials(accountLabel),
+          size: AppDimensionTokens.size.avatarXs,
+        ),
+      ),
+    );
+  }
+}

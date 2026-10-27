@@ -1,6 +1,6 @@
 # Контракт: сборка и флейворы
 
-> **Источник:** блюпринт `docs/patterns/mobile/09-build-and-secrets-infra.md` (§0, §4, §6, §7, §7a) + `02-dependency-injection.md` §7; требования FR-003, FR-010, FR-012. Compile-time изоляция флейворов, без runtime-ветвления.
+> **Источник:** блюпринт `docs/blueprints/mobile/09-build-and-secrets-infra.md` (§0, §4, §6, §7, §7a) + `02-dependency-injection.md` §7; требования FR-003, FR-010, FR-012. Compile-time изоляция флейворов, без runtime-ветвления.
 
 ## 1. Два compile-time флейвора
 

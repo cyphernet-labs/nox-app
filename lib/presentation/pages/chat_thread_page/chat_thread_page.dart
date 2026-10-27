@@ -1,0 +1,103 @@
+import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
+import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/app_invite_seam_action_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
+import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
+import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+
+/// 5.2 Chat thread — read history + send text/files within one chat. Mobile: a
+/// full-screen pushed screen (AppBar back + chat name → chat card). Desktop: the
+/// thread normally lives in the 5.1 list-detail pane; opened standalone from the
+/// gallery it renders the thread pane (with the persistent header) full-window.
+/// The body ([AppThreadViewWidget]) owns the [ChatThreadBloc].
+class ChatThreadPage extends StatelessWidget {
+  const ChatThreadPage({super.key, required this.chat, this.demo = false, this.initialScenario, this.initialSendText});
+
+  final ChatModel chat;
+  final bool demo;
+
+  /// Test-only golden seams forwarded to [AppThreadViewWidget] (offline / send-error).
+  @visibleForTesting
+  final ChatThreadScenario? initialScenario;
+  @visibleForTesting
+  final String? initialSendText;
+
+  static Route<void> route(ChatModel chat) => MaterialPageRoute<void>(
+    builder: (_) => ChatThreadPage(chat: chat),
+    settings: const RouteSettings(name: '/chat-thread'),
+  );
+
+  /// Gallery entry: a sample chat with the dev scenario control.
+  static Route<void> routeDemo() => MaterialPageRoute<void>(
+    builder: (_) => ChatThreadPage(chat: _sampleChat, demo: true),
+    settings: const RouteSettings(name: '/chat-thread'),
+  );
+
+  static final ChatModel _sampleChat = ChatModel(
+    id: 'chat_0',
+    name: 'Design crit',
+    lastMessagePreview: '',
+    lastMessageAt: DateTime.fromMillisecondsSinceEpoch(0),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= Constants.railBreakpoint;
+        if (wide) {
+          // Standalone desktop preview: the thread pane (persistent header) full-window.
+          return Scaffold(
+            body: AppThreadViewWidget(
+              chat: chat,
+              demo: demo,
+              showHeader: true,
+              onInfo: () => showChatCard(context, chat),
+              onOpenFile: (file, messageId) => showFileView(context, file, messageId: messageId),
+              initialScenario: initialScenario,
+              initialSendText: initialSendText,
+            ),
+          );
+        }
+        return Scaffold(
+          appBar: AppBar(
+            leading: IconButton(
+              tooltip: context.l10n.tooltipBack,
+              icon: AppIconWidget(NoxIcons.arrowBack),
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+            // The same disabled seam the desktop header carries, so the answer
+            // to "how do I add somebody?" is in the same place on both widths.
+            // The connection corner first (phase 040), then the seam: only
+            // deviations show in the corner, so most of the time it is empty.
+            actions: const [AppConnectionIndicatorWidget(wide: false), AppInviteSeamActionWidget()],
+            // Tapping the chat name opens the chat card (5.4).
+            // Reactive to the chat row so a rename (from the card) updates the title live.
+            title: WatchChat(
+              chatId: chat.id,
+              initial: chat,
+              builder: (context, current) => InkWell(
+                onTap: () => showChatCard(context, current),
+                child: Text(current.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+          ),
+          body: AppThreadViewWidget(
+            chat: chat,
+            demo: demo,
+            onOpenFile: (file, messageId) => showFileView(context, file, messageId: messageId),
+            initialScenario: initialScenario,
+            initialSendText: initialSendText,
+          ),
+        );
+      },
+    );
+  }
+}

@@ -25,7 +25,7 @@ mockups = Material Symbols Rounded.
 | Search | `search` |
 | Show / hide | `visibility` / `visibility_off` |
 | Copy | `content_copy` |
-| Show QR | `qr_code` |
+| Device invite QR (7.8) | `qr_code` |
 | Save / download | `download` |
 | Edit | `edit` |
 | Remove attachment | `close` |
@@ -37,7 +37,7 @@ mockups = Material Symbols Rounded.
 | Sent | `check` | `onSurfaceVariant` |
 | Error | `error_outline` | `error` |
 
-## File-type chips (no content preview anywhere)
+## File-type chips (every file that is not drawn: a picture whose bytes are on the device is a thumbnail instead)
 | Type | Icon |
 |---|---|
 | Image | `image` |
@@ -50,7 +50,7 @@ mockups = Material Symbols Rounded.
 | Archive (zip/rar/7z) | `folder_zip` |
 | Other / unknown | `insert_drive_file` |
 
-## Empty states (fallback until illustrations ship)
+## Empty states (the glyph at the centre of the NoxEmptyState composition; no illustration ships)
 | Screen | Icon |
 |---|---|
 | 5.1 no chats | `forum_outlined` |

@@ -1,0 +1,437 @@
+{
+  "@@locale": "en",
+  "appName": "NOX",
+  "chats": "Chats",
+  "settings": "Settings",
+  "errorGeneralTitle": "Something went wrong",
+  "errorFatalMessage": "An unexpected error occurred. Please try again.",
+  "errorNetworkMessage": "Could not connect. Check your connection and try again.",
+  "actionTryAgain": "Try again",
+  "noData": "Nothing here yet",
+  "comingSoon": "Coming soon",
+  "searchHint": "Search",
+  "composerHint": "Message",
+  "actionDismiss": "Dismiss",
+  "noConnection": "No connection",
+  "tooltipAttachFile": "Attach file",
+  "tooltipSend": "Send",
+  "tooltipCreateChat": "New chat",
+  "tooltipRemove": "Remove",
+  "tooltipToggleTheme": "Toggle theme",
+  "tooltipBack": "Back",
+  "uiKitTitle": "NOX UI Kit",
+  "uiKitSubtitle": "Browse every component in the design system.",
+  "actionOpenUiKit": "Open UI Kit",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "screensGalleryTitle": "NOX Screens",
+  "actionOpenScreens": "Open Screens",
+  "settingsAppearanceTitle": "Appearance",
+  "themeSystem": "System",
+  "themeSystemCaption": "Match your device",
+  "themeLightCaption": "Always light",
+  "themeDarkCaption": "Always dark",
+  "settingsLanguageTitle": "Language",
+  "languageSystem": "System",
+  "languageEnglish": "English",
+  "languageUkrainian": "Українська",
+  "settingsNotificationsTitle": "Notifications",
+  "notificationsPushTitle": "Enable notifications",
+  "notificationsPushSubtitle": "For new messages in your chats",
+  "notificationsDeniedTitle": "Notifications are blocked",
+  "notificationsDeniedMessage": "Allow notifications in system settings to receive messages from your chats.",
+  "actionOpenSettings": "Open settings",
+  "settingsTermsTitle": "Terms",
+  "termsDocHeading": "Terms of Service",
+  "termsAcceptanceHeading": "Acceptance",
+  "termsAcceptanceBody": "By using NOX you accept these terms. If you do not agree, do not use the app.",
+  "termsIdentityHeading": "Your identity",
+  "termsIdentityBody": "Your account is an anonymous identifier and a display name — no phone number or email. The identifier is public: it is what other people see beside your messages. Signing in is done by pairing a device, not by knowing it.",
+  "termsContentHeading": "Content",
+  "termsContentBody": "Your chats live on your own server and are visible only on the devices you have paired with it. You are responsible for what you send and keep there; do not send or store unlawful content.",
+  "termsPrivacyHeading": "Privacy",
+  "termsPrivacyBody": "Your chats live on your own server. End-to-end encryption is not in this version yet.",
+  "versionLabel": "Version",
+  "settingsDevicesTitle": "Devices",
+  "devicesCurrent": "This device",
+  "devicesPairedAt": "Paired {date}",
+  "devicesLastSeen": "Last seen {date}",
+  "devicesRevoke": "Revoke",
+  "devicesRevokeTitle": "Revoke this device?",
+  "devicesRevokeMessage": "It will be signed out and won't be able to connect again.",
+  "devicesError": "Couldn't load your devices.",
+  "devicesRevokeError": "Couldn't revoke that device. Try again.",
+  "devicesAdd": "Add a device",
+  "devicesInviteMessage": "Scan this from the other device. The link works for 10 minutes.",
+  "devicesInviteError": "Couldn't create an invite.",
+  "@devicesPairedAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "@devicesLastSeen": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsYourIdLabel": "Your ID",
+  "actionHide": "Hide",
+  "actionCopy": "Copy",
+  "settingsNameSaveError": "Couldn't save your name. Try again.",
+  "settingsAboutTitle": "About",
+  "loginSignIn": "Sign in",
+  "loginIdLabel": "Pairing link",
+  "loginIdHint": "Paste the link from your server",
+  "actionPaste": "Paste",
+  "loginScanQr": "Scan QR",
+  "loginScanQrImage": "Use a QR image",
+  "loginQrImageError": "Couldn't read a pairing link from that image.",
+  "loginInvalidId": "This isn't a pairing link",
+  "loginLinkExpired": "This link has expired. Ask for a new one.",
+  "loginLinkRejected": "This link can't be used. Ask for a new one.",
+  "loginLinkNewerVersion": "This link needs a newer version of NOX. Update the app and try again.",
+  "@loginLinkNewerVersion": {
+    "description": "A pairing link of a version newer than this build reads (phase 044, FR-017): the person updates the app, not the link."
+  },
+  "loginNetworkError": "Could not sign in. Check your connection and try again.",
+  "sessionExpiredMessage": "Your session expired",
+  "tooltipFlashlight": "Flashlight",
+  "tooltipSwitchCamera": "Switch camera",
+  "qrAimHint": "Aim your camera at a QR code",
+  "qrEnterManually": "Enter manually",
+  "qrPermissionTitle": "Camera access needed",
+  "qrPermissionMessage": "To scan a QR code, allow camera access in system settings.",
+  "qrUnavailableTitle": "Camera unavailable",
+  "qrUnavailableMessage": "No camera is available on this device. Paste the pairing link instead.",
+  "qrInvalidSnackbar": "This QR code is invalid. Try another one.",
+  "qrDesktopTitle": "Scan a QR code",
+  "qrDesktopHelper": "Point your webcam at the code, or paste the pairing link.",
+  "usernameLabel": "Name",
+  "usernameHint": "How others will see you",
+  "usernameHelper": "Others see this name. You can change it now or later in Settings.",
+  "usernameCharsetError": "Contains invalid characters (allowed: letters, digits, - _ .)",
+  "nameTakenError": "This name is taken",
+  "actionDone": "Done",
+  "actionSkip": "Skip",
+  "createChatTitle": "New chat",
+  "createChatNameLabel": "Chat name",
+  "createChatNameHint": "e.g. Random thoughts",
+  "createChatNetworkError": "Could not create chat. Check your connection and try again.",
+  "renameChatTitle": "Rename chat",
+  "renameChatNetworkError": "Could not rename chat. Check your connection and try again.",
+  "actionSave": "Save",
+  "actionCreate": "Create",
+  "actionCancel": "Cancel",
+  "settingsAccountTitle": "Account",
+  "settingsEditNameAction": "Edit name",
+  "settingsCopyIdAction": "Copy ID",
+  "inviteQrLabel": "Pairing link QR code",
+  "actionClose": "Close",
+  "copiedToClipboard": "Copied to clipboard",
+  "logoutRow": "Log out",
+  "logoutDialogTitle": "Log out?",
+  "logoutDialogMessage": "This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.",
+  "logoutError": "Could not log out. Please try again.",
+  "chatsEmptyTitle": "No chats yet",
+  "chatsEmptyMessage": "Tap + to create the first one.",
+  "chatsSearchEmpty": "No chats found",
+  "chatsLoadError": "Could not load chats. Pull to refresh.",
+  "chatsNoSelectionTitle": "Select a chat",
+  "chatsNoSelectionMessage": "Choose a conversation on the left, or press + to start a new one.",
+  "chatThreadPlaceholder": "Chat thread (5.2)",
+  "timeNow": "now",
+  "timeYesterday": "Yesterday",
+  "timeMinuteSuffix": "min",
+  "timeHourSuffix": "h",
+  "tooltipRetry": "Tap to retry, long-press to discard",
+  "tooltipChatInfo": "Chat info",
+  "threadEmptyTitle": "No messages yet",
+  "threadEmptyMessage": "Send the first one.",
+  "dateToday": "Today",
+  "dateYesterday": "Yesterday",
+  "systemChatCreated": "Chat created by {username}",
+  "@systemChatCreated": {
+    "description": "System line at the top of a chat thread",
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "tooltipSave": "Save",
+  "fileSaved": "File saved",
+  "fileDownloadError": "Could not download file. Check your connection and try again.",
+  "imageUnavailable": "Image unavailable",
+  "actionDownload": "Download",
+  "downloadingProgress": "Downloading… {percent}%",
+  "@downloadingProgress": {
+    "description": "File-view download progress",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "transferDownloading": "Downloading…",
+  "@transferDownloading": {
+    "description": "A received picture whose bytes are on their way, before the first of them has arrived (5.2, spoken by screen readers)"
+  },
+  "transferSending": "Sending…",
+  "@transferSending": {
+    "description": "A message with a file being sent, before its bytes start moving (5.2)"
+  },
+  "transferSendingProgress": "Sending… {percent}%",
+  "@transferSendingProgress": {
+    "description": "A message with a file being sent: how much of the file has reached the server (5.2)",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "filesSectionTitle": "Files",
+  "chatPeopleTitle": "People",
+  "chatInvitePerson": "Invite a person",
+  "chatInviteLater": "Available in a future version",
+  "filesViewList": "List",
+  "filesViewGrid": "Grid",
+  "filesEmptyTitle": "No files yet",
+  "filesEmptyMessage": "Files sent in this chat will appear here.",
+  "chatInfoTitle": "Details",
+  "settingsSaveError": "Could not save. Try again.",
+  "attachmentTooLarge": "File is too large to send (limit {limit})",
+  "@attachmentTooLarge": {
+    "description": "Composer error when the picked file exceeds the server limit (checked at attach time).",
+    "placeholders": {
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "attachmentGone": "This file is no longer on the server",
+  "@attachmentGone": {
+    "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
+  },
+  "windowSubtitleSignIn": "Sign in",
+  "@windowSubtitleSignIn": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleSetUp": "Set up",
+  "@windowSubtitleSetUp": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleScanQr": "Scan QR",
+  "@windowSubtitleScanQr": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleError": "Error",
+  "@windowSubtitleError": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "videoPlay": "Play",
+  "@videoPlay": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "videoPause": "Pause",
+  "@videoPause": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "videoPlaybackError": "Couldn't play this video. Save it to open it in another app.",
+  "@videoPlaybackError": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "fileOpenError": "Couldn't open this file. Free up some space and try again.",
+  "@fileOpenError": {
+    "description": "File view (5.3): the plain copy a video plays from could not be made, most likely for lack of disk space (phase 048)."
+  },
+  "connectionTorBadge": "Tor",
+  "@connectionTorBadge": {
+    "description": "The badge in the corner while the connection goes through Tor (phase 040). A proper name; not translated."
+  },
+  "connectionConnecting": "Connecting…",
+  "@connectionConnecting": {
+    "description": "Corner text while a path to the server is being brought up (phase 040)."
+  },
+  "connectionSemanticsTor": "Connected through Tor",
+  "@connectionSemanticsTor": {
+    "description": "Screen-reader name of the corner indicator (phase 040)."
+  },
+  "connectionSemanticsConnecting": "Connecting to your server",
+  "@connectionSemanticsConnecting": {
+    "description": "Screen-reader name of the corner indicator (phase 040)."
+  },
+  "connectionSemanticsConnectingTor": "Connecting to your server through Tor",
+  "@connectionSemanticsConnectingTor": {
+    "description": "Screen-reader name of the corner indicator (phase 040)."
+  },
+  "connectionInfoTitle": "Connection",
+  "@connectionInfoTitle": {
+    "description": "Title of the explanation opened from the corner indicator (phase 040)."
+  },
+  "connectionInfoTor": "NOX can't reach your server directly, so it connects through Tor. It's slower, but it works from any network.",
+  "@connectionInfoTor": {
+    "description": "Explanation while the connection goes through Tor (phase 040)."
+  },
+  "connectionInfoConnecting": "NOX is connecting to your server.",
+  "@connectionInfoConnecting": {
+    "description": "Explanation while a path is being brought up (phase 040)."
+  },
+  "connectionInfoLocalNetwork": "If you're at home, check that NOX has Local Network access in Settings.",
+  "@connectionInfoLocalNetwork": {
+    "description": "Shown on iOS and macOS only (phase 040, FR-032)."
+  },
+  "connectionTorObsolete": "Update NOX to connect away from home",
+  "@connectionTorObsolete": {
+    "description": "Notice when the Tor network no longer accepts this version's built-in client (phase 040, FR-026)."
+  },
+  "devicesInviteHomeOnly": "This link works only on your home network.",
+  "@devicesInviteHomeOnly": {
+    "description": "Under an invite whose link carries neither the server's onion address nor its public address (phase 045): it works only on the home network."
+  },
+  "chatCreationPending": "Waiting to be created",
+  "@chatCreationPending": {
+    "description": "Screen-reader name of the clock that replaces the time in a chats-list row whose chat is not on the person's server yet (phase 041)."
+  },
+  "chatCreationNameTaken": "Name already taken",
+  "@chatCreationNameTaken": {
+    "description": "Chats-list row status line (in place of the preview) of a chat the server refused to create because another chat already has the name (phase 041)."
+  },
+  "chatCreationFailed": "Couldn't create",
+  "@chatCreationFailed": {
+    "description": "Chats-list row status line of a chat the server refused to create for a reason a retry can change only when the person asks (phase 041)."
+  },
+  "chatCreationPendingNotice": "This chat isn't on your server yet. It will be once NOX connects.",
+  "@chatCreationPendingNotice": {
+    "description": "Thread notice of a chat created without a connection, shown only while there is none (phase 041)."
+  },
+  "chatCreationNameTakenNotice": "Another chat already has this name. Rename this one to finish creating it.",
+  "@chatCreationNameTakenNotice": {
+    "description": "Thread notice of a chat whose name was taken when it reached the server; paired with actionRename (phase 041)."
+  },
+  "chatCreationFailedNotice": "This chat couldn't be created on your server.",
+  "@chatCreationFailedNotice": {
+    "description": "Thread notice of a chat the server refused to create; paired with the existing actionTryAgain (phase 041)."
+  },
+  "actionRename": "Rename",
+  "@actionRename": {
+    "description": "Action on the thread notice of a chat whose name was taken; opens the rename dialog (phase 041)."
+  },
+  "connectionProblemInvalidOnion": "This isn't a valid onion address.",
+  "@connectionProblemInvalidOnion": {
+    "description": "Why there is no connection (phase 045): the onion address is not a valid v3 address. Shown at the onion field, and in place of 'No connection' on 5.1, 5.2 and 5.4, in Settings > Connection and under Connect."
+  },
+  "connectionProblemOnionNotFound": "No server answers at this onion address. Check the address and that Tor is running on the server.",
+  "@connectionProblemOnionNotFound": {
+    "description": "Why there is no connection (phase 045): no onion service is published at the address."
+  },
+  "connectionProblemOnionUnreachable": "Your server isn't answering through Tor right now. Check that it is running.",
+  "@connectionProblemOnionUnreachable": {
+    "description": "Why there is no connection (phase 045): the onion service exists, and the server behind it does not answer."
+  },
+  "connectionProblemOtherServer": "This onion address belongs to a different server.",
+  "@connectionProblemOtherServer": {
+    "description": "Why there is no connection (phase 045): the server at the onion address proved a key other than the one the pairing link named. Replaces the earlier 'not the server you paired with' banner; paired with actionTryAgain."
+  },
+  "connectionProblemTorNetwork": "Can't connect to the Tor network. Check your internet connection.",
+  "@connectionProblemTorNetwork": {
+    "description": "Why there is no connection (phase 045): the Tor network itself cannot be reached."
+  },
+  "connectionProblemTurnOnTor": "Can't reach the server directly. Turn on Use Tor to connect through Tor.",
+  "@connectionProblemTurnOnTor": {
+    "description": "Why there is no connection (phase 045): the direct path did not answer, Use Tor is off and an onion address is known. 'Use Tor' is the name of the switch."
+  },
+  "connectTitle": "Connect to your server",
+  "@connectTitle": {
+    "description": "Heading of the connection screen shown after a pairing link arrives - pasted, scanned or read from a QR image (phase 045)."
+  },
+  "connectServerAddressLabel": "Server address",
+  "@connectServerAddressLabel": {
+    "description": "Field label on the connection screen and in Settings > Connection: host:port of the server (phase 045)."
+  },
+  "connectOnionAddressLabel": "Onion address",
+  "@connectOnionAddressLabel": {
+    "description": "Field label on the connection screen and in Settings > Connection: the server's .onion address (phase 045)."
+  },
+  "connectOnionAddressHint": "Optional",
+  "@connectOnionAddressHint": {
+    "description": "Hint of the empty onion address field (phase 045)."
+  },
+  "connectUseTor": "Use Tor",
+  "@connectUseTor": {
+    "description": "Checkbox on the connection screen and switch in Settings > Connection (phase 045). Off by default."
+  },
+  "connectUseTorCaption": "NOX uses Tor only when it can't reach your server directly.",
+  "@connectUseTorCaption": {
+    "description": "Caption under Use Tor (phase 045, FR-011)."
+  },
+  "connectAction": "Connect",
+  "@connectAction": {
+    "description": "Primary button of the connection screen; pairs the device (phase 045)."
+  },
+  "connectInvalidServerAddress": "This isn't a valid server address.",
+  "@connectInvalidServerAddress": {
+    "description": "Field error when the server address is not host:port (phase 045)."
+  },
+  "settingsConnectionTitle": "Connection",
+  "@settingsConnectionTitle": {
+    "description": "Settings section (7.1 row, menu item and title) with the server address, the onion address and Use Tor (phase 045)."
+  },
+  "connectWaitingApproval": "Waiting for approval on your other device",
+  "@connectWaitingApproval": {
+    "description": "Connection screen while the request an invite opened waits for the device that issued the invite to answer (phase 046). Shown with a spinner and Cancel."
+  },
+  "connectDeclined": "Your other device declined this request.",
+  "@connectDeclined": {
+    "description": "Connection screen, under Connect: the device that issued the invite answered Deny (phase 046)."
+  },
+  "pairRequestMessage": "New device: {platform}. Allow it to join?",
+  "@pairRequestMessage": {
+    "description": "Dialog shown over any screen on the device that issued an invite, when a new device asks to join through it (phase 046). {platform} is one of the devicePlatform* words, never text from the server.",
+    "placeholders": {
+      "platform": {
+        "type": "String",
+        "example": "Windows"
+      }
+    }
+  },
+  "pairRequestAllow": "Allow",
+  "@pairRequestAllow": {
+    "description": "Dialog action: let the new device join (phase 046)."
+  },
+  "pairRequestDeny": "Deny",
+  "@pairRequestDeny": {
+    "description": "Dialog action: refuse the new device (phase 046)."
+  },
+  "pairRequestAnswerError": "Couldn't send your answer. Try again.",
+  "@pairRequestAnswerError": {
+    "description": "Dialog line when Allow or Deny did not reach the server; both buttons stay (phase 046)."
+  },
+  "devicePlatformIos": "iPhone or iPad",
+  "@devicePlatformIos": {
+    "description": "OS family of a device in the Allow dialog (phase 046): iOS."
+  },
+  "devicePlatformAndroid": "Android",
+  "@devicePlatformAndroid": {
+    "description": "OS family of a device in the Allow dialog (phase 046)."
+  },
+  "devicePlatformMacos": "Mac",
+  "@devicePlatformMacos": {
+    "description": "OS family of a device in the Allow dialog (phase 046): macOS."
+  },
+  "devicePlatformWindows": "Windows",
+  "@devicePlatformWindows": {
+    "description": "OS family of a device in the Allow dialog (phase 046)."
+  },
+  "devicePlatformLinux": "Linux",
+  "@devicePlatformLinux": {
+    "description": "OS family of a device in the Allow dialog (phase 046)."
+  },
+  "devicePlatformUnknown": "Unknown system",
+  "@devicePlatformUnknown": {
+    "description": "The Allow dialog's word for an OS family this build does not know (phase 046): text from the server is never shown."
+  }
+}

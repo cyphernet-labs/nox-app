@@ -6,7 +6,7 @@
 
 **Тесты**: Включены — baseline-тесты запрошены спекой (FR-009, SC-002, US3 Independent Test, Item-harness «bloc smoke + mapper round-trip»).
 
-**Организация**: задачи сгруппированы по user story. Авторитет по «как» — блюпринт `docs/patterns/mobile/`; **пути файлов канонизированы по `data-model.md` / `contracts/`** (вложенно-singular: `domain/repository/base`, `domain/exception`, `domain/models/item`, `domain/repository/item`, `data/entity/item`, `data/mapper/item`, `data/local/item`, `data/repository/item`, `presentation/pages/item_list_page`).
+**Организация**: задачи сгруппированы по user story. Авторитет по «как» — блюпринт `docs/blueprints/mobile/`; **пути файлов канонизированы по `data-model.md` / `contracts/`** (вложенно-singular: `domain/repository/base`, `domain/exception`, `domain/models/item`, `domain/repository/item`, `data/entity/item`, `data/mapper/item`, `data/local/item`, `data/repository/item`, `presentation/pages/item_list_page`).
 
 ## Формат: `[ID] [P?] [Story] Description`
 

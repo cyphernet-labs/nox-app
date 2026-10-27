@@ -1,0 +1,232 @@
+import 'dart:async';
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
+import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
+import 'package:nox_app/presentation/base/base_bloc.dart';
+import 'package:rxdart/rxdart.dart';
+
+part 'chat_card_bloc.freezed.dart';
+part 'chat_card_event.dart';
+part 'chat_card_state.dart';
+
+/// Chat card (5.4) — read-only chat header + its shared files (List / Grid).
+/// Sealed Initializing/Initialized/Error over [ChatRepository.getChatFiles]
+/// (mock-backed, no pagination). Empty / offline / fatal are reproduced by
+/// [ChatCardScenario] (debug).
+class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
+  /// [initialScenario] pins the debug scenario BEFORE the first [Initialize] so the very
+  /// first (and only) load reflects it — avoiding the setScenario re-init racing an
+  /// in-flight files re-derive (which would clobber `empty` with the real files). Runtime
+  /// leaves it null (→ normal); the demo dropdown still switches live via [SetScenario].
+  ChatCardBloc({ChatCardScenario? initialScenario}) : super(const ChatCardState.initializing()) {
+    if (initialScenario != null) _scenario = initialScenario;
+    on<Initialize>(_onInitialize);
+    on<ViewModeChanged>(_onViewModeChanged);
+    on<FilesRefreshed>(_onFilesRefreshed);
+    on<ConnectionStatusChanged>(_onConnectionStatusChanged);
+    on<RetryConnection>(_onRetryConnection);
+    on<SetScenario>(_onSetScenario);
+    on<PersonLabelChanged>(_onPersonLabelChanged);
+  }
+
+  final ChatRepository _chatRepository = getIt<ChatRepository>();
+  final MessageRepository _messageRepository = getIt<MessageRepository>();
+  final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final ConnectionStatusService _connectionStatus = getIt<ConnectionStatusService>();
+  final SessionRepository _sessionRepository = getIt<SessionRepository>();
+
+  StreamSubscription<String?>? _labelSub;
+  String _person = Constants.defaultUserLabel;
+
+  late String _chatId;
+  ChatCardScenario _scenario = ChatCardScenario.normal;
+
+  // Where the connection stands (P1, widened by 036 and 040). The whole status
+  // is kept, not a boolean derived from it. Mirrors ChatsListBloc / ChatThreadBloc.
+  StreamSubscription<ConnectionStatus>? _connSub;
+  late ConnectionStatus _status = _connectionStatus.status;
+
+  /// The wrong machine answered. Takes precedence over the offline banner: both
+  /// would otherwise show at once, and "no connection" is simply false here.
+  bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatCardScenario.serverMismatch;
+
+  /// «No connection» only once a whole round of path finding found nothing.
+  bool _isOffline() =>
+      !_isServerMismatch() &&
+      (_status.showsNoConnection || _scenario == ChatCardScenario.offline || _scenario == ChatCardScenario.turnOnTor);
+
+  /// Why, when that is known (phase 045) - or the debug scenarios' stand-ins.
+  ConnectionProblem? _problem() {
+    if (_scenario == ChatCardScenario.serverMismatch) return ConnectionProblem.otherServer;
+    if (_scenario == ChatCardScenario.turnOnTor) return ConnectionProblem.turnOnTor;
+    return _isOffline() || _isServerMismatch() ? _status.problem : null;
+  }
+
+  /// The server refuses this build (phase 042): the strip stays, its action
+  /// does not - trying again cannot change the answer.
+  bool _isUnsupported() => _status.state == LinkState.unsupported;
+
+  // Live change-signal (feature 017 / R5): a new attachment sent to this chat writes
+  // to the message store → re-derive the files. Value ignored — getChatFiles stays the
+  // single projection path. Emits FilesRefreshed (an INVISIBLE re-derive that preserves
+  // the loading-free Initialized view + the user's List/Grid choice), NOT a full re-init.
+  StreamSubscription<List<MessageModel>>? _filesSub;
+
+  @override
+  Future<void> close() {
+    _filesSub?.cancel();
+    _connSub?.cancel();
+    _labelSub?.cancel();
+    return super.close();
+  }
+
+  Future<void> _onInitialize(Initialize event, Emitter<ChatCardState> emit) async {
+    _chatId = event.chatId;
+    // skip(1) drops the initial snapshot the reset load already covers; debounce coalesces bursts.
+    _filesSub ??= _messageRepository
+        .watchMessages(_chatId)
+        .skip(1)
+        .debounceTime(const Duration(milliseconds: 100))
+        .listen((_) => add(const ChatCardEvent.filesRefreshed()));
+    // Live connectivity → the offline banner (seeded current value, then every change).
+    // The session phase, not raw device connectivity, is what says whether the
+    // data on screen is current: a device can be online while the socket is
+    // down, and the socket can be open while replay is still running (FR-005).
+    _connSub ??= _connectionStatus.watchStatus().listen((status) => add(ChatCardEvent.connectionStatusChanged(status)));
+    // Watched, not read once. The desktop side sheet stays open while the
+    // person renames themselves from another device, and a snapshot would keep
+    // rendering the old name until the card was closed and reopened - the exact
+    // reason WatchChat exists forty lines above for the chat's own name.
+    //
+    // It also removes the await that used to sit in front of the fatal
+    // short-circuit: a suspension point there let a second Initialize (the demo
+    // dropdown re-dispatches one) interleave with the first.
+    // isClosed first: logout emits null on this exact channel while the card is
+    // being torn down, and cancel() is asynchronous through the generator - so a
+    // null can land on a closed bloc in that window.
+    _labelSub ??= _sessionRepository.watchLabel().listen((label) {
+      if (isClosed) return;
+      add(ChatCardEvent.personLabelChanged(label));
+    });
+    emit(const ChatCardState.initializing());
+
+    if (_scenario == ChatCardScenario.fatal) {
+      emit(const ChatCardState.error());
+      return;
+    }
+
+    await executeLogic(() async {
+      if (_scenario == ChatCardScenario.empty) {
+        emit(ChatCardState.initialized(files: const [], personLabel: _person));
+        return;
+      }
+      // The files the device holds, at once; the newest window is pulled in the
+      // background and lands through the watch above (the live re-derive).
+      // Waiting for it here held the files section behind a spinner for as
+      // long as Tor took to come up.
+      final result = await _chatRepository.getChatFiles(chatId: _chatId);
+      // Stale-guard: the read is no longer instant (it may reach the server), so
+      // the debug scenario can have changed while it was in flight. Emitting the
+      // late result would overwrite the state the user just selected.
+      if (_scenario == ChatCardScenario.empty) {
+        emit(ChatCardState.initialized(files: const [], personLabel: _person));
+        return;
+      }
+      result.match<void>(
+        onData: (files) => emit(
+          ChatCardState.initialized(
+            files: files,
+            isOffline: _isOffline(),
+            isServerMismatch: _isServerMismatch(),
+            isUnsupported: _isUnsupported(),
+            problem: _problem(),
+            personLabel: _person,
+          ),
+        ),
+        onError: (_) => emit(const ChatCardState.error()),
+      );
+      if (result.hasData) unawaited(_pullNewestWindow());
+    }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
+  }
+
+  /// The chat's newest window from the server, then a re-derive. The re-derive
+  /// is asked for here rather than left to the watch: the watch skips its first
+  /// snapshot, and a write that lands before that snapshot is taken is in it -
+  /// so the watch alone could miss exactly this update.
+  Future<void> _pullNewestWindow() async {
+    await _chatRepository.getChatFiles(chatId: _chatId, refresh: true);
+    if (!isClosed) add(const ChatCardEvent.filesRefreshed());
+  }
+
+  void _onPersonLabelChanged(PersonLabelChanged event, Emitter<ChatCardState> emit) {
+    // Through the resolver, not a copy of its rule: null is logout, empty is a
+    // greeting that stated no name, and both mean "absent" everywhere else in
+    // the app. A hand-matched second copy agrees only until this one changes.
+    final next = resolveLabel(event.label);
+    if (next == _person) return;
+    _person = next;
+    final current = state;
+    if (current is Initialized) emit(current.copyWith(personLabel: next));
+  }
+
+  void _onViewModeChanged(ViewModeChanged event, Emitter<ChatCardState> emit) {
+    final current = state;
+    if (current is Initialized) emit(current.copyWith(viewMode: event.mode));
+  }
+
+  /// Live re-derive (R5): re-read the files and swap them into the current view,
+  /// preserving viewMode/isOffline and never flashing the loading state (contrast a
+  /// full re-init). Best-effort — a transient read error keeps the last good files.
+  Future<void> _onFilesRefreshed(FilesRefreshed event, Emitter<ChatCardState> emit) async {
+    final current = state;
+    // Nothing to refresh invisibly while initializing / in a fatal error; the empty
+    // scenario is pinned empty (no source to re-derive from).
+    if (current is! Initialized || _scenario == ChatCardScenario.empty) return;
+    final result = await _chatRepository.getChatFiles(chatId: _chatId);
+    result.match<void>(
+      onData: (files) {
+        final live = state;
+        if (live is Initialized) emit(live.copyWith(files: files));
+      },
+      onError: (_) {}, // keep the current view — the refresh is invisible and best-effort
+    );
+  }
+
+  void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ChatCardState> emit) {
+    _status = event.status;
+    final current = state;
+    // Update the banner in place (no reload) — like the reactive files re-derive.
+    if (current is Initialized) {
+      emit(
+        current.copyWith(
+          isOffline: _isOffline(),
+          isServerMismatch: _isServerMismatch(),
+          isUnsupported: _isUnsupported(),
+          problem: _problem(),
+        ),
+      );
+    }
+  }
+
+  /// One more attempt, asked for by the person. Emits nothing: the phase stream
+  /// moves the banner.
+  Future<void> _onRetryConnection(RetryConnection event, Emitter<ChatCardState> emit) => _sessionPhaseService.reconnect();
+
+  FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatCardState> emit) async {
+    _scenario = event.scenario;
+    add(ChatCardEvent.initialize(_chatId));
+  }
+}

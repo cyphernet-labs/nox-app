@@ -1,0 +1,100 @@
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:sembast/sembast.dart';
+
+/// Single-record Sembast store for the device sync state. Lives beside the
+/// message store on purpose: the cursor promises "everything up to seq is
+/// applied HERE", so it must die in the same wipe as the messages.
+@lazySingleton
+class SyncDao {
+  SyncDao(this._database);
+
+  final AppDatabase _database;
+
+  static final StoreRef<String, Map<String, dynamic>> _store = stringMapStoreFactory.store('sync');
+  static const String _kStateKey = 'state';
+  static const String _kSinceField = 'since';
+
+  /// A SEPARATE record, not another field on `state`: the cursor writers replace
+  /// the whole `state` map, so an epoch stored alongside `since` would be wiped
+  /// by the next advance and re-trigger the one-time wipe forever.
+  static const String _kEpochKey = 'epoch';
+  static const String _kEpochField = 'source';
+
+  /// The server's own name for its store (contract §3 `journal_id`). Its own
+  /// record for the same reason the epoch has one, and it must OUTLIVE the wipe
+  /// it triggers: forgetting it would make the very next greeting look like
+  /// another change and wipe again, forever.
+  static const String _kJournalKey = 'journal';
+  static const String _kJournalField = 'id';
+
+  Future<int> readSince() async {
+    final db = await _database.db;
+    final record = await _store.record(_kStateKey).get(db);
+    final value = record?[_kSinceField];
+    return value is int ? value : 0;
+  }
+
+  /// Whether a cursor is stored at all - which [readSince]'s 0 cannot say. A
+  /// device whose first greeting found an EMPTY journal stores 0, and must
+  /// still ask for a replay on its next greeting; only one never greeted (or
+  /// wiped since) has nothing to ask from.
+  Future<bool> hasSince() async {
+    final db = await _database.db;
+    final record = await _store.record(_kStateKey).get(db);
+    return record?[_kSinceField] is int;
+  }
+
+  Future<void> writeSince(int since) async {
+    final db = await _database.db;
+    await _store.record(_kStateKey).put(db, {_kSinceField: since});
+  }
+
+  /// Atomically raises `since` to [seq] when higher — the read and the
+  /// conditional write share one transaction, so concurrent advances can never
+  /// interleave and persist a lower value after a higher one.
+  Future<void> advanceSince(int seq) async {
+    final db = await _database.db;
+    await db.transaction((txn) async {
+      final record = await _store.record(_kStateKey).get(txn);
+      final current = record?[_kSinceField];
+      // Written when absent even at 0: the first greeting adopts the server's
+      // cursor, and an empty journal's cursor IS 0. Left unwritten, the device
+      // would still read as never greeted, and its next greeting would skip
+      // the replay of everything that happened in between.
+      if (current is! int || seq > current) await _store.record(_kStateKey).put(txn, {_kSinceField: seq});
+    });
+  }
+
+  Future<String?> readEpoch() async {
+    final db = await _database.db;
+    final record = await _store.record(_kEpochKey).get(db);
+    final value = record?[_kEpochField];
+    return value is String ? value : null;
+  }
+
+  Future<void> writeEpoch(String epoch) async {
+    final db = await _database.db;
+    await _store.record(_kEpochKey).put(db, {_kEpochField: epoch});
+  }
+
+  Future<String?> readJournal() async {
+    final db = await _database.db;
+    final record = await _store.record(_kJournalKey).get(db);
+    final value = record?[_kJournalField];
+    return value is String ? value : null;
+  }
+
+  Future<void> writeJournal(String journalId) async {
+    final db = await _database.db;
+    await _store.record(_kJournalKey).put(db, {_kJournalField: journalId});
+  }
+
+  /// Drops the cursor. The epoch and the journal id deliberately SURVIVE: both
+  /// describe which world the local data came from, and neither a logout nor
+  /// the wipe that follows a change of world changes what the world now IS.
+  Future<void> cleanData() async {
+    final db = await _database.db;
+    await _store.record(_kStateKey).delete(db);
+  }
+}

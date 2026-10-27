@@ -1,0 +1,44 @@
+part of 'chat_card_bloc.dart';
+
+/// Files section view mode (5.4).
+enum FilesViewMode { list, grid }
+
+/// Debug-selectable card scenario (5.4, dev-only) — reproduces server-dependent
+/// states on stub data (FR-005 / FR-062). `turnOnTor` is offline with a known
+/// cause, which the strip says in place of «No connection» (phase 045).
+enum ChatCardScenario { normal, empty, offline, serverMismatch, fatal, turnOnTor }
+
+@freezed
+sealed class ChatCardState with _$ChatCardState {
+  const ChatCardState._();
+
+  const factory ChatCardState.initializing() = Initializing;
+
+  const factory ChatCardState.initialized({
+    required List<MessageAttachment> files,
+    @Default(FilesViewMode.list) FilesViewMode viewMode,
+    @Default(false) bool isOffline,
+
+    /// The machine at the paired address is not this person's server.
+    @Default(false) bool isServerMismatch,
+
+    /// The server refuses this build for good: «No connection» still shows,
+    /// but with nothing to try - a restart of the channel ends the same way
+    /// (phase 042).
+    @Default(false) bool isUnsupported,
+
+    /// Why there is no connection, when that is known (phase 045): the strip
+    /// says it in place of «No connection». Rides with [isOffline] and
+    /// [isServerMismatch]; null otherwise.
+    ConnectionProblem? problem,
+
+    /// Who this machine belongs to, for the People section (5.4).
+    ///
+    /// Resolved by the BLoC rather than read by the widget: the card owns one,
+    /// and a presentation widget reaching for the session repository pays a
+    /// keychain round trip on every open for a value the app already holds.
+    @Default(Constants.defaultUserLabel) String personLabel,
+  }) = Initialized;
+
+  const factory ChatCardState.error() = Error;
+}

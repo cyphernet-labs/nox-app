@@ -71,13 +71,13 @@
   <div class="hero-in">
     <div class="word">NOX</div>
     <h1>Assets</h1>
-    <p>Icons, brand assets and illustrations for NOX. Companion to the
+    <p>Icons, brand assets and empty-state sketches for NOX. Companion to the
        <code style="background:#11302f;color:#CCE8E7;border:1px solid #324B4A">nox-handoff</code>
        token + Flutter package. Status of every asset is in <code style="background:#11302f;color:#CCE8E7;border:1px solid #324B4A">manifest.json</code>.</p>
     <div class="chips">
-      <span class="chip">33 icons · Material Symbols Rounded</span>
+      <span class="chip">34 icons · Material Symbols Rounded</span>
       <span class="chip">Brand</span>
-      <span class="chip">3 illustration placeholders</span>
+      <span class="chip">3 empty-state sketches</span>
     </div>
   </div>
 </header>
@@ -94,7 +94,7 @@
 
   <section>
     <h2>Brand</h2>
-    <p class="sub">The logo is a raster placeholder; final vector SVG + app launcher icon still to be ordered.</p>
+    <p class="sub">The logo is a raster placeholder; the final vector SVG is still to be ordered. The launcher icons installed in the app are built from this raster; the final set comes from the vector.</p>
     <div class="gallery">
       <div class="acard">
         <div class="frame dark"><img src="brand/logo.png" alt="NOX logo" /></div>
@@ -107,37 +107,38 @@
           <span class="badge ref">reference-only</span></div>
       </div>
       <div class="acard">
-        <div class="frame tile"><span style="font-family:var(--mono);font-size:13px;color:#9aa4a3;letter-spacing:.04em">PENDING</span></div>
-        <div class="meta"><div class="t">app-icon</div><div class="d">Launcher icon — derive from final logo</div>
-          <span class="badge pending">pending</span></div>
+        <div class="frame tile"><span style="font-family:var(--mono);font-size:13px;color:#9aa4a3;letter-spacing:.04em">RASTER SET</span></div>
+        <div class="meta"><div class="t">app-icon</div><div class="d">Launcher icon — a set from the raster logo is installed (../nox-app-icons/); the final one waits for the vector</div>
+          <span class="badge placeholder">placeholder-raster</span></div>
       </div>
     </div>
     <h3>Wordmark</h3>
     <div class="wordmark">
       <div class="w">NOX</div>
-      <div class="c">System sans · Bold 700 · letter-spacing +0.12em · #FAFAFA on #0C2424</div>
+      <div class="c">Roboto · Bold 700 · letter-spacing +0.12em · #FAFAFA on #0C2424</div>
     </div>
   </section>
 
   <section>
-    <h2>Illustrations</h2>
-    <p class="sub">Empty-state art (placeholders). Spec: light line / brushstroke, contour
-       <code>onSurfaceVariant</code> + brand teal/gold accents, transparent, ~120–160 tall, reads on light &amp; dark.</p>
+    <h2>Empty-state sketches</h2>
+    <p class="sub">Sketches of the corpus only: no illustration is ordered and none ships in the app. The art of
+       an empty state is the <code>NoxEmptyState</code> composition — a 56 glyph in a 132 outlined box with
+       two brand dots, design-system.md §10.</p>
     <div class="gallery">
       <div class="acard">
         <div class="frame tile"><img src="illustrations/empty-chats.svg" alt="empty chats" /></div>
-        <div class="meta"><div class="t">empty-chats.svg</div><div class="d">5.1 no chats · fallback forum_outlined</div>
-          <span class="badge placeholder">placeholder</span></div>
+        <div class="meta"><div class="t">empty-chats.svg</div><div class="d">5.1 no chats · the app draws forum</div>
+          <span class="badge ref">corpus-sketch</span></div>
       </div>
       <div class="acard">
         <div class="frame tile"><img src="illustrations/empty-messages.svg" alt="empty messages" /></div>
-        <div class="meta"><div class="t">empty-messages.svg</div><div class="d">5.2 no messages · fallback chat_bubble_outline</div>
-          <span class="badge placeholder">placeholder</span></div>
+        <div class="meta"><div class="t">empty-messages.svg</div><div class="d">5.2 no messages · the app draws chat_bubble</div>
+          <span class="badge ref">corpus-sketch</span></div>
       </div>
       <div class="acard">
         <div class="frame tile"><img src="illustrations/empty-files.svg" alt="empty files" /></div>
-        <div class="meta"><div class="t">empty-files.svg</div><div class="d">5.4 no files · fallback folder_open</div>
-          <span class="badge placeholder">placeholder</span></div>
+        <div class="meta"><div class="t">empty-files.svg</div><div class="d">5.4 no files · the app draws folder_open</div>
+          <span class="badge ref">corpus-sketch</span></div>
       </div>
     </div>
   </section>

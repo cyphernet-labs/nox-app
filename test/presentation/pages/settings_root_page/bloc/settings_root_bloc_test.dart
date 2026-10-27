@@ -1,0 +1,223 @@
+import 'package:bloc_test/bloc_test.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
+
+import '../../../../utils/fake_session_repository.dart';
+import 'settings_root_bloc_test.mocks.dart';
+
+@GenerateMocks([DeviceRepository])
+void main() {
+  group('SettingsRootBloc', () {
+    setUp(registerFakeSession);
+    tearDown(getIt.reset);
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'initialize clears the initial-loading flag and loads the identifier',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
+      expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId == (kTestSession.authorId ?? ''))],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'name-edit started enters editing with a valid (pristine) draft',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameEditStarted()),
+      expect: () => [predicate<SettingsRootState>((s) => s.editing && s.status == SettingsNameStatus.valid)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'rejects an invalid charset immediately, without a server check',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('bad name!')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.invalidCharset)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'an empty draft is not committable and shows no error',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.idle && !s.canSave)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'a valid name resolves at once - there is no availability to wait for',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('Freename')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid && s.canSave)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'a name that used to be reserved is accepted - nothing checks label uniqueness',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('NOX')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'the unchanged current name stays valid with no server check',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('User7421')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'submitting a valid draft commits the name and leaves edit mode',
+      build: SettingsRootBloc.new,
+      seed: () => const SettingsRootState(name: 'User7421', draftName: 'Freename', editing: true, status: SettingsNameStatus.valid),
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameSubmitted()),
+      expect: () => [predicate<SettingsRootState>((s) => s.name == 'Freename' && !s.editing && s.status == SettingsNameStatus.idle)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'cancelling edit reverts the draft to the committed name',
+      build: SettingsRootBloc.new,
+      seed: () => const SettingsRootState(name: 'User7421', draftName: 'Half', editing: true, status: SettingsNameStatus.valid),
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameEditCancelled()),
+      expect: () => [predicate<SettingsRootState>((s) => !s.editing && s.draftName == 'User7421' && s.status == SettingsNameStatus.idle)],
+    );
+  });
+
+  // Feature 015 — the display label is loaded from and persisted to the REAL session
+  // (mock-backed store), so these use the test-env DI rather than the read-only fake.
+  group('identity label persistence (feature 015)', () {
+    setUp(() async => configureDependencies(Environment.test));
+    tearDown(getIt.reset);
+
+    Future<void> signIn(String label) async {
+      await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-abc', onboardingComplete: true, label: label);
+    }
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'initialize loads the session display label into name',
+      setUp: () => signIn('Alice'),
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
+      wait: const Duration(milliseconds: 100),
+      verify: (bloc) {
+        expect(bloc.state.name, 'Alice'); // the chosen label, not the compile-time default
+        // The pairing token in the identifier slot is NOT the id: this session
+        // has no server-minted one yet, so there is nothing to show.
+        expect(bloc.state.rawId, isEmpty);
+      },
+    );
+
+    group('the rename reaches the server before it is shown as saved', () {
+      late MockDeviceRepository devices;
+
+      setUp(() {
+        provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
+        devices = MockDeviceRepository();
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<DeviceRepository>(devices);
+      });
+
+      test('a rejected rename keeps the old name and says why', () async {
+        when(
+          devices.setLabel(label: anyNamed('label')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        await signIn('Alice');
+        final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        bloc
+          ..add(const SettingsRootEvent.nameEditStarted())
+          ..add(const SettingsRootEvent.nameChanged('Bobbi'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const SettingsRootEvent.nameSubmitted());
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        // Nothing was saved anywhere, so nothing is claimed - and the edit says
+        // so rather than reverting in silence, which left Enter looking broken.
+        expect(bloc.state.name, 'Alice');
+        expect(bloc.state.editing, isTrue);
+        expect(bloc.state.status, SettingsNameStatus.saveFailed);
+      });
+
+      test('an accepted rename is stored only after the server has it', () async {
+        when(devices.setLabel(label: anyNamed('label'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+        await signIn('Alice');
+        final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        bloc
+          ..add(const SettingsRootEvent.nameEditStarted())
+          ..add(const SettingsRootEvent.nameChanged('Bobbi'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const SettingsRootEvent.nameSubmitted());
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        verify(devices.setLabel(label: 'Bobbi')).called(1);
+        expect(bloc.state.name, 'Bobbi');
+        expect(bloc.state.editing, isFalse);
+      });
+    });
+
+    test('a valid confirmed rename persists the new label to the session', () async {
+      await signIn('Alice');
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      bloc.add(const SettingsRootEvent.nameEditStarted());
+      bloc.add(const SettingsRootEvent.nameChanged('Freename'));
+      await Future<void>.delayed(const Duration(milliseconds: 700)); // debounced availability → valid
+      expect(bloc.state.status, SettingsNameStatus.valid);
+
+      bloc.add(const SettingsRootEvent.nameSubmitted());
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      expect(bloc.state.name, 'Freename'); // committed in the bloc
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Freename'); // and persisted
+
+      // Simulate a full restart: discard the DI graph and re-read through a FRESH
+      // repository over the persisted store — the renamed label is still there (FR-007/SC-002).
+      await getIt.reset();
+      await configureDependencies(Environment.test);
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Freename');
+    });
+
+    test('a name that used to be reserved is now persisted like any other', () async {
+      await signIn('Alice');
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      bloc.add(const SettingsRootEvent.nameEditStarted());
+      bloc.add(const SettingsRootEvent.nameChanged('NOX')); // once reserved, now perfectly ordinary
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(bloc.state.status, SettingsNameStatus.valid);
+
+      bloc.add(const SettingsRootEvent.nameSubmitted());
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // It goes through: there is nothing left that could call it taken.
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'NOX');
+    });
+
+    test('an invalid draft is never persisted', () async {
+      await signIn('Alice');
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      bloc.add(const SettingsRootEvent.nameEditStarted());
+      bloc.add(const SettingsRootEvent.nameChanged('bad name!')); // invalid charset → not committable
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      bloc.add(const SettingsRootEvent.nameSubmitted()); // canSave == false → no-op
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // Charset still refuses, and it is one of the only two rules left.
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Alice');
+    });
+  });
+}

@@ -1,0 +1,91 @@
+part of 'chat_thread_bloc.dart';
+
+/// Debug-selectable thread scenario (5.2, dev-only) — reproduces the server-dependent
+/// states on stub data (FR-005 / FR-029). `sendError` flips the next send to `error`;
+/// `offline` keeps sends queued as `pending`; `turnOnTor` is offline with a known
+/// cause, which the strip says in place of «No connection» (phase 045).
+enum ChatThreadScenario { normal, empty, offline, serverMismatch, fatal, sendError, turnOnTor }
+
+@freezed
+sealed class ChatThreadState with _$ChatThreadState {
+  const ChatThreadState._();
+
+  const factory ChatThreadState.initializing() = Initializing;
+
+  const factory ChatThreadState.initialized({
+    required PagingState<String, MessageModel> pagingState,
+    required String currentId,
+    @Default([]) List<MessageModel> items,
+    @Default([]) List<MessageModel> outgoing,
+    // The oldest loaded journal number - the before_seq cursor of the next
+    // older batch; null until the first tail load lands.
+    int? oldestLoadedSeq,
+    @Default(false) bool loadingInProgress,
+
+    /// The cache had nothing for this chat and the server's newest window is
+    /// on its way - the one wait the thread still shows as a spinner.
+    @Default(false) bool syncing,
+    @Default(false) bool isOffline,
+
+    /// The machine at the paired address is not this person's server. Apart
+    /// from [isOffline] because waiting fixes one and never the other.
+    @Default(false) bool isServerMismatch,
+
+    /// The server refuses this build for good: «No connection» still shows,
+    /// but with nothing to try - a restart of the channel ends the same way
+    /// (phase 042).
+    @Default(false) bool isUnsupported,
+
+    /// Why there is no connection, when that is known (phase 045): the strip
+    /// says it in place of «No connection». Rides with [isOffline] and
+    /// [isServerMismatch]; null otherwise.
+    ConnectionProblem? problem,
+
+    /// Sends wait: the channel is not current, or it belongs to the wrong
+    /// machine. Apart from [isOffline], which waits for a whole failed round
+    /// before it says so - a chat still to be created says it at once, because
+    /// with a current channel its creation is going out right now (phase 041).
+    @Default(false) bool isHeld,
+    MessageAttachment? draftAttachment,
+
+    /// Bumped when a picked file was refused for being over the server's
+    /// limit. A counter rather than a flag: picking the same oversized file
+    /// twice has to say so twice, and a bool would go quiet the second time.
+    @Default(0) int oversizedAttachmentTick,
+
+    /// Attachments whose bytes are moving now, by message id - a send under
+    /// the queued bubble's id, a picture fetch under the stored one.
+    @Default(<String, AttachmentTransfer>{}) Map<String, AttachmentTransfer> transfers,
+  }) = Initialized;
+
+  const factory ChatThreadState.error() = Error;
+}
+
+extension ChatThreadInitializedExt on Initialized {
+  /// History + optimistic outgoing, ascending by the journal seq (the genesis
+  /// line owns the chat's lowest seq; optimistic sends carry [kPendingSeq]
+  /// and stay at the newest end until acked). Dedup-by-id (Feature 014):
+  /// once an optimistic send is acked it adopts the persisted `srv_<uuid>`
+  /// id, and the live `items` also carry it — keep only one bubble.
+  List<MessageModel> get allMessages {
+    final itemIds = items.map((m) => m.id).toSet();
+    final queueIndex = <String, int>{for (var i = 0; i < outgoing.length; i++) outgoing[i].id: i};
+    final merged = [...items, ...outgoing.where((m) => !itemIds.contains(m.id))]
+      ..sort((a, b) {
+        final bySeq = a.seq.compareTo(b.seq);
+        if (bySeq != 0) return bySeq;
+        final byTime = a.sentAt.compareTo(b.sentAt);
+        if (byTime != 0) return byTime;
+        // Queued sends share the sentinel seq AND (under a frozen clock) the
+        // timestamp: their tiebreak is the queue position. Comparing ids would
+        // order them by a uuid, i.e. at random — the one thing send order must
+        // never be.
+        final byQueue = (queueIndex[a.id] ?? -1).compareTo(queueIndex[b.id] ?? -1);
+        return byQueue != 0 ? byQueue : a.id.compareTo(b.id);
+      });
+    return merged;
+  }
+
+  /// Real (non-system) messages — drives the Empty state.
+  bool get hasMessages => allMessages.any((m) => !m.isSystem);
+}

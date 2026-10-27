@@ -1,0 +1,111 @@
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/mapper/device/device_platform_wire.dart';
+import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_frame.dart';
+import 'package:nox_app/domain/model/device/device_invite.dart';
+import 'package:nox_app/domain/model/device/device_model.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+
+/// Devices over the live socket (contract §8A).
+///
+/// It also listens: `device.paired` is picked up HERE rather than in
+/// `SyncService`, which handles the other two off-journal events. Those two
+/// apply something to local storage — a revocation signs the person out, a
+/// rename writes the name into the session. The device list has no local
+/// storage at all, so there would be nothing to apply; a branch there would
+/// only be a channel from the sync loop up to the screen, which that loop does
+/// not have and should not grow.
+///
+/// Deliberately NOT cache-first, unlike chats and messages: a stale list would
+/// offer to revoke a device that is already gone, and show one that was added
+/// from elsewhere as missing. The list is short and read rarely, so asking the
+/// server every time costs nothing worth saving.
+@LazySingleton(as: DeviceRepository, env: [Environment.dev])
+class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository {
+  DeviceRepositoryImpl(this._socket, this._session);
+
+  final NoxSocketClient _socket;
+  final SessionRepository _session;
+
+  @override
+  Stream<void> watchDeviceListChanged() => _socket.events.where((event) => event.event == ServerEvent.devicePaired);
+
+  @override
+  Future<RepositoryResult<List<DeviceModel>>> getDevices() {
+    return execute<List<DeviceModel>>(() async {
+      final reply = await _socket.send('device.list', const <String, dynamic>{});
+      if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
+
+      // Which row is "this device" is known only here: the server sees a key,
+      // not a person holding a phone.
+      final pair = await _session.deviceKey();
+      final own = pair.data?.publicKey;
+
+      final raw = reply.data?['devices'];
+      final devices = <DeviceModel>[];
+      if (raw is List) {
+        for (final entry in raw) {
+          if (entry is! Map<String, dynamic>) continue;
+          final key = entry['device_key'] as String? ?? '';
+          devices.add(
+            DeviceModel(
+              deviceKey: key,
+              platform: DevicePlatformWire.parse(entry['platform']),
+              pairedAt: _seconds(entry['created_at']),
+              lastSeenAt: _seconds(entry['last_seen_at']),
+              isCurrent: own != null && key == own,
+            ),
+          );
+        }
+      }
+      return RepositoryResult<List<DeviceModel>>.success(data: devices);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> revoke({required String deviceKey}) {
+    return execute<bool>(() async {
+      final reply = await _socket.send('device.revoke', <String, dynamic>{'device_key': deviceKey});
+      if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<DeviceInvite>> inviteDevice() {
+    return execute<DeviceInvite>(() async {
+      // Nothing to ask for: the link names every address this machine has to
+      // offer (contract §8A, phase 045).
+      final reply = await _socket.send('device.invite', const <String, dynamic>{});
+      if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
+      final link = reply.data?['link'] as String? ?? '';
+      if (link.isEmpty) throw RepositoryException.internal;
+      // The card promises more than the home network only when the server
+      // says the link carries it - its onion address, which the link itself
+      // shows as well, or its public address, which a link writes like any
+      // other. Erring the other way sends a person to the office with a link
+      // that works only at home and nothing to say why.
+      final onion = reply.data?['onion'] == true && PairingLink.tryParse(link)?.onionServiceKey != null;
+      final public = reply.data?['public'] == true;
+      return RepositoryResult<DeviceInvite>.success(
+        data: DeviceInvite(link: link, onion: onion, public: public),
+      );
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> setLabel({required String label}) {
+    return execute<bool>(() async {
+      final reply = await _socket.send('identity.setLabel', <String, dynamic>{'label': label});
+      if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  static DateTime _seconds(Object? value) => DateTime.fromMillisecondsSinceEpoch((value is int ? value : 0) * 1000, isUtc: true).toLocal();
+}

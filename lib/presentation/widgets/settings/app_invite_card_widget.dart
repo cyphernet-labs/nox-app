@@ -1,0 +1,89 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
+import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
+
+/// A freshly minted pairing link, shown as a QR and as text.
+///
+/// Extracted when 7.8 Devices and 7.9 People both needed it, differing in one
+/// thing — how long the link lives, which the caller states in [message]. 037
+/// deleted 7.9 along with the person invite, so Devices is the only caller left;
+/// the widget stays because the device invite is untouched and because the relay
+/// will need this shape again.
+///
+/// The text under the QR matters as much as the code: Windows and Linux have no
+/// camera, so copying is the only path that works everywhere.
+class AppInviteCardWidget extends StatelessWidget {
+  const AppInviteCardWidget({super.key, required this.link, required this.message, required this.onDismiss, this.homeOnly = false});
+
+  final String link;
+
+  /// What this particular link is and how long it lasts.
+  final String message;
+
+  /// The link reaches the server only from the home network: it carries
+  /// neither the server's onion address nor its public one (phase 045). Said
+  /// on the card itself, under the message, because the person decides here
+  /// where to carry the link - and one carried to an office would otherwise
+  /// fail with nothing to explain why.
+  final bool homeOnly;
+
+  /// "Hide", never "Cancel": nothing here revokes anything. The token stays
+  /// usable for its whole life whatever this button says, and calling it Cancel
+  /// would promise a revocation that does not happen.
+  final VoidCallback onDismiss;
+
+  /// The card copies the link itself instead of handing the job up: it already
+  /// holds the whole string, so a caller could only repeat these three lines.
+  ///
+  /// Selectable text was the only way to get the link out, and selecting a
+  /// hundred wrapped characters with a mouse is not a way to get anything out.
+  /// On Windows and Linux, which have no camera to scan the QR with, this is
+  /// not a convenience - it is the only path the link has to the other machine.
+  Future<void> _copy(BuildContext context) async {
+    // Read before the await: the notice is about this card, and looking the
+    // string up afterwards reads a context the frame may already have disposed.
+    final copied = context.l10n.copiedToClipboard;
+    await Clipboard.setData(ClipboardData(text: link));
+    if (context.mounted) showAppSnackBar(context, text: copied);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.all(AppSpacingTokens.s16),
+        child: Column(
+          children: [
+            AppQrSurfaceWidget(data: link),
+            SizedBox(height: AppSpacingTokens.s12),
+            Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+            if (homeOnly) ...[
+              SizedBox(height: AppSpacingTokens.s4),
+              Text(
+                context.l10n.devicesInviteHomeOnly,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+            ],
+            SizedBox(height: AppSpacingTokens.s8),
+            SelectableText(link, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
+            // Wrap, not Row: at a doubled text scale on a phone two buttons side
+            // by side are wider than the card, and stacking beats clipping one.
+            Wrap(
+              alignment: WrapAlignment.center,
+              children: [
+                TextButton(onPressed: () => unawaited(_copy(context)), child: Text(context.l10n.actionCopy)),
+                TextButton(onPressed: onDismiss, child: Text(context.l10n.actionHide)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

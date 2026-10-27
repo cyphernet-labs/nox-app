@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NOX
+Comment=Secure messaging
+Exec=nox_app
+Icon=nox
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupWMClass=com.cyphernetlabs.noxapp

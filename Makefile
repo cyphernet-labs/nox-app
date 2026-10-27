@@ -16,21 +16,51 @@ build-linux-stage:
 	mise run build:linux:stage
 
 # --- dev helpers (US3 / blueprint 12) ---
-.PHONY: deps generate format analyze test gate
+.PHONY: deps generate format analyze test golden-update golden-verify gate tor-test box-wasm box-verify
 
 deps:
 	fvm flutter pub get
 
 generate:
 	fvm dart run build_runner build --delete-conflicting-outputs
+	fvm flutter gen-l10n
 
 format:
-	fvm dart format -l 140 lib test
+	fvm dart format -l 140 lib test packages/nox_tor/lib packages/nox_tor/test packages/nox_tor/hook
 
 analyze:
 	fvm flutter analyze
 
 test:
-	fvm flutter test
+	fvm flutter test --exclude-tags "golden || live" $(FILE)
+
+# Golden (snapshot) tests — LOCAL ONLY (Apple Silicon / macOS), excluded from CI via the `golden` tag.
+# See .claude/commands/golden-test.md. Narrow with FILE=test/presentation/pages/<page>/<x>_golden_test.dart.
+golden-update:
+	fvm flutter test --tags golden --update-goldens $(FILE)
+
+golden-verify:
+	fvm flutter test --tags golden $(FILE)
 
 gate: generate format analyze test
+
+# The embedded Tor client (phase 040): the crate's own tests, then the Dart
+# package's - the latter loads the library the hook builds for this host.
+tor-test:
+	cd packages/rust_secure_box && cargo test
+	$(MAKE) box-verify
+	cd packages/nox_tor/rust && cargo test
+	cd packages/nox_tor && fvm dart test
+
+# RustSecureBox (phase 050): the crate built as WebAssembly and translated into
+# the server's Go. box-wasm rewrites the committed copy; box-verify builds into
+# a temporary directory and fails when the committed copy is not what the crate
+# builds to.
+box-wasm:
+	packages/rust_secure_box/build-wasm.sh
+
+box-verify:
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		packages/rust_secure_box/build-wasm.sh "$$tmp" \
+		&& diff -r "$$tmp" client_backend/internal/securebox/boxwasm \
+		&& echo "box-verify: the server's copy of RustSecureBox is current"

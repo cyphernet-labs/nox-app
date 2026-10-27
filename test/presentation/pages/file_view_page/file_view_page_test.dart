@@ -1,0 +1,541 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
+import 'package:nox_app/data/service/file/system_save_dialog.dart';
+import 'package:nox_app/data/service/file/temp_copies.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/service/file_picker_service.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
+import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/video_playback_capability.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../utils/pump_app.dart';
+
+const _file = MessageAttachment(id: 'f', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582);
+
+final l10nEn = AppLocalizationsEn();
+
+/// A picker whose `pickSaveLocation` returns a fixed destination (or null to model a
+/// cancelled save dialog) — F2 real-save tests without an OS dialog.
+class _FakeSaver implements FilePickerService {
+  _FakeSaver(this._dest);
+  final String? _dest;
+  @override
+  Future<PickedFile?> pickFile() async => null;
+  @override
+  Future<String?> pickSaveLocation({required String suggestedName}) async => _dest;
+}
+
+/// A 1x1 PNG, so `Image.file` has bytes it really decodes: the preview falls
+/// back to the glyph on a decode failure, and a test that could not tell the
+/// two apart would pass for the wrong reason.
+final Uint8List _onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
+
+void main() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async => getIt.reset());
+
+  group('FileViewPage local file (P4)', () {
+    testWidgets('a file already on this device needs no fetch and offers Save at once', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_p4_src.png')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      final file = MessageAttachment(id: 'i', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file), settle: false);
+      await tester.pump();
+      await tester.pump();
+
+      // Nothing to fetch — the bytes are on disk — so no progress bar, and the
+      // size is shown rather than a percentage.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.textContaining('B'), findsWidgets);
+    });
+
+    testWidgets('a file the server holds is fetched, and the bar reflects a real transfer', (tester) async {
+      // No local path: the bytes have to come from the server. The mock data
+      // source stands in for it, so this exercises the real code path without
+      // one running.
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false);
+      await tester.pump();
+
+      // The fetch is in flight on the first frame — this is where the fake
+      // 1000ms animation used to live.
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('a file whose bytes are gone ends in a terminal state, not a retry loop', (tester) async {
+      // Contract §2.1: attachment_gone is "терминальное error-состояние экрана
+      // файла (5.3), без кнопки повтора — не фатальный экран всего приложения".
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false);
+      // The fetch is genuinely async, so wait for the OUTCOME rather than for a
+      // duration: a fixed pause is the test that passes alone and fails in a
+      // full run, which is exactly what it did.
+      for (var i = 0; i < 100 && find.text(l10nEn.attachmentGone).evaluate().isEmpty; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // The mock holds no bytes for an id it never issued, so this is the
+      // gone path. The screen says so and stays put.
+      expect(find.text(l10nEn.attachmentGone), findsOneWidget);
+      expect(find.text(l10nEn.actionTryAgain), findsNothing, reason: 'the contract forbids a retry here');
+    });
+  });
+
+  group('FileViewPage expires_at Save gating (025)', () {
+    testWidgets('an expired attachment keeps Save disabled even after the download settles', (tester) async {
+      AppClock.freeze(DateTime(2026, 6, 15, 21, 30));
+      addTearDown(AppClock.reset);
+      final bytes = File('${Directory.systemTemp.path}/nox_expired.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
+      final expired = MessageAttachment(
+        id: 'f-exp',
+        type: FileType.pdf,
+        name: 'old-spec.pdf',
+        sizeBytes: 1024,
+        // On disk, so the screen is READY — the only thing that may disable
+        // Save here is the retention deadline, which is what this pins.
+        localPath: bytes.path,
+        expiresAt: AppClock.now().subtract(const Duration(days: 1)),
+      );
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: expired)); // settles the mock download
+
+      final saveButton = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(saveButton.onPressed, isNull); // gated in advance - bytes are gone server-side
+
+      // The icon dims with the SAME predicate: a dead button must not render
+      // at full onSurface intensity (mobile parity with the desktop FilledButton).
+      final icon = tester.widget<AppIconWidget>(find.descendant(of: find.byWidget(saveButton), matching: find.byType(AppIconWidget)));
+      expect(icon.color?.a, lessThan(1.0)); // disabled alpha, not full intensity
+    });
+
+    testWidgets('a far-future expiry (stage-1 retention) leaves Save enabled as before', (tester) async {
+      AppClock.freeze(DateTime(2026, 6, 15, 21, 30));
+      addTearDown(AppClock.reset);
+      final bytes = File('${Directory.systemTemp.path}/nox_fresh.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
+      final valid = MessageAttachment(
+        id: 'f-ok',
+        type: FileType.pdf,
+        name: 'fresh-spec.pdf',
+        sizeBytes: 1024,
+        localPath: bytes.path,
+        expiresAt: AppClock.now().add(const Duration(days: 3650)),
+      );
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: valid));
+
+      // The gate under test is the retention deadline, so assert the gate:
+      // whether the copy then succeeds is the F2 group's business, and it has a
+      // fake picker for exactly that.
+      final saveButton = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(saveButton.onPressed, isNotNull);
+    });
+  });
+
+  group('FileViewPage (mobile)', () {
+    testWidgets('shows the file glyph, name and size once the bytes are here', (tester) async {
+      final bytes = File('${Directory.systemTemp.path}/nox_meta.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: _file.copyWith(localPath: bytes.path)));
+
+      expect(find.byType(AppFileGlyphWidget), findsOneWidget);
+      expect(find.text('design-spec.pdf'), findsWidgets);
+      expect(find.textContaining('MB'), findsWidgets);
+    });
+
+    testWidgets('Save is offered once the bytes are on this device', (tester) async {
+      final bytes = File('${Directory.systemTemp.path}/nox_save_meta.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: _file.copyWith(localPath: bytes.path)));
+
+      final save = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(save.onPressed, isNotNull);
+    });
+
+    testWidgets('Save stays gated while the bytes are not here — it could only fail', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false);
+      await tester.pump();
+
+      final save = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(save.onPressed, isNull);
+    });
+  });
+
+  group('FileViewPage real save (F2)', () {
+    void useSaver(String? dest) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<FilePickerService>(_FakeSaver(dest));
+    }
+
+    /// Taps Save and waits, in real time, until [done] - the file IO and the
+    /// vault's first native call do not run under fake time.
+    Future<void> save(WidgetTester tester, bool Function() done) async {
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+        for (var i = 0; i < 300 && !done(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+    }
+
+    testWidgets('Save writes the PLAIN bytes of a sealed file to the chosen destination (phase 048, FR-008)', (tester) async {
+      final data = Uint8List.fromList(List<int>.generate(70000, (i) => i & 0xFF));
+      final src = File('${Directory.systemTemp.path}/nox_save_sealed.png');
+      final dest = File('${Directory.systemTemp.path}/nox_save_dest.png');
+      addTearDown(() {
+        if (src.existsSync()) src.deleteSync();
+        if (dest.existsSync()) dest.deleteSync();
+      });
+      await tester.runAsync(() async {
+        await getIt<DeviceVault>().ensureOpen();
+        final writer = await SealedWriter.create(src, total: data.length);
+        await writer.add(data);
+        await writer.close();
+      });
+      useSaver(dest.path);
+      final file = MessageAttachment(id: 'i', type: FileType.pdf, name: 'shot.pdf', sizeBytes: data.length, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file)); // settles the download timer → Save enabled
+
+      await save(tester, () => dest.existsSync() && dest.lengthSync() == data.length);
+
+      expect(dest.readAsBytesSync(), data, reason: 'what the person can open, not what the device keeps');
+      expect(find.text(l10nEn.fileSaved), findsOneWidget);
+    });
+
+    testWidgets("Save writes the person's own file, picked in the composer, as it is", (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_save_src.png')..writeAsBytesSync(Uint8List.fromList([1, 2, 3, 4]));
+      final dest = File('${Directory.systemTemp.path}/nox_save_dest_plain.png');
+      addTearDown(() {
+        if (src.existsSync()) src.deleteSync();
+        if (dest.existsSync()) dest.deleteSync();
+      });
+      useSaver(dest.path);
+      final file = MessageAttachment(id: 'i', type: FileType.image, name: 'shot.png', sizeBytes: 4, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await save(tester, () => dest.existsSync() && dest.lengthSync() == 4);
+
+      expect(dest.readAsBytesSync(), src.readAsBytesSync()); // real bytes copied
+    });
+
+    testWidgets('an IO failure during copy degrades to the error snackbar (no crash)', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_save_src3.png')..writeAsBytesSync(Uint8List.fromList([7]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      useSaver('/no/such/dir/nox_dest.png'); // parent directory missing → File.copy throws
+      final file = MessageAttachment(id: 'i', type: FileType.image, name: 'x.png', sizeBytes: 1, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await save(tester, () => find.text(l10nEn.fileDownloadError).evaluate().isNotEmpty);
+      expect(find.text(l10nEn.fileDownloadError), findsOneWidget); // graceful error, no crash
+    });
+
+    testWidgets('a cancelled save writes nothing and does not crash', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_save_src2.png')..writeAsBytesSync(Uint8List.fromList([9]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      useSaver(null); // user cancels the save dialog
+      final file = MessageAttachment(id: 'i', type: FileType.image, name: 'x.png', sizeBytes: 1, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      expect(tester.takeException(), isNull); // no destination written, no crash
+    });
+
+    testWidgets("on iOS and Android Save goes through the platform's own dialog, handed the plain file", (tester) async {
+      final data = Uint8List.fromList(List<int>.generate(70000, (i) => (i * 3) & 0xFF));
+      final src = File('${Directory.systemTemp.path}/nox_save_phone_sealed');
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      await tester.runAsync(() async {
+        await getIt<DeviceVault>().ensureOpen();
+        final writer = await SealedWriter.create(src, total: data.length);
+        await writer.add(data);
+        await writer.close();
+      });
+      useSaver('${Directory.systemTemp.path}/nox_save_never.pdf'); // file_selector: never asked here
+      final dialog = _PhoneDialog();
+      getIt.registerSingleton<SystemSaveDialog>(dialog);
+      final file = MessageAttachment(id: 'i', type: FileType.pdf, name: 'report.pdf', sizeBytes: data.length, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await save(tester, () => dialog.paths.isNotEmpty && !File(dialog.paths.single).existsSync());
+
+      expect(dialog.handed.single, data, reason: 'what the person can open, not what the device keeps');
+      expect(dialog.paths.single.split(Platform.pathSeparator).last, 'report.pdf');
+      expect(File('${Directory.systemTemp.path}/nox_save_never.pdf').existsSync(), isFalse);
+      expect(find.text(l10nEn.fileSaved), findsOneWidget);
+    });
+
+    testWidgets('a second tap while a save is under way opens no second dialog', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_save_phone_twice.pdf')..writeAsBytesSync(Uint8List.fromList([5, 6, 7]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      final answered = Completer<bool>();
+      final dialog = _PhoneDialog(answer: () => answered.future);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SystemSaveDialog>(dialog);
+      final file = MessageAttachment(id: 'i', type: FileType.pdf, name: 'twice.pdf', sizeBytes: 3, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+        for (var i = 0; i < 300 && dialog.paths.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave)); // the dialog is still open
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      expect(dialog.paths, hasLength(1));
+
+      answered.complete(true);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 300 && File(dialog.paths.single).existsSync(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      expect(find.text(l10nEn.fileSaved), findsOneWidget);
+
+      // Once the first save is over, Save works again.
+      await save(tester, () => dialog.paths.length == 2 && !File(dialog.paths.last).existsSync());
+      expect(dialog.paths, hasLength(2));
+    });
+  });
+
+  group('FileViewPage (desktop lightbox)', () {
+    testWidgets('renders a centered lightbox with a Download action', (tester) async {
+      final bytes = File('${Directory.systemTemp.path}/nox_wide.pdf')..writeAsBytesSync(Uint8List.fromList([1]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: _file.copyWith(localPath: bytes.path)));
+
+      // Two glyphs on the desktop lightbox: the small leading one in the header + the hero one in the body.
+      expect(find.byType(AppFileGlyphWidget), findsNWidgets(2));
+      expect(find.widgetWithText(FilledButton, l10nEn.actionDownload), findsOneWidget);
+    });
+  });
+
+  group('what the screen shows once the bytes are here', () {
+    tearDown(() => VideoPlaybackCapability.debugOverride = null);
+
+    testWidgets('a video plays here, from a plain copy that goes when the player closes (phase 048, FR-007)', (tester) async {
+      VideoPlaybackCapability.debugOverride = true;
+      final data = Uint8List.fromList(List<int>.generate(70000, (i) => (i * 7) & 0xFF));
+      final src = File('${Directory.systemTemp.path}/nox_play.mp4');
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      late Directory copies;
+      await tester.runAsync(() async {
+        await getIt<DeviceVault>().ensureOpen();
+        final writer = await SealedWriter.create(src, total: data.length);
+        await writer.add(data);
+        await writer.close();
+        copies = Directory('${(await getTemporaryDirectory()).path}/${TempCopies.folder}');
+      });
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'v', type: FileType.video, name: 'clip.mp4', sizeBytes: data.length, localPath: src.path),
+        ),
+        settle: false,
+      );
+      await tester.pump();
+      // The copy is being made: the player's own wait, not the type glyph.
+      expect(find.byType(AppFileGlyphWidget), findsNothing);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 300 && find.byKey(const Key('video-player')).evaluate().isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          await tester.pump();
+        }
+      });
+
+      expect(find.byKey(const Key('video-player')), findsOneWidget);
+      final made = copies.listSync(recursive: true).whereType<File>().toList();
+      expect(made.single.path, endsWith('clip.mp4'));
+      expect(made.single.readAsBytesSync(), data, reason: 'the player reads a plain file');
+      // These bytes are not a video, and the point is that saying so is a
+      // message rather than a crash or a blank rectangle.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() async {
+        for (var i = 0; i < 300 && copies.listSync().isNotEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      expect(copies.listSync(), isEmpty, reason: 'the player closed, and its copy went with it');
+    });
+
+    testWidgets('a copy that cannot be made is said in place of the player, and nothing else changes', (tester) async {
+      VideoPlaybackCapability.debugOverride = true;
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LocalFilesService>(_NoRoomFiles());
+      final src = File('${Directory.systemTemp.path}/nox_noroom.mp4')..writeAsBytesSync(Uint8List.fromList([0, 1, 2]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'v', type: FileType.video, name: 'clip.mp4', sizeBytes: 3, localPath: src.path),
+        ),
+      );
+
+      expect(find.text(l10nEn.fileOpenError), findsOneWidget);
+      expect(find.byKey(const Key('video-player')), findsNothing);
+      // The file is whole: Save is still there.
+      final save = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(save.onPressed, isNotNull);
+    });
+
+    testWidgets('on a platform with no player it is the screen it always was', (tester) async {
+      // Windows and Linux: `video_player` has no implementation there, so the
+      // screen must not advertise playback it cannot do.
+      VideoPlaybackCapability.debugOverride = false;
+      final src = File('${Directory.systemTemp.path}/nox_noplay.mp4')..writeAsBytesSync(Uint8List.fromList([0, 1, 2]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'v', type: FileType.video, name: 'clip.mp4', sizeBytes: 3, localPath: src.path),
+        ),
+        settle: false,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('video-player')), findsNothing);
+      expect(find.byType(AppFileGlyphWidget), findsOneWidget);
+      expect(find.text(l10nEn.tooltipSave), findsNothing); // Save is an icon action, still there
+    });
+
+    testWidgets('a picture is shown, not described by a glyph', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_preview.png')..writeAsBytesSync(_onePixelPng);
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'i', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: src.path),
+        ),
+        settle: false,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('image-preview')), findsOneWidget);
+      expect(find.byType(AppFileGlyphWidget), findsNothing);
+    });
+  });
+}
+
+/// The save dialog of iOS and Android. It keeps what it was handed as the
+/// platform would find it, and [answer] says how it ends.
+class _PhoneDialog implements SystemSaveDialog {
+  _PhoneDialog({this.answer});
+
+  final Future<bool> Function()? answer;
+  final List<String> paths = [];
+  final List<Uint8List> handed = [];
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  Future<bool> save({required String path}) async {
+    paths.add(path);
+    handed.add(File(path).readAsBytesSync());
+    return answer == null ? true : answer!();
+  }
+}
+
+/// A disk with no room for a plain copy.
+class _NoRoomFiles implements LocalFilesService {
+  @override
+  Future<String> openCopy({required String path, required String name}) async =>
+      throw const FileSystemException('No space left on device', '', OSError('No space left on device', 28));
+
+  @override
+  Future<void> releaseCopy(String copy) async {}
+
+  @override
+  Future<void> clearCopies() async {}
+
+  @override
+  Future<Uint8List> read(String path) => File(path).readAsBytes();
+
+  @override
+  Future<void> saveTo({required String path, required String destination}) async => File(path).copySync(destination);
+
+  @override
+  Future<void> releasePicked(String path) async {}
+
+  @override
+  Future<void> clearPicked({Set<String> keep = const <String>{}}) async {}
+}

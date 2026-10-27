@@ -1,0 +1,54 @@
+@Tags(['golden'])
+library;
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/general/qr_scanner_capability.dart';
+import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
+
+import '../../../utils/golden.dart';
+
+/// The override is set inside the build thunk (runs at test time, not collection
+/// time) so each golden is deterministic regardless of host and declaration order.
+LoginPage _login({required bool scannerAvailable, LoginStatus? status}) {
+  QrScannerCapability.debugOverride = scannerAvailable;
+  return LoginPage(initialStatus: status);
+}
+
+void main() {
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    QrScannerCapability.debugOverride = null;
+    await getIt.reset();
+  });
+
+  // Mobile (2.1) and the desktop `_wide` branch (window titlebar + centered
+  // OnboardCard). Scanner present → `Scan QR` is shown.
+  goldenTest('login_page', () => _login(scannerAvailable: true));
+  goldenTestDesktop('login_page', () => _login(scannerAvailable: true));
+
+  // Windows/Linux: no camera scanner, so `Scan QR` is hidden (FR-016/FR-017).
+  goldenTest('login_page_no_scan', () => _login(scannerAvailable: false));
+  goldenTestDesktop('login_page_no_scan', () => _login(scannerAvailable: false));
+
+  // A link that will not parse. Pinned because the refusals must stay
+  // visibly different: this one means "scan it again", not "check your
+  // connection", and a shared message would lose that.
+  goldenTest('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));
+  goldenTestDesktop('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));
+
+  // A link of a version newer than this build (044, FR-017). Apart from the bad
+  // link because the next action differs: not "scan it again" - the link is
+  // fine - but "update the app".
+  goldenTest('login_page_newer_version', () => _login(scannerAvailable: true, status: LoginStatus.errorNewerVersion));
+  goldenTestDesktop('login_page_newer_version', () => _login(scannerAvailable: true, status: LoginStatus.errorNewerVersion));
+
+  // The refusals about the SERVER - an expired or rejected token, a server out
+  // of reach and why - moved to the connection screen with phase 045, which
+  // pairs; this screen only reads the link.
+}

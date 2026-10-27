@@ -1,6 +1,6 @@
 # Контракт: адаптивная оболочка (`AppShell`)
 
-> **Источник:** блюпринт `docs/patterns/mobile/05-presentation-layer.md` §6.5; требование FR-004. Референсы дизайна: десктопная раскладка — `docs/design/system/nox-desktop-screens/`; мобильный нижний бар — locked-спека `docs/design/spec/screens/tab-bar-shell.md`.
+> **Источник:** блюпринт `docs/blueprints/mobile/05-presentation-layer.md` §6.5; требование FR-004. Референсы дизайна: десктопная раскладка — `docs/design/system/nox-desktop-screens/`; мобильный нижний бар — locked-спека `docs/design/spec/screens/tab-bar-shell.md`.
 
 ## 1. Переключение — width-driven, не Platform
 

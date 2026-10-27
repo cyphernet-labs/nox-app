@@ -5,6 +5,10 @@ Per-screen export of the **desktop** app (Windows / Linux / macOS, Material 3, c
 rendered from the shared design system — not screenshots, not a copy: `index.html` mounts the real
 components from `_src/`.
 
+> **Language.** Like everything under `docs/design/system/`, this corpus stays in English as the design tool
+> exported it - `index.html`, `specs.js` and the JSX in `_src/` refer to it - an exception to the rule that
+> the team's documentation prose is Russian.
+
 ## Open `index.html`
 A screen browser:
 - **Left** — every screen, grouped (01 Chats · 02 Settings · 03 Onboarding · 04 Flows & dialogs · 05 States).
@@ -36,15 +40,20 @@ nox-desktop-screens/
 ```
 
 ## Screens
-01 Chats (list-detail) · 02 Settings (list-detail) · 03 Onboarding (Splash · Login · Set username ·
-QR scan) · 04 Flows & dialogs (Create chat · File view · Chat info / Files) · 05 Error.
+01 Chats (list-detail) · 02 Settings (list-detail, with the Devices and Connection panes) · 03 Onboarding
+(Splash · Login · QR scan · Connect · Set username) · 04 Flows & dialogs (Create chat · File view · Chat info /
+Files · Pair request) · 05 Error. Connect (`screens/11-connect.md`), Devices (`screens/09-devices.md`),
+Connection (`screens/12-connection.md`) and Pair request (`screens/13-pair-request.md`) have a behaviour spec
+only and no live design in `index.html`: their desktop goldens in the app's test suite are what pins how they
+look.
 Recoverable states (offline / loading / empty / search / snackbar) are shown as **states** of Chats
 and Settings rather than separate screens — switch them with the chips.
 
 ## Linked to the design system
 `_src/` is a **snapshot** of the live design-system components so this archive renders standalone.
-The authoritative source is the project `src/`; the same widgets are specced for Flutter in
-`nox-handoff/` (tokens, `flutter/widgets`, the adaptation table in `spec/components.md`).
+The authoritative source is the project `src/`; the same widgets are specced for Flutter in the two
+handoff packages: tokens and the adaptation table in `nox-handoff/` (`tokens/`, `spec/components.md`),
+the widgets in `nox-handoff-2/flutter/widgets`.
 
 > Icons render as glyphs in a real browser; flat screenshots may show Material Symbols ligatures as
 > text — a capture artifact only.

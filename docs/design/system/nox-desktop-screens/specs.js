@@ -28,6 +28,10 @@ window.NOX_SPECS = [
         "label": "Offline"
       },
       {
+        "key": "server-mismatch",
+        "label": "Wrong server"
+      },
+      {
         "key": "loading",
         "label": "Loading"
       },
@@ -47,22 +51,31 @@ window.NOX_SPECS = [
     "anatomy": "NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + thread pane (header, message stream capped to a ≤980 reading column, composer). The mobile bottom bar becomes the rail; full-screen list/thread become side-by-side panes.",
     "behavior": [
       "Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.",
-      "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives on the rail.",
-      "Thread header is persistent (avatar, members, search/folder/info actions) — a desktop affordance the mobile thread lacks.",
-      "Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.",
+      "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives in the chat-list pane header.",
+      "Thread header is persistent (avatar + chat name + a disabled Invite a person action + an info action). Phase 037: two actions, not one, and the reason there is no member list is that the machine holds one person — not the revoked open-space model. No per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
+      "Offline: the banner appears in both panes — “No connection”, or the cause when the app can tell (phase 045), with the same wifi_off glyph: “Can't reach the server directly. Turn on Use Tor to connect through Tor.” · “No server answers at this onion address. Check the address and that Tor is running on the server.” · “Your server isn't answering through Tor right now. Check that it is running.” · “Can't connect to the Tor network. Check your internet connection.” · “This isn't a valid onion address.” The connection never holds either pane: what the device holds shows at once, the server's answer arrives in the background. Loading: spinner in the list pane only while the device holds no chats and the server is being asked.",
+      "Try again on No connection (phase 042), in both panes: It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
+      "Messages in the thread pane follow 5.2, including a file's bytes in transit: a ring on a contrasting disc over a picture being sent, “Sending… 45%” over a bar in any other file's chip, a filling ring in a received picture's placeholder. An own message typed on another device of the same person carries the sent tick.",
+      "Wrong server: the server behind the ONION address proved another key — “This onion address belongs to a different server.” with Try again and the error glyph, in both panes, INSTEAD of the offline banner.",
       "Search filters the list pane in place; no match → “No chats found”.",
+      "A chat the server does not have yet (phase 041), as on the phone: a clock in place of the time while it waits; the error glyph and “Name already taken” / “Couldn't create” once refused. In the thread pane ONE notice under the ThreadHeader: wrong server → name taken (Rename) → refused (Try again) → waiting (only while the channel is not current, instead of “No connection”) → “No connection”, or its cause when known.",
       "Transient feedback floats as a Snackbar centered over the thread pane."
     ],
     "navigation": [
       "Row → loads thread in right pane.",
-      "Rail + → Create chat dialog (04).",
-      "Thread folder/info → Chat info drawer (04).",
+      "Pane-header + → Create chat dialog (04).",
+      "Thread header (avatar / chat name / info action) → Chat card / Chat info (04). The Invite a person action beside it is permanently disabled and leads nowhere: the relay it needs does not exist yet.",
       "Attachment / file bubble → File view lightbox (04)."
     ],
     "copy": [
       "Pane titles: Chats",
       "No-selection: Select a chat / Choose a conversation on the left, or press + to start a new one.",
-      "Thread sub: Aria, Mox and you"
+      "Invite action: Invite a person (always disabled)",
+      "Waiting chat, clock (screen-reader name): Waiting to be created",
+      "Refused chat, status line: Name already taken · Couldn't create",
+      "Thread notices: This chat isn't on your server yet. It will be once NOX connects. / Another chat already has this name. Rename this one to finish creating it. · Rename / This chat couldn't be created on your server. · Try again",
+      "Offline banner: No connection, or its cause when known / Try again",
+      "Wrong-server banner: This onion address belongs to a different server. / Try again"
     ],
     "ds": [
       "NavRail",
@@ -121,20 +134,18 @@ window.NOX_SPECS = [
       {
         "key": "logout",
         "label": "Logout dialog"
-      },
-      {
-        "key": "qr",
-        "label": "QR dialog"
       }
     ],
-    "anatomy": "NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.",
+    "anatomy": "NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a bare leading glyph, transparent until selected; three groups - Account, Devices, Connection · Notifications, Appearance, Language · Terms, About; Log out pinned to the foot in error) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.",
     "behavior": [
       "Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.",
-      "Account: identity card; by default the ID stays masked and the account QR is shown inline (no secret reveal on desktop). Editing → inline name field.",
+      "Account: identity card carrying the name and the public ID. Editing → inline name field.",
+      "No role badge and no People menu item, at both widths: the machine holds one person, so such a mark would separate nothing.",
+      "Connection (phase 045): the third item of the first group (glyph lan, filled when selected); its pane holds the server address, the onion address and Use Tor - the phone's 7.10 body (spec screens/12-connection.md).",
       "Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.",
       "Appearance: System / Light / Dark theme cards. Language: System / English / Українська.",
-      "Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.",
-      "Show QR → centered Dialog with the brand-fixed white QR card (mobile bottom-sheet → dialog)."
+      "Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error. Confirming revokes this device's key over a live connection, then wipes the session and all local data; until that ends the dialog stays up and modal, with a spinner in place of its Log out button. A logout that fails closes the dialog and says “Could not log out. Please try again.” in a snackbar.",
+      "No mask and no account QR: the ID is public. A device is added from the Devices pane, which the Devices menu item selects: its Add a device mints an invite with a one-shot token."
     ],
     "navigation": [
       "Menu item → swaps detail pane.",
@@ -142,22 +153,21 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Pane title: Settings",
-      "Account QR caption: Show this code to let someone add you",
-      "Logout: Log out? / Your ID and local data will be removed from this device."
+      "Logout: Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.",
+      "Logout error (snackbar): Could not log out. Please try again."
     ],
     "ds": [
       "NavRail",
       "PaneHeader",
       "SettingsNavItem",
       "IdentityCard",
-      "FakeQR (brand white)",
       "SettingsGroup / SettingsSwitchRow / LangRow",
       "ThemeOptionCard",
       "InfoBanner",
       "TermsBody",
-      "LogoutDialog / CenteredQR"
+      "LogoutDialog"
     ],
-    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · ID masked + account QR by default"
+    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths"
   },
   {
     "id": "d-splash",
@@ -177,8 +187,8 @@ window.NOX_SPECS = [
       "Same role as mobile 1.1. Chrome hidden; brand-fixed dark, not themed. One-shot reveal."
     ],
     "navigation": [
-      "Valid ID → Chats (01).",
-      "No ID → Login (03)."
+      "Same routes as mobile 1.1: paired, onboarding done → Chats (01); paired, the name not yet set → Set username (03); not paired, or local data whose key is gone (wiped first) → Login (03).",
+      "A secure store that does not answer yet keeps the splash up. No route to Error (05)."
     ],
     "copy": [
       "Wordmark: NOX"
@@ -196,7 +206,7 @@ window.NOX_SPECS = [
     "title": "Login",
     "group": "03 · Onboarding",
     "frame": "window",
-    "purpose": "Sign in with an ID on desktop — a centered card on an empty window.",
+    "purpose": "Take a pairing link on desktop — a centered card on an empty window — and hand a readable link to Connect.",
     "states": [
       {
         "key": "filled",
@@ -207,32 +217,28 @@ window.NOX_SPECS = [
         "label": "Empty"
       },
       {
-        "key": "loading",
-        "label": "Submitting"
-      },
-      {
         "key": "error-format",
-        "label": "Format error"
-      },
-      {
-        "key": "error-net",
-        "label": "Network error"
+        "label": "Not a pairing link"
       }
     ],
-    "anatomy": "Title bar (NOX · Sign in) + centered OnboardCard (440): logo + wordmark + brand hairline, mono multiline ID field, “Sign in”, “Scan QR”.",
+    "anatomy": "Title bar (NOX — Sign in) + centered OnboardCard (440): logo + wordmark + brand hairline, mono multiline “Pairing link” field, “Sign in”, then “Scan QR” (macOS) or “Use a QR image” (Windows, Linux).",
     "behavior": [
-      "Same field rules as mobile 2.1 (mono, multiline, paste, validation, loading), re-laid into a centered card.",
-      "Empty → Sign in disabled. Submitting → button spinner. Format/network errors → inline errorText."
+      "Same field rules as mobile 2.1 (mono, multiline, paste), re-laid into a centered card.",
+      "Empty → Sign in disabled. Sign in reads the link and dials nothing: “This isn't a pairing link” or “This link needs a newer version of NOX. Update the app and try again.” inline; a readable link opens Connect at once (phase 045).",
+      "Use a QR image (Windows, Linux): a link read from the picked image takes the path of a pasted one; an image with no link → snackbar “Couldn't read a pairing link from that image.”",
+      "A wait for approval the app was closed in goes on (phase 046): as this screen opens it hands that link to Connect, which presents it again at once with the same settings. A wait whose time ran out is not offered."
     ],
     "navigation": [
-      "Success → Set username (03) or Chats (01).",
-      "Scan QR → QR scan (03)."
+      "Readable link → Connect (spec screens/11-connect.md).",
+      "A wait the app was closed in, still within its time → Connect at once.",
+      "Scan QR → QR scan (03), macOS."
     ],
     "copy": [
-      "Label: Your ID",
+      "Label: Pairing link",
+      "Placeholder: Paste the link from your server",
       "Primary: Sign in",
-      "Secondary: Scan QR",
-      "Errors: Invalid identifier · Network error. Try again."
+      "Secondary: Scan QR · Use a QR image",
+      "Errors: This isn't a pairing link · This link needs a newer version of NOX. Update the app and try again."
     ],
     "ds": [
       "DesktopWindow + TitleBar",
@@ -296,7 +302,7 @@ window.NOX_SPECS = [
     "title": "QR scan",
     "group": "03 · Onboarding",
     "frame": "window",
-    "purpose": "Scan an ID QR with the webcam, or fall back to manual entry.",
+    "purpose": "Scan a pairing link's QR code with the webcam (macOS), or fall back to manual entry.",
     "states": [
       {
         "key": "scan",
@@ -309,17 +315,17 @@ window.NOX_SPECS = [
     ],
     "anatomy": "Title bar (NOX · Scan QR) + centered viewfinder (300, brand-white corners) + helper with a manual-entry link. Denied → OnboardCard with no_photography + Open settings.",
     "behavior": [
-      "Webcam feed inside the viewfinder; valid code signs in. Manual-entry link routes to Login.",
+      "Webcam feed inside the viewfinder; a scanned pairing link goes into the Login field and Login opens Connect at once (phase 045). Manual-entry link routes to Login.",
       "Permission denied → card with explanation + Open settings (system)."
     ],
     "navigation": [
-      "Valid scan → Set username / Chats.",
+      "Valid scan → Login (03), which opens Connect at once.",
       "Enter manually → Login (03).",
       "Open settings → OS settings."
     ],
     "copy": [
       "Title: Scan a QR code",
-      "Helper: Point your webcam at a code, or enter the ID manually.",
+      "Helper: Point your webcam at the code, or paste the pairing link.",
       "Denied: Camera access needed / To scan a QR code, allow camera access in system settings. / Open settings"
     ],
     "ds": [
@@ -364,10 +370,11 @@ window.NOX_SPECS = [
     "anatomy": "Scrim + centered Dialog (460): “New chat”, chat-name field (counter N/64), Cancel + Create.",
     "behavior": [
       "Mobile’s pushed 6.1 screen becomes a centered dialog over the (deselected) chats window.",
-      "Same validation: ≤64 chars, live uniqueness (spinner), taken → error + Create disabled, submitting → spinner."
+      "Same validation: ≤64 chars, live uniqueness (spinner) — the local store always, the server only when it can answer at once — taken → error + Create disabled.",
+      "Create never waits for the server (phase 041): the chat is made on this device under an id minted there and opens at once; the outgoing queue creates it on the server before its messages. A name taken by then marks the chat for a rename."
     ],
     "navigation": [
-      "Create → opens the new thread in the right pane.",
+      "Create → opens the new thread in the right pane, at once.",
       "Cancel / scrim → dismiss."
     ],
     "copy": [
@@ -404,7 +411,8 @@ window.NOX_SPECS = [
     ],
     "anatomy": "Heavier scrim + centered lightbox (520): header (type icon, name, download, close), large type glyph, name, size, Download.",
     "behavior": [
-      "No content preview (type glyph). Downloading → determinate progress bar + “Downloading… N%”. Loaded → size + Download."
+      "No content preview (type glyph). Downloading → determinate progress bar + “Downloading… N%”. Loaded → size + Download.",
+      "A broken link is not an error (phase 043): the bar stands still and the download goes on by itself from the byte it reached - and on after the screen is closed; reopened, it shows the same download where it stands. The error with Try again appears only once the server has refused again and again, and Try again goes on from the bytes already on the device."
     ],
     "navigation": [
       "Close / scrim → back to the thread.",
@@ -443,21 +451,35 @@ window.NOX_SPECS = [
       {
         "key": "empty",
         "label": "Empty"
+      },
+      {
+        "key": "server-mismatch",
+        "label": "Wrong server"
       }
     ],
-    "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name/members, “Files” with List/Grid toggle, file rows or 2-col grid.",
+    "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “People” (one row — the person this machine belongs to — plus a disabled Invite a person button and its caption), hairline, “Files” with List/Grid toggle, file rows or 2-col grid. The body is one scroll.",
     "behavior": [
-      "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state."
+      "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state.",
+      "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
+      "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all.",
+      "No connection: the strip at the top of the drawer, saying the cause in place of “No connection” when the app can tell (phase 045). It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
+      "Wrong server: “This onion address belongs to a different server.” with Try again and the error glyph, at the top of the drawer, INSTEAD of the offline strip."
     ],
     "navigation": [
-      "Opened from the thread header info/folder action.",
+      "Opened from the thread header info action (folder-open icon).",
       "File row / cell → File view lightbox.",
       "Close / scrim → dismiss."
     ],
     "copy": [
       "Title: Details",
+      "Section: People",
+      "Person row: the person this machine belongs to (label only, no id)",
+      "Button (disabled): Invite a person",
+      "Caption: Available in a future version",
       "Section: Files",
-      "Empty: No files yet / Files sent in this chat will appear here."
+      "Empty: No files yet / Files sent in this chat will appear here.",
+      "Offline strip: No connection, or its cause when known / Try again",
+      "Wrong-server banner: This onion address belongs to a different server. / Try again"
     ],
     "ds": [
       "ChatsDesktop (base)",

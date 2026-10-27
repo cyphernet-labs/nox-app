@@ -1,0 +1,278 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/service/phase_connection_status_service.dart';
+import 'package:nox_app/data/service/session_phase_service_impl.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
+import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
+
+import '../../../utils/fixed_connection_status.dart';
+import '../../../utils/fixed_session_phase.dart';
+import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
+
+void main() {
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    await getIt.reset();
+  });
+
+  group('ChatsListPage (mobile)', () {
+    Future<void> pumpMobile(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+      // The list now fetches its page on every open (read-through), so the test
+      // has to wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('shows the NOX wordmark, the search field and chat rows', (tester) async {
+      await pumpMobile(tester);
+
+      expect(find.byType(AppWordmarkWidget), findsWidgets);
+      expect(find.byType(AppSearchFieldWidget), findsOneWidget);
+      expect(find.byType(AppChatItemWidget), findsWidgets);
+    });
+
+    testWidgets('tapping a chat opens the real chat thread (5.2)', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ChatThreadPage), findsOneWidget);
+    });
+
+    testWidgets('search filters the list by chat name', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.enterText(find.byType(AppSearchFieldWidget), 'Design');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      expect(find.text('Design crit'), findsOneWidget);
+      expect(find.text('NOX core'), findsNothing);
+    });
+
+    testWidgets('search with no match shows the empty result text', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.enterText(find.byType(AppSearchFieldWidget), 'zzzznomatch');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      expect(find.text(l10nEn.chatsSearchEmpty), findsOneWidget);
+      expect(find.byType(AppChatItemWidget), findsNothing);
+    });
+
+    testWidgets('mobile account affordance (N4): the app-bar avatar appears and taps through to onAccount', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var accountTaps = 0;
+      await pumpApp(tester, ChatsListPage(inShell: true, accountLabel: 'Aria Vale', onAccount: () => accountTaps++));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      // The avatar renders in the app bar (tooltip = the Account section title).
+      final avatar = find.byTooltip(l10nEn.settingsAccountTitle);
+      expect(avatar, findsOneWidget);
+
+      await tester.tap(avatar);
+      await tester.pump();
+      expect(accountTaps, 1); // hands off to the shell (switch to Settings + jump to Account)
+    });
+
+    testWidgets('mobile account affordance is absent when the shell supplies no account identity', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage(inShell: true)); // no accountLabel/onAccount
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip(l10nEn.settingsAccountTitle), findsNothing);
+    });
+  });
+
+  group('ChatsListPage (desktop)', () {
+    Future<void> pumpDesktop(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+      // The list now fetches its page on every open (read-through), so the test
+      // has to wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('renders the list-detail with a no-selection placeholder', (tester) async {
+      await pumpDesktop(tester);
+
+      expect(find.byType(AppListDetailWidget), findsOneWidget);
+      expect(find.text(l10nEn.chatsNoSelectionTitle), findsOneWidget);
+    });
+
+    testWidgets('selecting a row loads the real thread pane without a push', (tester) async {
+      await pumpDesktop(tester);
+
+      await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      // No-selection placeholder is gone (the thread pane swapped) and no push happened.
+      expect(find.text(l10nEn.chatsNoSelectionTitle), findsNothing);
+      expect(find.byType(ChatsListPage), findsOneWidget);
+      expect(find.byType(ChatThreadPage), findsNothing); // pane swap, not a push
+      expect(find.byType(AppThreadViewWidget), findsOneWidget);
+    });
+
+    testWidgets('desktop selection fills the row with secondaryContainer', (tester) async {
+      await pumpDesktop(tester);
+
+      await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
+
+      final scheme = Theme.of(tester.element(find.byType(AppChatItemWidget).first)).colorScheme;
+      Material rowMaterial(int i) =>
+          tester.widget<Material>(find.ancestor(of: find.byType(AppChatItemWidget).at(i), matching: find.byType(Material)).first);
+
+      expect(rowMaterial(0).color, scheme.secondaryContainer); // selected row is filled
+      expect(rowMaterial(1).color, Colors.transparent); // a sibling row stays transparent
+    });
+  });
+
+  group('No connection (phase 042)', () {
+    late FixedSessionPhaseService phase;
+
+    Future<void> pumpWith(WidgetTester tester, SessionPhase initial, {Size size = const Size(420, 900)}) async {
+      phase = FixedSessionPhaseService(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      addTearDown(() => getIt.registerSingleton<SessionPhaseService>(ConnectivitySessionPhaseService()));
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+    }
+
+    Finder tryAgain() => find.widgetWithText(TextButton, l10nEn.actionTryAgain);
+
+    testWidgets('the strip offers Try again, and pressing it asks for another attempt', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpWith(tester, SessionPhase.disconnected);
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+      expect(tryAgain(), findsOneWidget);
+      final size = tester.getSize(tryAgain());
+      expect(size.height, greaterThanOrEqualTo(48));
+      expect(size.width, greaterThanOrEqualTo(48));
+      final node = tester.getSemantics(tryAgain());
+      expect(node.label, contains(l10nEn.actionTryAgain));
+      expect(node.getSemanticsData().flagsCollection.isButton, isTrue);
+
+      await tester.tap(tryAgain());
+      await tester.pump();
+
+      expect(phase.reconnects, 1);
+      semantics.dispose();
+    });
+
+    testWidgets('on desktop both panes offer it', (tester) async {
+      await pumpWith(tester, SessionPhase.disconnected, size: const Size(1200, 900));
+
+      expect(tryAgain(), findsNWidgets(2));
+    });
+
+    testWidgets('a server that refuses this build: the strip, and nothing to press', (tester) async {
+      await pumpWith(tester, SessionPhase.unsupported);
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+      expect(tryAgain(), findsNothing);
+    });
+
+    testWidgets('while an attempt is under way: neither the strip nor the action', (tester) async {
+      await pumpWith(tester, SessionPhase.connecting);
+
+      expect(find.text(l10nEn.noConnection), findsNothing);
+      expect(tryAgain(), findsNothing);
+    });
+
+    testWidgets('another server behind the onion address says so, with Try again (phase 045)', (tester) async {
+      await pumpWith(tester, SessionPhase.serverMismatch);
+
+      expect(find.text(l10nEn.connectionProblemOtherServer), findsOneWidget);
+      expect(find.text(l10nEn.noConnection), findsNothing);
+      expect(tryAgain(), findsOneWidget);
+    });
+  });
+
+  group('why there is no connection (phase 045)', () {
+    Future<void> pumpWith(WidgetTester tester, ConnectionStatus status, {Size size = const Size(420, 900)}) async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(FixedConnectionStatusService(status));
+      addTearDown(() => getIt.registerSingleton<ConnectionStatusService>(PhaseConnectionStatusService()));
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+    }
+
+    Finder tryAgain() => find.widgetWithText(TextButton, l10nEn.actionTryAgain);
+
+    for (final (problem, text) in [
+      (ConnectionProblem.invalidOnion, l10nEn.connectionProblemInvalidOnion),
+      (ConnectionProblem.onionNotFound, l10nEn.connectionProblemOnionNotFound),
+      (ConnectionProblem.onionUnreachable, l10nEn.connectionProblemOnionUnreachable),
+      (ConnectionProblem.torNetwork, l10nEn.connectionProblemTorNetwork),
+      (ConnectionProblem.turnOnTor, l10nEn.connectionProblemTurnOnTor),
+    ]) {
+      testWidgets('${problem.name}: the strip says its own message in place of No connection, and Try again stays', (tester) async {
+        await pumpWith(tester, ConnectionStatus(state: LinkState.offline, problem: problem));
+
+        expect(find.text(text), findsOneWidget);
+        expect(find.text(l10nEn.noConnection), findsNothing);
+        expect(tryAgain(), findsOneWidget);
+      });
+    }
+
+    testWidgets('with no known cause the strip still says No connection', (tester) async {
+      await pumpWith(tester, const ConnectionStatus(state: LinkState.offline));
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+    });
+  });
+}

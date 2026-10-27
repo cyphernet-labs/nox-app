@@ -66,8 +66,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
                 items: r.updatedList,
                 pagingState: r.pagingState,
                 nextPage: r.nextPage ?? live.nextPage,
-                isLastPage: metadata.nextPage == null,
-                total: metadata.total,
+                isLastPage: !metadata.hasMore,
                 loadingInProgress: false,
               ),
             );

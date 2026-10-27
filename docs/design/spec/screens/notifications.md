@@ -6,7 +6,9 @@
 
 Подраздел настроек 7.1. **Один переключатель push-уведомлений** — on / off. Никаких дополнительных параметров (preview, sound, vibration, quiet hours) на этом этапе **не предусмотрено**.
 
-Push приходят **только по «своим» чатам** — созданным с этого устройства либо тем, в которых пользователь писал / которые открывал (см. [overview.md / Настройки](../overview.md#настройки)). Глобального флуда по всем чатам нет; переключатель управляет push для этого набора.
+Push приходят по всем чатам своего сервера: на личном сервере все чаты свои, отбирать не из чего (см. [overview.md / Настройки](../overview.md#настройки)). Переключатель управляет push целиком.
+
+**Системного запроса разрешения нет.** Пока не решено, как доставляются push ([Q2 реестра открытых вопросов](../../../client-backend/open-questions.md)), приложение разрешения у ОС не спрашивает: экран только читает его статус и, если ОС уведомления не разрешает, ведёт в системные настройки кнопкой `Open settings`.
 
 ## Контекст и переходы
 
@@ -21,17 +23,16 @@ Material Scaffold; адаптируется под тему. Сверху вни
 
 - **AppBar (M3):** title `Notifications`, back-стрелка.
 - **Body:**
-  - При permission-denied (системный отказ ОС) — `MaterialBanner` наверху с пояснением и кнопкой `Open settings`.
-  - **Единственный `SwitchListTile`** `Enable notifications` (on / off).
+  - При permission-denied (системный отказ ОС) — **карточка-уведомление наверху**: глиф `notifications_off`, заголовок, пояснение и кнопка `Open settings`. Та же геометрия, что у всех карточек экранов настроек (радиус `lg`, тот же отступ 16, которым группа отделяет себя от краёв), фон `surfaceContainer` — на ступень иной, чем `surfaceContainerLow` группы, чтобы читаться как заметка **о** строках ниже, а не как одна из них. Кнопка — на своей строке под текстом, **у правого края**. Полноширинная полоса `MaterialBanner` здесь не используется: на экране из карточек она выглядела бы чужеродно; её место — полоса «нет связи» под хромом чатов.
+  - **Единственный `SwitchListTile`** `Enable notifications` (on / off) с подписью `For new messages in your chats` и ведущим глифом-колокольчиком (22, `onSurfaceVariant`, без круглой подложки) — как во всех строках настроек (решения владельца 2026-09-20).
 
 ## Состояния
 
 | Состояние | Описание |
 |---|---|
 | Loaded (permission OK) | Виден `SwitchListTile`; пользователь управляет переключателем. |
-| Loaded (permission denied) | Banner поверх; switch остаётся, но эффект ограничен системной настройкой. |
-| Permission-prompt | Системный диалог разрешения push (управляется ОС). |
-| Inline-error | Не удалось сохранить — snackbar. |
+| Loaded (permission denied) | Карточка-уведомление сверху; switch остаётся, но выключен и недоступен — включить его может только системная настройка. |
+| Inline-error | Не удалось сохранить — переключатель возвращается в прежнее положение, snackbar. |
 
 ## Взаимодействия
 
@@ -43,7 +44,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 
 - `Scaffold`.
 - `AppBar` (M3) с back-стрелкой и title.
-- `MaterialBanner` (M3) — permission-denied состояние.
+- `AppInfoBannerWidget` — карточка-уведомление permission-denied состояния.
 - `SwitchListTile` (M3) — единственный переключатель.
 - `SnackBar` (M3) — обратная связь.
 
@@ -54,16 +55,18 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | AppBar title | `Notifications` |
 | AppBar back tooltip | `Back` |
 | Switch label | `Enable notifications` |
+| Switch supporting text | `For new messages in your chats` |
 | Permission banner title | `Notifications are blocked` |
 | Permission banner message | `Allow notifications in system settings to receive messages from your chats.` |
 | Permission banner action | `Open settings` |
 | Inline-error snackbar | `Could not save. Try again.` |
 
-## Принятые решения (Q1–Q4)
+## Принятые решения (Q1–Q5)
 
 | # | Вопрос | Решение |
 |---|---|---|
 | Q1 | Master toggle | Есть, и это **единственный** контрол на экране |
 | Q2 | Дополнительные параметры | Нет — только push on/off (preview / sound / vibration / quiet hours **исключены**) |
-| Q3 | Permission-denied | `MaterialBanner` сверху списка с кнопкой `Open settings` |
-| Q4 | Scope уведомлений | Только «свои» чаты (созданные / писал / открывал) |
+| Q3 | Permission-denied | Карточка-уведомление сверху списка с кнопкой `Open settings` |
+| Q4 | Scope уведомлений | Все чаты своего сервера: на личном сервере чужих чатов нет, отбирать не из чего (решение владельца 2026-09-10) |
+| Q5 | Системный запрос разрешения push | Нет, пока не решён Q2 реестра (доставка push): статус разрешения только читается, при отказе — `Open settings` |

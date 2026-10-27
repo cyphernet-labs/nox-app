@@ -62,8 +62,9 @@ other→draft, to match the shipped SVG set.)
 
 ### Text field — `TextField` (outlined) · *stock*
 - **Use:** `TextField(decoration: InputDecoration(labelText: …, helperText: …, counterText: …))`.
-  Mono ID field (7.1): `style: TextStyle(fontFamily: noxMonoFamily)`. Availability check → put a
-  `NoxSpinner(size:18)` in `InputDecoration.suffixIcon`.
+  Mono pairing-link field (2.1): `style: TextStyle(fontFamily: noxMonoFamily)`. Availability check
+  (chat names, 6.1 — person names are not checked) → put a `NoxSpinner(size:18)` in
+  `InputDecoration.suffixIcon`.
 - **Bindings:** shape `xs`, border `outline` → focus `primary` (2dp) → error `error`; helper/counter
   `onSurfaceVariant`. All set in `inputDecorationTheme`.
 
@@ -110,8 +111,12 @@ send active → `primary` filled, else `onSurface`@38%.
   VoidCallback? onAttach, VoidCallback? onSend})`
 
 ### NoxEmptyState — empty list state · *custom*
-Illustration placeholder (thin outline + brand accents) + headline + message. Swap the placeholder
-box for a real SVG (`nox-assets/illustrations`) when art ships.
+Outlined 132 box (radius 20, 1.5 `outlineVariant`) holding a 56 glyph, with two brand accents pinned
+inside it — teal 14 top-right, gold 10 bottom-left — over a headline and a message.
+This composition IS the empty-state art, not a placeholder for an illustration: the three SVGs in
+`nox-assets/illustrations` read at 132 as a rendering fault rather than as art, and the screens were
+designed around the box. The app (`AppEmptyContentWidget`) draws the box; none of the three ships with
+it - they stay in the corpus as sketches, and no illustration is ordered.
 - **API:** `NoxEmptyState({required IconData glyph, required String title, required String message})`
 
 ### NoxSegmented — single-select segmented · *stock wrapper*
@@ -154,7 +159,8 @@ Neutral = `inverseSurface`/`onInverseSurface`, action `inversePrimary`; error =
 | Widget | Flutter | Bindings |
 |---|---|---|
 | Confirm dialog (Logout) | `AlertDialog` | `surfaceContainerHigh`, shape `xl`, elev 5; title `headlineSmall`, body `bodyMedium`, destructive action `error`. Set in `dialogTheme`. |
-| Bottom sheet (QR 7.1) | `showModalBottomSheet` | `surface`, shape `xl` top, elev 5. **QR card inside is brand-fixed white** (`NoxBrand.qrSurface`). Set in `bottomSheetTheme`. |
+| Bottom sheet (connection info, 5.1 / 5.2 corner) | `showModalBottomSheet` | `surface`, shape `xl` top, elev 5. Set in `bottomSheetTheme`. |
+| QR card (device invite, 7.8) | `Card` | **The QR surface inside is brand-fixed white** (`NoxBrand.qrSurface`, modules `NoxBrand.qrInk`). |
 | Card (identity 7.1) | `Card` | `surfaceContainerLow`, shape `m`, elev 1. Set in `cardTheme`. |
 
 ---

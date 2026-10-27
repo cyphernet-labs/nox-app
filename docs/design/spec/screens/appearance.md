@@ -18,28 +18,28 @@
 Material Scaffold; адаптируется под текущую тему (обновляется immediately при выборе). Сверху вниз:
 
 - **AppBar (M3):** title `Appearance`, back-стрелка.
-- **Body:** `ListView` с тремя `RadioListTile`:
-  - `System` (по умолчанию);
-  - `Light`;
-  - `Dark`.
+- **Body:** `ListView` с тремя карточками-опциями `AppSelectOptionWidget` (корпус `nox-mobile-screens/screens/7-3-appearance.md`): слева превью-плитка 96×76 — мини-чат в цветах темы (у `System` — диагональный раздел светлой и тёмной), всегда в фиксированных схемах, а не в текущей теме; затем подпись и подзаголовок; справа радио-точка. Выбранная карточка — обводка `primary` + заливка `surfaceContainerHigh`, остальные — hairline `outlineVariant`:
+  - `System` (по умолчанию) — `Match your device`;
+  - `Light` — `Always light`;
+  - `Dark` — `Always dark`.
 
 ## Состояния
 
 | Состояние | Описание |
 |---|---|
 | Loaded | Опции отображаются; текущая selected. |
-| Inline-error | Не удалось сохранить — snackbar. |
+| Inline-error | Не удалось сохранить — тема возвращается к прежней, snackbar. |
 
 ## Взаимодействия
 
-- **Тап на `RadioListTile`** → переключение темы **immediately (live preview)** + сохранение.
+- **Тап на карточку** → переключение темы **immediately (live preview)** + сохранение.
 - **Тап на back** → 7.1.
 
 ## Material-компоненты
 
 - `Scaffold`.
 - `AppBar` (M3) с back-стрелкой и title.
-- `RadioListTile` (M3) — три опции.
+- `AppSelectOptionWidget` — три карточки-опции (общий виджет с 7.4; `InkWell` + `Semantics(button, selected)`).
 - `SnackBar` (M3) — обратная связь.
 
 ## Микрокопирайт
@@ -48,15 +48,15 @@ Material Scaffold; адаптируется под текущую тему (об
 |---|---|
 | AppBar title | `Appearance` |
 | AppBar back tooltip | `Back` |
-| Option: System | `System` |
-| Option: Light | `Light` |
-| Option: Dark | `Dark` |
+| Option: System | `System` · `Match your device` |
+| Option: Light | `Light` · `Always light` |
+| Option: Dark | `Dark` · `Always dark` |
 | Inline-error snackbar | `Could not save. Try again.` |
 
 ## Принятые решения (Q1–Q3)
 
 | # | Вопрос | Решение |
 |---|---|---|
-| Q1 | UI выбора темы | 3 `RadioListTile` |
+| Q1 | UI выбора темы | 3 карточки-опции с превью темы и радио-точкой (по мобильному корпусу) |
 | Q2 | Дополнительные параметры | Только тема (без accent / font size) |
 | Q3 | Apply behavior | Immediately (live preview) |

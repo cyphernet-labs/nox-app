@@ -7,7 +7,7 @@
 **Adaptation from mobile.** mobile 3.1 → full-window centered state
 
 ## Anatomy
-Title bar (NOX · Error) + centered error glyph (96) + title + message + “Try again”.
+Title bar (NOX — Error) + centered error glyph (96) + title + message + “Try again”.
 
 ## States
 - `default` — Error
@@ -19,7 +19,7 @@ Title bar (NOX · Error) + centered error glyph (96) + title + message + “Try 
 - Try again → re-runs the failed action.
 
 ## Copy (EN)
-- Default: Something went wrong / Please try again. · Action: Try again
+- Default: Something went wrong / An unexpected error occurred. Please try again. · Action: Try again
 
 ## Design-system components
 - DesktopWindow + TitleBar

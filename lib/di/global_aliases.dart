@@ -1,6 +1,14 @@
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/app_state_repository.dart';
+import 'package:nox_app/domain/repository/app/auth_repository.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/item/item_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/repository/qr/camera_permission_service.dart';
+import 'package:nox_app/domain/repository/settings/settings_repository.dart';
+import 'package:nox_app/domain/service/notification_permission_service.dart';
+import 'package:nox_app/domain/service/qr_image_decode_service.dart';
 
 /// Convenience getters over the DI container.
 /// Cross-cutting
@@ -8,3 +16,19 @@ LogRepository get logRepository => getIt<LogRepository>();
 
 /// Repositories
 ItemRepository get itemRepository => getIt<ItemRepository>();
+SettingsRepository get settingsRepository => getIt<SettingsRepository>();
+ChatRepository get chatRepository => getIt<ChatRepository>();
+
+/// App-state spine
+AppStateRepository get appStateRepository => getIt<AppStateRepository>();
+AuthRepository get authRepository => getIt<AuthRepository>();
+SessionRepository get sessionRepository => getIt<SessionRepository>();
+
+/// QR scan (2.2) — permission service resolved by the scanner widget.
+CameraPermissionService get cameraPermissionService => getIt<CameraPermissionService>();
+
+/// Notifications (7.2) — OS notification-permission service resolved by the screen.
+NotificationPermissionService get notificationPermissionService => getIt<NotificationPermissionService>();
+
+/// QR sign-in from a picked image (2.1, Windows/Linux) — resolved by the Login screen.
+QrImageDecodeService get qrImageDecodeService => getIt<QrImageDecodeService>();

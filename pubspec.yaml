@@ -2,17 +2,28 @@ name: nox_app
 description: "NOX secure messenger."
 publish_to: 'none'
 
-# CalVer + shifted-epoch build (YY.M.D+EPOCH; см. docs/patterns/mobile/09-build-and-secrets-infra.md §9).
+# CalVer + shifted-epoch build (YY.M.D+EPOCH; см. docs/blueprints/mobile/09-build-and-secrets-infra.md §9).
 version: 26.1.1+0
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
   flutter: 3.44.1
 
+# The embedded Tor client lives in its own package because its native-assets
+# build hook belongs to a package (phase 040, specs/040-tor-app/plan.md).
+workspace:
+  - packages/nox_tor
+
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   cupertino_icons: ^1.0.9
+
+  # --- Embedded Tor client (Arti, phase 040) ---
+  nox_tor:
+    path: packages/nox_tor
 
   # --- State management ---
   flutter_bloc: 9.1.1
@@ -32,6 +43,9 @@ dependencies:
 
   # --- Network ---
   dio: ^5.9.2
+  # Contract v0 travels over a WebSocket envelope (feature 026). Pinned to the
+  # version already present transitively so promoting it moves no other package.
+  web_socket_channel: 3.0.3
 
   # --- Pagination / UI list ---
   infinite_scroll_pagination: 5.1.1
@@ -49,14 +63,29 @@ dependencies:
   flutter_secure_storage: ^10.3.1   # desktop: macOS Keychain / Windows DPAPI / Linux libsecret
   sembast: ^3.8.8
   path_provider: 2.1.5
+  # The data folder on Windows moves to the local application data (phase
+  # 048), for path_provider's every caller: its platform interface to install
+  # the override, its Windows implementation to extend. Pinned to what
+  # path_provider already resolves, so promoting them moves nothing.
+  path_provider_platform_interface: 2.1.2
+  path_provider_windows: 2.3.0
 
   # --- Misc ---
   logger: ^2.7.0
   package_info_plus: ^10.1.0
 
+  # --- Camera / QR (010-qr-login) ---
+  mobile_scanner: ^7.2.0        # camera QR scan; iOS/Android/macOS only, NO Windows/Linux (capability-gated, build-safe)
+  permission_handler: ^12.0.3   # camera permission status/request/openAppSettings; iOS/Android only (macOS unsupported)
+  qr_flutter: ^4.1.0            # pure-Dart QR render (Show QR); all 5 platforms, no native plugin
+  zxing2: ^0.2.3                # pure-Dart QR DECODE from a picked image (P14); Windows/Linux QR sign-in (no camera plugin there)
+  file_selector: ^1.1.0
+  connectivity_plus: ^7.3.1
+  video_player: ^2.14.0
+
   # --- Feature-gated (mobile-only / activated with the corresponding blueprint doc) ---
   # firebase_core / firebase_messaging — push (mobile-only; desktop = disabled no-op)
-  # permission_handler, file_picker, image_picker, connectivity_plus, mixpanel_flutter
+  # file_picker, image_picker, connectivity_plus, mixpanel_flutter
 
 dev_dependencies:
   flutter_test:
@@ -73,13 +102,49 @@ dev_dependencies:
   mockito: ^5.6.4   # 5.6.5+ needs analyzer ^13 which conflicts with injectable_generator (analyzer <13)
   bloc_test: ^10.0.0
 
+  # Launcher-icon regeneration (NOT run in 008-app-icons — current install is a drop-in of the
+  # hand-crafted set in docs/design/system/nox-app-icons/; see contracts/flutter-launcher-icons.md).
+  # Kept as the reproducible regen path for the final vector logo (then switch bg to brand #0C2424).
+  flutter_launcher_icons: ^0.14.4
+  file_selector_platform_interface: ^2.7.0
+  plugin_platform_interface: ^2.1.8
+
 flutter:
   uses-material-design: true
+  generate: true
   assets:
-    - assets/
     - assets/png/
-    - assets/svg/
+    - assets/svg/icons/
+    - assets/svg/flags/
     - assets/animation/
+    - assets/licenses/
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+    - family: Roboto Mono
+      fonts:
+        - asset: assets/fonts/RobotoMono-Regular.ttf
+          weight: 400
+
+# Launcher-icon regeneration config — DO NOT run the generator in 008-app-icons (it would overwrite
+# the hand-crafted per-platform set and does not cover Linux). Reproducible path for the future vector.
+flutter_launcher_icons:
+  image_path: "docs/design/system/nox-app-icons/source/icon-master-1024.png"
+  android: true
+  ios: true
+  macos:
+    generate: true
+  windows:
+    generate: true
+  adaptive_icon_background: "#151919"   # temporary (raster backdrop); switch to brand #0C2424 with the vector
+  adaptive_icon_foreground: "docs/design/system/nox-app-icons/source/icon-foreground-1024.png"
+  remove_alpha_ios: true
 
 flutter_gen:
   output: lib/design/gen/

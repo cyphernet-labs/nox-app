@@ -143,10 +143,10 @@ const ChatListItem = ({ t, name, preview, time, unread }) => (
   </div>
 );
 
-// Empty state (illustration placeholder + title + message)
+// Empty state (the art + title + message; no illustration ships)
 const EmptyState = ({ t, glyph, title, message }) => (
   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0 40px', gap: 14 }}>
-    {/* illustration placeholder: thin outline + brand accents, per §10 */}
+    {/* the art: thin outline + glyph + brand accents, per §10 */}
     <div style={{ width: 132, height: 132, borderRadius: 20, border: `1.5px solid ${t.outlineVariant}`, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
       <Icon name={glyph} size={56} color={t.onSurfaceVariant} />
       <div style={{ position: 'absolute', top: 18, right: 20, width: 14, height: 14, borderRadius: '50%', background: BRAND.teal }} />

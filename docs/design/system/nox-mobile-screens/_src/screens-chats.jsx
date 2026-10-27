@@ -14,7 +14,7 @@ const CHATS = [
 ];
 
 // ── 5.1 Chats list ───────────────────────────────────────────
-// state: 'filled' | 'loading' | 'empty' | 'search' | 'search-empty' | 'offline' | 'inline-error'
+// state: 'filled' | 'loading' | 'empty' | 'search' | 'search-empty' | 'offline' | 'inline-error' | 'server-mismatch'
 // snack: optional { text, action, error } → transient Snackbar above the bottom bar
 const ChatsListScreen = ({ t, state = 'filled', snack = null }) => {
   // search opens as a full search view (tapping the persistent SearchBar)
@@ -27,6 +27,11 @@ const ChatsListScreen = ({ t, state = 'filled', snack = null }) => {
       <AppBar t={t} wordmark />
       <SearchBar t={t} placeholder="Search" />
       {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
+      {/* 036: the machine that answered is not the one the pairing link named.
+          INSTEAD of the offline banner, never alongside it - something replied,
+          so "No connection" would be false - and with an action, because this
+          one does not pass on its own. */}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       {state === 'inline-error' && <MaterialBanner t={t} icon="error_outline" text="Could not load chats. Pull to refresh." />}
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
         {state === 'loading' ? (
@@ -60,13 +65,20 @@ const ShellBarStudy = ({ t, active }) => (
 );
 
 // ── 5.2 Chat thread ──────────────────────────────────────────
-// state: 'filled' | 'empty' | 'offline' | 'attachment'
+// state: 'filled' | 'empty' | 'offline' | 'attachment' | 'server-mismatch'
 const ChatThreadScreen = ({ t, state = 'filled', bubble = 'neutral' }) => {
   const op = bubblePreset(t, bubble);
   return (
   <>
-    <AppBar t={t} leading="back" title="Night Owls" />
+    {/* The disabled invite seam (037), dimmed to the M3 38% exactly as the app
+        dims it by hand - its icon widget paints its own filter and never reads
+        IconTheme. Pressing it does nothing at all. 5.4 carries the same seam as
+        a button in its People section, not here. */}
+    <AppBar t={t} leading="back" title="Night Owls" actions={[{ name: 'add', color: hexA(t.onSurfaceVariant, 0.38) }]} />
     {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
+    {/* 036: see 5.1. A queued message waits as `pending` here too - it was
+        never refused, so it must never show as an error. */}
+    {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: '8px 12px 4px' }}>
       <SystemLine t={t} text="Chat created by Aria" />
       {state === 'empty' ? (
@@ -84,7 +96,7 @@ const ChatThreadScreen = ({ t, state = 'filled', bubble = 'neutral' }) => {
           <AuthorHeader t={t} name="Mox" />
           <MsgBubble t={t} text="Nice. Saving us a spot." time="22:05" last />
           <div style={{ height: 12 }} />
-          {state === 'offline'
+          {state === 'offline' || state === 'server-mismatch'
             ? <MsgBubble t={t} mine ownPreset={op} text="Two minutes." time="22:06" status="pending" last />
             : <MsgBubble t={t} mine ownPreset={op} text="Couldn’t send this one." time="22:06" status="error" last />}
         </div>
@@ -129,9 +141,13 @@ const FILES = [
 
 // ── 5.4 Chat card ────────────────────────────────────────────
 // view: 'list' | 'grid' | 'empty'
-const ChatCardScreen = ({ t, view = 'list' }) => (
+// view: 'list' | 'grid' | 'empty'; state: 'normal' | 'server-mismatch'
+const ChatCardScreen = ({ t, view = 'list', state = 'normal' }) => (
   <>
     <AppBar t={t} leading="back" title="Night Owls" />
+    {/* 036: at the TOP of the card, above the header - pushed below the People
+        block it lands ~150dp down and can fall off the first fold. */}
+    {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '8px 16px 16px', display: 'flex', alignItems: 'center', gap: 16 }}>
         <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
@@ -139,6 +155,27 @@ const ChatCardScreen = ({ t, view = 'list' }) => (
         </div>
         <div style={{ ...ty('headlineSmall'), color: t.onSurface }}>Night Owls</div>
       </div>
+      {/* People (037): one row - the person this machine belongs to - then the
+          permanently disabled invite seam and its caption. Not a roster: the
+          machine holds one person, and anybody else goes through a relay that
+          does not exist yet. */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <span style={{ ...ty('titleMedium'), color: t.onSurface }}>People</span>
+      </div>
+      <div style={{ padding: '0 16px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
+            <Avatar name="Nyx" initials="N" size={36} />
+          </div>
+          <span style={{ ...ty('bodyLarge'), color: t.onSurface }}>Nyx</span>
+        </div>
+        <div style={{ height: 12 }} />
+        <FilledButton t={t} label="Invite a person" full disabled />
+        <div style={{ height: 4 }} />
+        <div style={{ ...ty('bodySmall'), color: t.onSurfaceVariant, textAlign: 'center' }}>Available in a future version</div>
+      </div>
+      <div style={{ height: 1, background: t.outlineVariant }} />
+      <div style={{ height: 12 }} />
       <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Files</span>
         {view !== 'empty' && <Segmented t={t} options={['List', 'Grid']} value={view === 'grid' ? 'Grid' : 'List'} />}

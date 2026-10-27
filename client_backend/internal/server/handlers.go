@@ -1,0 +1,580 @@
+package server
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/coder/websocket"
+
+	"nox.app/client-backend/internal/config"
+	"nox.app/client-backend/internal/hub"
+	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
+)
+
+const (
+	maxChatNameRunes = 64
+	// maxPageSize is the contract's server-side page cap for both
+	// pagination commands; larger requested sizes are silently clamped.
+	maxPageSize = 100
+)
+
+// validChatName applies the contract §4 name rules and returns the trimmed
+// name; every command taking a name goes through it.
+func validChatName(raw string) (string, bool) {
+	name := strings.TrimSpace(raw)
+	return name, name != "" && utf8.RuneCountInString(name) <= maxChatNameRunes
+}
+
+// deviceChatIDPattern is the shape of a chat_id a device mints (contract §4,
+// phase 041): c_ and exactly 32 lowercase hex digits, 128 random bits. The
+// server's own ids stay c_ + 16 hex, so the two never overlap and a device
+// cannot present one of the server's as its own. Go's $ is the end of the
+// text, not of a line, so a trailing newline does not slip through.
+var deviceChatIDPattern = regexp.MustCompile(`^c_[0-9a-f]{32}$`)
+
+// helloRequest mirrors contract §3.
+//
+// There is no device_key and no signature since 044: the key is the one this
+// connection proved in the channel check (POST /auth2, since 050), so the
+// greeting has nothing left to prove - and nothing in it can name another
+// key. Fields an older client still sends are ignored, never
+// believed.
+//
+// There is no name either. A person is named by identity.setLabel alone
+// (§8A), so a `label` sent here is an unknown field like any other
+// (invariant 11) and renames nobody: a greeting that could rename would let a
+// device with a stale cache push an old name back over a rename made on
+// another device, and two devices of one person would flip-flop.
+type helloRequest struct {
+	Schema int    `json:"schema"`
+	Since  *int64 `json:"since"`
+}
+
+type helloReply struct {
+	Schema    int              `json:"schema"`
+	Cursor    int64            `json:"cursor"`
+	JournalID string           `json:"journal_id"`
+	Limits    config.Limits    `json:"limits"`
+	Identity  greetingIdentity `json:"identity"`
+	// Addresses is where this machine can be reached now (039, 045, contract
+	// §3): the addresses it finds on its networks, and its public and onion
+	// address when they are set. Always present - `direct` possibly empty -
+	// and its presence is the capability signal for what 039 put on the wire,
+	// server.addresses first of all.
+	Addresses *addressSet `json:"addresses"`
+}
+
+// greetingIdentity is the identity WITHOUT `created`. A greeting is by
+// definition a device that was already paired, so there is no outcome to
+// state - and stating one would give the client a second place to read a
+// decision that belongs to the pair reply (§3, §8A).
+type greetingIdentity struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// identity is the object both the greeting and the pair reply carry, so the
+// client reads who it is in one place regardless of which frame brought it.
+type identity struct {
+	// Embedded, not repeated. The pair reply IS the greeting's identity plus one
+	// field, and spelling both out invited the next addition to land on one
+	// struct only - after which the two frames would describe the same person
+	// differently, and only a test somebody remembered to extend would say so.
+	greetingIdentity
+	// Created says whether THIS operation brought the person into being, and it
+	// is meaningful only on the pair reply - a greeting is by definition a
+	// device that was already paired. No omitempty, deliberately: a dropped
+	// false would read as "outcome not stated" on the wire (§8A), which turns
+	// an ordinary returning person into a refused sign-in.
+	Created bool `json:"created"`
+}
+
+func (c *client) handleSessionHello(cmd protocol.Command) {
+	if c.helloDone {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello already done"))
+		return
+	}
+
+	var req helloRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed session.hello data"))
+		return
+	}
+	if req.Schema != protocol.SchemaVersion {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnsupportedSchema,
+			fmt.Sprintf("schema %d is not supported, server speaks %d", req.Schema, protocol.SchemaVersion)))
+		return
+	}
+
+	// The person is found by the key the channel proved - the only key a
+	// connection has - and a key nobody paired gets nothing: nothing in a
+	// greeting stands in for a paired key, and serving one that merely
+	// greeted would hand a full session to anybody.
+	//
+	// Resolve BEFORE registering with the hub: this writes, and invariant 4
+	// forbids a write transaction straddling hub registration. Failing here
+	// also avoids the unregister dance below.
+	id, err := c.srv.store.ResolveIdentity(c.ctx, c.deviceKey, time.Now().Unix())
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		// Revoked, or a store rebuilt from nothing. The device cannot tell them
+		// apart and must not: both mean "this is not my server any more".
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
+	if err != nil {
+		c.logger.Error("resolve identity", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
+		return
+	}
+	// A key unknown when this connection opened may have paired on another
+	// connection since; it is a paired device's now either way, so the
+	// connection leaves a stranger's limits (unpaired.go). A no-op for every
+	// other greeting.
+	c.srv.settleUnpaired(c)
+	c.srv.setIdentity(c, id)
+
+	journalID, err := c.srv.store.JournalID(c.ctx)
+	if err != nil {
+		c.logger.Error("read journal id", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read journal id"))
+		return
+	}
+
+	// Subscribe FIRST, then read the cursor: an event committed between the
+	// two lands in the subscriber buffer instead of vanishing (a duplicate at
+	// the boundary is fine, a gap is not). Then reply, then replay, then live
+	// (contract §3, load-bearing order). The dropped callback must not block
+	// the hub goroutine - the close handshake can take seconds.
+	c.sub = hub.NewSubscriber(func() {
+		c.logger.Warn("hub dropped slow subscriber")
+		go c.close(websocket.StatusPolicyViolation, "slow consumer")
+	})
+	c.srv.hub.Register(c.sub)
+
+	cursor, err := c.srv.store.Cursor(c.ctx)
+	if err != nil {
+		c.srv.hub.Unregister(c.sub)
+		c.sub = nil
+		c.logger.Error("read cursor", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read cursor"))
+		return
+	}
+	c.helloDone = true
+
+	addrs := c.srv.addrs.Load()
+	if addrs == nil {
+		// Only a harness that skipped the startup snapshot gets here; the
+		// contract promises the field, so an empty list it is.
+		addrs = &addressSet{Direct: []string{}}
+	}
+	if c.srv.afterAddressRead != nil {
+		c.srv.afterAddressRead()
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, helloReply{
+		Schema:    protocol.SchemaVersion,
+		Cursor:    cursor,
+		JournalID: journalID,
+		Limits:    c.srv.cfg.Limits,
+		// No `created` on a greeting at all. §3 says the outcome moved to the
+		// pair reply, and a greeting that still states it invites the client to
+		// read the decision from two places - which is exactly the second
+		// source of one truth the phase set out to remove.
+		Identity:  greetingIdentity{ID: id.UserID, Label: id.Label},
+		Addresses: addrs,
+	}))
+	// Only now - the reply is queued - may server.addresses reach this
+	// connection, so the event can never overtake it. The poke makes the
+	// watcher send at once if the list moved between the read above and here.
+	c.srv.markGreeted(c, addrs.Version)
+	c.srv.pokeAddresses()
+	// Every request still waiting for this device's answer, again (046): the
+	// event that first asked does not survive a disconnect, and a device whose
+	// app was closed is asked the moment it is back. After markGreeted, so a
+	// request opened meanwhile reaches this connection one way or the other.
+	c.resendPairRequests()
+
+	if req.Since != nil {
+		since := *req.Since
+		if since > cursor {
+			c.logger.Warn("client cursor is ahead of the log", "since", since, "cursor", cursor)
+		}
+		events, err := c.srv.store.EventsSince(c.ctx, since)
+		if err != nil {
+			c.logger.Error("replay query failed", "err", err)
+			c.close(websocket.StatusInternalError, "replay failed")
+			return
+		}
+		for _, ev := range events {
+			env, err := eventEnvelope(ev)
+			if err != nil {
+				c.logger.Error("replay marshal failed", "err", err, "seq", ev.Seq)
+				c.close(websocket.StatusInternalError, "replay failed")
+				return
+			}
+			c.send(env.FrameFor(c.identity.UserID))
+		}
+		c.logger.Info("replay complete", "since", since, "events", len(events))
+	}
+
+	go c.forward()
+}
+
+type chatCreateRequest struct {
+	Name string `json:"name"`
+	// ChatID is the id the device minted, so the chat exists there before any
+	// reply (contract §4, phase 041). A pointer, because the contract tells
+	// ABSENT (the server mints an id, as before 041) from PRESENT BUT NOT THE
+	// SHAPE (invalid_request), and an empty string is the second. JSON null
+	// reads as absent: a serializer that writes every optional field sends it
+	// for a device with no id to give.
+	ChatID *string `json:"chat_id"`
+}
+
+// chatReply is the shared {chat: Chat} reply of chat.create / chat.get /
+// chat.rename.
+type chatReply struct {
+	Chat protocol.Chat `json:"chat"`
+}
+
+func (c *client) handleChatCreate(cmd protocol.Command) {
+	var req chatCreateRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed chat.create data"))
+		return
+	}
+
+	// The shape is the contract's FIRST check, ahead of anything stored: a
+	// malformed id never reaches the database.
+	chatID := ""
+	if req.ChatID != nil {
+		if !deviceChatIDPattern.MatchString(*req.ChatID) {
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+				"chat_id must be c_ followed by 32 lowercase hex digits"))
+			return
+		}
+		chatID = *req.ChatID
+	}
+
+	name, ok := validChatName(req.Name)
+	if !ok {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			fmt.Sprintf("name must be non-empty and at most %d characters", maxChatNameRunes)))
+		return
+	}
+
+	chat, event, created, err := c.srv.store.CreateChat(c.ctx, chatID, name, c.srv.currentIdentity(c).Label, time.Now().Unix())
+	switch {
+	case errors.Is(err, store.ErrNameTaken):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNameTaken, "Chat name already exists"))
+		return
+	case err != nil:
+		c.logger.Error("create chat failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to create chat"))
+		return
+	}
+
+	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
+	// A repeat of an existing chat_id wrote nothing: no event for the
+	// dispatcher to carry, and no chat created to log. The log line carries
+	// the seq only - a chat's name never goes to the log.
+	if created {
+		c.srv.kickDispatcher()
+		c.logger.Info("chat created", "seq", event.Seq)
+	}
+}
+
+type chatsListRequest struct {
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+	Query    string `json:"query"`
+}
+
+type chatsListReply struct {
+	Chats   []protocol.Chat `json:"chats"`
+	HasMore bool            `json:"has_more"`
+}
+
+func (c *client) handleChatsList(cmd protocol.Command) {
+	var req chatsListRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed chats.list data"))
+		return
+	}
+	if req.Page < 1 || req.PageSize < 1 {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "page and page_size must be at least 1"))
+		return
+	}
+
+	chats, hasMore, err := c.srv.store.ListChats(c.ctx, req.Page, min(req.PageSize, maxPageSize), req.Query)
+	if err != nil {
+		c.logger.Error("list chats failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list chats"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, chatsListReply{Chats: chats, HasMore: hasMore}))
+}
+
+type chatGetRequest struct {
+	ChatID string `json:"chat_id"`
+}
+
+func (c *client) handleChatGet(cmd protocol.Command) {
+	var req chatGetRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil || req.ChatID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "chat_id is required"))
+		return
+	}
+
+	chat, err := c.srv.store.GetChat(c.ctx, req.ChatID)
+	switch {
+	case errors.Is(err, store.ErrChatNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+		return
+	case err != nil:
+		c.logger.Error("get chat failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to get chat"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
+}
+
+type chatRenameRequest struct {
+	ChatID string `json:"chat_id"`
+	Name   string `json:"name"`
+}
+
+func (c *client) handleChatRename(cmd protocol.Command) {
+	var req chatRenameRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil || req.ChatID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "chat_id is required"))
+		return
+	}
+	name, ok := validChatName(req.Name)
+	if !ok {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			fmt.Sprintf("name must be non-empty and at most %d characters", maxChatNameRunes)))
+		return
+	}
+
+	chat, event, changed, err := c.srv.store.RenameChat(c.ctx, req.ChatID, name)
+	switch {
+	case errors.Is(err, store.ErrChatNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+		return
+	case errors.Is(err, store.ErrNameTaken):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNameTaken, "Chat name already exists"))
+		return
+	case err != nil:
+		c.logger.Error("rename chat failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to rename chat"))
+		return
+	}
+
+	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
+	if changed {
+		c.srv.kickDispatcher()
+		c.logger.Info("chat renamed", "seq", event.Seq)
+	}
+}
+
+type nameAvailableRequest struct {
+	Name          string `json:"name"`
+	ExcludeChatID string `json:"exclude_chat_id"`
+}
+
+type nameAvailableReply struct {
+	Available bool `json:"available"`
+}
+
+func (c *client) handleChatNameAvailable(cmd protocol.Command) {
+	var req nameAvailableRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed chat.nameAvailable data"))
+		return
+	}
+	name, ok := validChatName(req.Name)
+	if !ok {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			fmt.Sprintf("name must be non-empty and at most %d characters", maxChatNameRunes)))
+		return
+	}
+
+	available, err := c.srv.store.NameAvailable(c.ctx, name, req.ExcludeChatID)
+	if err != nil {
+		c.logger.Error("name availability check failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to check name"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, nameAvailableReply{Available: available}))
+}
+
+type messagesListRequest struct {
+	ChatID    string `json:"chat_id"`
+	BeforeSeq int64  `json:"before_seq"`
+	Limit     int    `json:"limit"`
+}
+
+type messagesListReply struct {
+	Messages []protocol.Message `json:"messages"`
+	HasMore  bool               `json:"has_more"`
+}
+
+func (c *client) handleMessagesList(cmd protocol.Command) {
+	var req messagesListRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil || req.ChatID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "chat_id is required"))
+		return
+	}
+	if req.Limit < 1 {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "limit must be at least 1"))
+		return
+	}
+
+	if _, err := c.srv.store.GetChat(c.ctx, req.ChatID); err != nil {
+		if errors.Is(err, store.ErrChatNotFound) {
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+			return
+		}
+		c.logger.Error("list messages failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list messages"))
+		return
+	}
+
+	messages, hasMore, err := c.srv.store.ListMessages(c.ctx, req.ChatID, req.BeforeSeq, min(req.Limit, maxPageSize))
+	if err != nil {
+		c.logger.Error("list messages failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list messages"))
+		return
+	}
+	// Contract §5: client_message_id belongs to the author's own frames only.
+	for i := range messages {
+		if messages[i].AuthorID != c.identity.UserID {
+			messages[i].ClientMessageID = ""
+		}
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, messagesListReply{Messages: messages, HasMore: hasMore}))
+}
+
+type attachmentRef struct {
+	FileID string `json:"file_id"`
+}
+
+type messageSendRequest struct {
+	ChatID          string          `json:"chat_id"`
+	ClientMessageID string          `json:"client_message_id"`
+	Body            json.RawMessage `json:"body"`
+	Attachment      *attachmentRef  `json:"attachment"`
+}
+
+type messageSendReply struct {
+	Message protocol.Message `json:"message"`
+}
+
+func (c *client) handleMessageSend(cmd protocol.Command) {
+	var req messageSendRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed message.send data"))
+		return
+	}
+	if req.ChatID == "" || req.ClientMessageID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			"chat_id and client_message_id are required"))
+		return
+	}
+	// JSON null is not a body: without this a {"body": null} frame with no
+	// attachment would smuggle a contentless message past the rule below.
+	if string(req.Body) == "null" {
+		req.Body = nil
+	}
+	// An attachment object without file_id is a malformed request, not a
+	// silent no-attachment: dropping the intent would store a text-only
+	// message the client believes carries a file.
+	fileID := ""
+	if req.Attachment != nil {
+		fileID = strings.TrimSpace(req.Attachment.FileID)
+		if fileID == "" {
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "attachment.file_id is required"))
+			return
+		}
+	}
+	// Contract §5: at least one of body/attachment (the attachment half of
+	// the rule activates in the 024 slice).
+	if len(req.Body) == 0 && fileID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			"at least one of body and attachment is required"))
+		return
+	}
+	if int64(len(req.Body)) > c.srv.cfg.Limits.MaxMessageBytes {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrPayloadTooLarge,
+			fmt.Sprintf("body exceeds max_message_bytes %d", c.srv.cfg.Limits.MaxMessageBytes)))
+		return
+	}
+
+	msg, event, created, err := c.srv.store.SendMessage(
+		c.ctx, req.ChatID, req.ClientMessageID, c.srv.currentIdentity(c), req.Body, fileID, time.Now().Unix())
+	switch {
+	case errors.Is(err, store.ErrChatNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+		return
+	case errors.Is(err, store.ErrFileNotFound), errors.Is(err, store.ErrFileNotReady), errors.Is(err, store.ErrFileTaken):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			"attachment file_id must reference an uploaded, unbound file"))
+		return
+	case err != nil:
+		c.logger.Error("send message failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to send message"))
+		return
+	}
+
+	c.sendFrame(protocol.OKReply(cmd.ID, messageSendReply{Message: msg}))
+	if created {
+		c.srv.kickDispatcher()
+		c.logger.Info("message stored", "seq", event.Seq)
+	}
+}
+
+// eventEnvelope builds the broadcast/replay variants of one stored event.
+// message.new is delivered in two shapes (contract §5): the author's copy
+// keeps client_message_id, everyone else's copy omits it. Other event types
+// are identical for all recipients.
+func eventEnvelope(ev store.StoredEvent) (hub.Envelope, error) {
+	full, err := protocol.MarshalFrame(protocol.Event{Seq: ev.Seq, Event: ev.Type, Data: ev.Payload})
+	if err != nil {
+		return hub.Envelope{}, err
+	}
+	if ev.Type != protocol.EventMessageNew {
+		return hub.Envelope{Full: full, Stripped: full}, nil
+	}
+
+	var msg protocol.Message
+	if err := json.Unmarshal(ev.Payload, &msg); err != nil {
+		return hub.Envelope{}, fmt.Errorf("decode message payload seq %d: %w", ev.Seq, err)
+	}
+	authorID := msg.AuthorID
+	msg.ClientMessageID = ""
+	strippedPayload, err := json.Marshal(msg)
+	if err != nil {
+		return hub.Envelope{}, fmt.Errorf("marshal stripped payload seq %d: %w", ev.Seq, err)
+	}
+	stripped, err := protocol.MarshalFrame(protocol.Event{Seq: ev.Seq, Event: ev.Type, Data: strippedPayload})
+	if err != nil {
+		return hub.Envelope{}, err
+	}
+	return hub.Envelope{AuthorID: authorID, Full: full, Stripped: stripped}, nil
+}
+
+func randomConnID() string {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "conn"
+	}
+	return hex.EncodeToString(buf[:])
+}

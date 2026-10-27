@@ -1,16 +1,33 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:nox_app/design/app_overlay_style_tokens.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
+import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/general/app_language.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/general/locale_controller.dart';
+import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
-import 'package:nox_app/presentation/app/widgets/app_shell.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
+import 'package:nox_app/presentation/widgets/settings/app_pair_request_dialog_widget.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
+import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 /// Root MaterialApp: theme from AppTheme, themeMode from AppRootBloc, design-scale
-/// via ScreenUtil with OS font-scale neutralized. Skeleton home is a placeholder;
-/// US1 (T030) replaces it with the adaptive AppShell.
+/// via ScreenUtil with OS font-scale neutralized. Entry is the [SplashPage]; the
+/// app-state spine ([AppStateRepository] → [AppRootBloc]) drives top-level
+/// navigation by swapping the root route on each applied state change.
+///
+/// It also asks the one question that may come up over any screen (phase 046,
+/// FR-008): a new device presented an invite this device issued, and waits
+/// for `Allow` or `Deny` - [AppPairRequestDialogWidget], on both widths.
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
 
@@ -22,10 +39,22 @@ class _AppRootState extends State<AppRoot> {
   late final AppRootBloc _bloc;
   final _navigatorKey = GlobalKey<NavigatorState>();
 
+  // Whether the first app-state transition has already replaced the Splash home route.
+  // The first transition uses pushReplacement; every later one clears the whole stack.
+  bool _splashReplaced = false;
+
+  /// The dialog asking about a request to join (phase 046) while one is up,
+  /// and the request it asks about.
+  DialogRoute<void>? _pairDialog;
+  String? _pairDialogFor;
+
   @override
   void initState() {
     super.initState();
     _bloc = AppRootBloc()..add(const AppRootEvent.initialize());
+    // Load the persisted UI language; nudges LocaleController.language, which
+    // re-renders MaterialApp via the ValueListenableBuilder in build().
+    LocaleController.instance.load();
   }
 
   @override
@@ -34,39 +63,198 @@ class _AppRootState extends State<AppRoot> {
     super.dispose();
   }
 
+  Route<void>? _routeForState(AppStateType state) {
+    switch (state) {
+      case AppStateType.unauthorized:
+        return LoginPage.route();
+      case AppStateType.registrationPending:
+        return SetUsernamePage.route();
+      case AppStateType.authorized:
+        return TabBarShell.route();
+      case AppStateType.init:
+        return null; // stay on Splash
+    }
+  }
+
+  void _onAppStateRouting(BuildContext context, AppRootState state) {
+    final navigator = _navigatorKey.currentState;
+    final route = _routeForState(state.appliedAppState.state);
+    // FR-016 extension point: a flow that owns its own navigation (a multi-step wizard,
+    // a payment sheet) would veto the top-level stack replacement here — deliberately a
+    // no-op for now, NOX has no such flow.
+    if (navigator == null || route == null) return;
+    // First transition away from Splash replaces it; any later auth boundary blows away
+    // the whole stack (no back across the boundary).
+    if (!_splashReplaced) {
+      _splashReplaced = true;
+      navigator.pushReplacement(route);
+    } else {
+      navigator.pushAndRemoveUntil(route, (_) => false);
+    }
+    // A question that waited for the app to reach a signed-in screen is asked
+    // now - after the swap, which would otherwise take the dialog with it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncPairDialog();
+    });
+  }
+
+  /// Puts up, takes down or swaps the dialog asking about a request to join,
+  /// so that it always asks about the request the bloc holds (phase 046).
+  ///
+  /// A route of its own on the root navigator, so it is a real dialog - a
+  /// barrier, focus kept inside, read out as one - over whatever screen is up.
+  /// Only on a signed-in screen: a request is only ever addressed to a paired
+  /// device, and before the first swap the top route is the launch screen,
+  /// which that swap REPLACES - it would replace the dialog instead.
+  void _syncPairDialog() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !_splashReplaced) return;
+    final signedIn = _bloc.state.appliedAppState.state == AppStateType.authorized;
+    final request = signedIn ? _bloc.state.pairRequest : null;
+    if (_pairDialog != null && _pairDialogFor == request?.requestId) return;
+    final open = _pairDialog;
+    if (open != null) {
+      _pairDialog = null;
+      _pairDialogFor = null;
+      // Already gone when a root swap took it a moment ago.
+      if (open.isActive) navigator.removeRoute(open);
+    }
+    if (request == null) return;
+    final route = DialogRoute<void>(
+      context: navigator.context,
+      barrierDismissible: false,
+      settings: const RouteSettings(name: '/pair-request'),
+      builder: (_) => BlocBuilder<AppRootBloc, AppRootState>(
+        bloc: _bloc,
+        builder: (context, state) {
+          // Built for ONE request. While it is taken down, the bloc may
+          // already hold the next one, or none: this dialog keeps its own
+          // question and stops taking answers.
+          final current = state.pairRequest?.requestId == request.requestId;
+          return AppPairRequestDialogWidget(
+            platform: request.platform,
+            answering: current ? state.pairAnswering : null,
+            failed: current && state.pairAnswerFailed,
+            onAnswer: current ? (allow) => _bloc.add(AppRootEvent.pairRequestAnswered(requestId: request.requestId, allow: allow)) : null,
+          );
+        },
+      ),
+    );
+    _pairDialog = route;
+    _pairDialogFor = request.requestId;
+    navigator.push(route).whenComplete(() {
+      if (!identical(_pairDialog, route)) return;
+      // Taken away by something else - a root swap, or a pop meant for the
+      // screen below. The question still stands, so it is asked again.
+      _pairDialog = null;
+      _pairDialogFor = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncPairDialog();
+      });
+    });
+  }
+
+  // One-shot session-expiry message, shown over the freshly-pushed Login. Runs in a
+  // post-frame callback so it lands AFTER the routing push, on the navigator's
+  // context (below MaterialApp → a ScaffoldMessenger is in scope).
+  void _onSessionExpired(BuildContext context, AppRootState state) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigatorContext = _navigatorKey.currentContext;
+      if (navigatorContext != null && navigatorContext.mounted) {
+        showAppSnackBar(navigatorContext, text: navigatorContext.l10n.sessionExpiredMessage, error: true);
+      }
+    });
+  }
+
+  // Transient settings save-error notice: a theme persist failed and the bloc already
+  // reverted the theme; surface "Could not save. Try again." over the current screen.
+  void _onSettingsSaveError(BuildContext context, AppRootState state) {
+    final navigatorContext = _navigatorKey.currentContext;
+    if (navigatorContext != null && navigatorContext.mounted) {
+      showAppSnackBar(navigatorContext, text: navigatorContext.l10n.settingsSaveError, error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocProvider<AppRootBloc>.value(
       value: _bloc,
-      child: BlocBuilder<AppRootBloc, AppRootState>(
-        builder: (context, state) {
-          return MediaQuery(
-            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
-            child: ScreenUtilInit(
-              designSize: Constants.designSize,
-              minTextAdapt: true,
-              builder: (context, child) {
-                return MaterialApp(
-                  title: TextConstants.appName,
-                  navigatorKey: _navigatorKey,
-                  theme: AppTheme.light(),
-                  darkTheme: AppTheme.dark(),
-                  themeMode: state.themeMode,
-                  scrollBehavior: const MaterialScrollBehavior().copyWith(
-                    dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
-                  ),
-                  // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
-                  // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
-                  builder: (context, child) => MediaQuery(
-                    data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                    child: child ?? const SizedBox.shrink(),
-                  ),
-                  home: const AppShell(),
-                );
-              },
-            ),
-          );
-        },
+      child: MultiBlocListener(
+        listeners: [
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) => previous.appliedAppState.state != current.appliedAppState.state,
+            listener: _onAppStateRouting,
+          ),
+          BlocListener<AppRootBloc, AppRootState>(
+            // React when entering unauthorized-with-sessionExpired OR when the
+            // sessionExpired flag flips false→true while ALREADY on unauthorized (a
+            // forced logout from the Login screen — deferred 401 path), so the
+            // "session expired" notice is never silently dropped.
+            listenWhen: (previous, current) =>
+                current.appliedAppState.state == AppStateType.unauthorized &&
+                current.appliedAppState.sessionExpired &&
+                (previous.appliedAppState.state != AppStateType.unauthorized || !previous.appliedAppState.sessionExpired),
+            listener: _onSessionExpired,
+          ),
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) => previous.settingsSaveErrorTick != current.settingsSaveErrorTick,
+            listener: _onSettingsSaveError,
+          ),
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) => previous.pairRequest?.requestId != current.pairRequest?.requestId,
+            listener: (context, state) => _syncPairDialog(),
+          ),
+        ],
+        child: BlocBuilder<AppRootBloc, AppRootState>(
+          buildWhen: (previous, current) => previous.themeMode != current.themeMode,
+          builder: (context, state) {
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+              child: ScreenUtilInit(
+                designSize: Constants.designSize,
+                // Clamp `.sp` (≤ 1.0) so type never balloons on a wide desktop window
+                // (replaces screenutil's unbounded width-only default; `minTextAdapt`
+                // would be a dead no-op once a resolver is set). See the resolver doc.
+                fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
+                builder: (context, child) {
+                  return ValueListenableBuilder<AppLanguage>(
+                    valueListenable: LocaleController.instance.language,
+                    builder: (context, _, _) => MaterialApp(
+                      onGenerateTitle: (context) => context.l10n.appName,
+                      navigatorKey: _navigatorKey,
+                      theme: AppTheme.light(),
+                      darkTheme: AppTheme.dark(),
+                      themeMode: state.themeMode,
+                      locale: LocaleController.instance.locale,
+                      localizationsDelegates: AppLocalizations.localizationsDelegates,
+                      supportedLocales: AppLocalizations.supportedLocales,
+                      scrollBehavior: const MaterialScrollBehavior().copyWith(
+                        dragDevices: {
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.trackpad,
+                          PointerDeviceKind.stylus,
+                        },
+                      ),
+                      // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
+                      // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
+                      // The status bar follows the theme on every screen (blueprint 06 §6.1); an
+                      // AppBar and the brand-fixed splash set their own over it.
+                      builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+                        value: AppOverlayStyleTokens.of(Theme.of(context).colorScheme),
+                        child: MediaQuery(
+                          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                          child: child ?? const SizedBox.shrink(),
+                        ),
+                      ),
+                      home: const SplashPage(),
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        ),
       ),
     );
   }

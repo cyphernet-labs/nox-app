@@ -1,0 +1,157 @@
+import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/device_key_pair.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+
+/// Cache-only session store. `identifier` lives in secure storage; the
+/// `onboardingComplete` flag and cached `label` in shared_preferences.
+abstract class SessionRepository {
+  /// Reads the session from cache (no network). `data == null` ⇒ no session.
+  Future<RepositoryResult<SessionModel?>> readSession();
+
+  /// Persists the identifier (secure storage) + onboarding flag / label (prefs).
+  Future<RepositoryResult<bool>> saveIdentifier({required String identifier, required bool onboardingComplete, String? label});
+
+  /// Marks first-login onboarding complete (+ optionally caches the label).
+  ///
+  /// MONOTONIC: this flag only ever moves forward. Nothing but a logout may
+  /// return a person to onboarding. Without that rule the defect this feature
+  /// removes survives in one sequence - someone signed in, was shown the
+  /// naming screen, closed the app, then named themselves from another device
+  /// would be shown the naming screen again and have that name overwritten.
+  Future<RepositoryResult<bool>> setOnboardingComplete({String? label});
+
+  /// Persists a new display label (non-secret prefs) and broadcasts it on [watchLabel].
+  /// Does NOT touch the secure identifier. Caller guarantees the label already passed
+  /// validation (charset / uniqueness / ≤32).
+  Future<RepositoryResult<bool>> updateLabel({required String label});
+
+  /// This device's key pair (phase 050), made by RustSecureBox on first use -
+  /// the way into the first pairing after an install or a logout - and kept in
+  /// secure storage for this device only. The public half is what the server
+  /// knows as `device_key`; the private half goes to the channel and nowhere
+  /// else. It names the DEVICE, never the person: a logout wipes it with
+  /// everything else, a failed sign-in keeps it. With no session stored, a
+  /// kept pair another RustSecureBox made is replaced by a new one - nothing
+  /// is paired with it, and the server would not know it.
+  Future<RepositoryResult<DeviceKeyPair>> deviceKey();
+
+  /// The local-data key (phase 048): base64 of 32 bytes, kept for this device
+  /// only, that the database and the files on the disk are sealed under. Null
+  /// when the secure store has none; an error when the store did not answer,
+  /// which is never the same thing - a key that is not there costs the data,
+  /// a store that is not ready yet costs a wait.
+  Future<RepositoryResult<String?>> storageKey();
+
+  /// Stores a new local-data key.
+  Future<RepositoryResult<bool>> saveStorageKey({required String key});
+
+  /// Deletes the local-data key (a logout, or a key that opens nothing).
+  Future<RepositoryResult<bool>> forgetStorageKey();
+
+  /// Records which server this installation was paired with, from the link:
+  /// where the connection starts, and the server's key (base64) every
+  /// connection's check must prove in its answer to POST /auth (phases 044,
+  /// 050). Without it the app
+  /// would pair with one server and talk to another.
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey});
+
+  /// The paired server's address, or null when this install is not paired.
+  Future<RepositoryResult<String?>> serverAddress();
+
+  /// The paired server's Ed25519 public key, base64, or null when this install
+  /// is not paired. Bound to every connection, on both transports: it is the
+  /// one thing that tells the person's own machine from anything else that
+  /// answers at that address.
+  Future<RepositoryResult<String?>> serverKey();
+
+  /// Whether the stored session was paired before phase 044: an identifier
+  /// with no server key. Such a session has nothing its connections could be
+  /// checked against, and is wiped once, at the first launch (FR-025).
+  ///
+  /// A storage READ error is an error, never a `true`: a keychain that is
+  /// still locked after a reboot must not cost anybody their session.
+  Future<RepositoryResult<bool>> predatesServerKey();
+
+  /// Whether the stored session's device key was made by another
+  /// implementation of the check than this build's RustSecureBox (phase 050,
+  /// FR-019): an identifier with no device key pair - a session of the
+  /// Eidolon check - or a pair whose public key is not the one RustSecureBox
+  /// gives for its private key, or that RustSecureBox refuses outright - a
+  /// session of the stub after the real library came, or the other way round.
+  /// The server has rekeyed by then, and no key of such a session passes the
+  /// check any more: it is wiped once, at launch. Only a build with a live
+  /// channel asks: the mock flavors pair without a device key.
+  ///
+  /// A storage read error, or RustSecureBox failing in any other way, is an
+  /// error, never a `true`.
+  Future<RepositoryResult<bool>> predatesSecureBox();
+
+  /// Deletes everything the secure store holds and leaves it usable. On
+  /// Android a store whose Keystore key is gone fails every call - deletes
+  /// included - until the plugin rebuilds it, which it does only when asked to
+  /// for this one call (`resetOnError`); without this the start that retires
+  /// the local data could not empty the session, and no pairing could store
+  /// a server again. Only that start calls it.
+  Future<RepositoryResult<bool>> resetSecureStore();
+
+  /// Whether the secure store holds a session the app's preferences know
+  /// nothing of: the identifier is there, its onboarding flag - written
+  /// before it, always - is not. On iOS the keychain outlives the app, and a
+  /// reinstall finds the old pairing with the preferences gone: a device the
+  /// person deleted the app from would reconnect as the old device and open
+  /// on the naming screen. Such a session is retired at launch. A storage
+  /// read error is an error, never a `true`.
+  Future<RepositoryResult<bool>> outlivedItsInstall();
+
+  /// Records the identity the server declared at greeting time (contract §3):
+  /// its author id and the label it considers current. Both are the server's to
+  /// decide — the label may have been changed from another device.
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label});
+
+  /// Reactive display-label signal: emits the current cached label on listen, then
+  /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
+  /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
+  Stream<String?> watchLabel();
+
+  /// Forgets who this device is on the server it cached: the author id belongs
+  /// to that world. Called when the server's store turns out to be a different
+  /// world: an id from the old one would mark strangers' messages as this
+  /// user's own.
+  Future<RepositoryResult<bool>> forgetAuthorId();
+
+  /// Remembers a pairing that waits for approval on the device that issued
+  /// the invite (phase 046), so a restart within its time goes on waiting for
+  /// the same request rather than opening a new one (FR-011). The link
+  /// carries the token - a credential - so this lives in secure storage.
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing);
+
+  /// The pairing [savePendingPairing] remembered, or null.
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing();
+
+  /// Forgets it: the wait ended, whichever way.
+  Future<RepositoryResult<bool>> clearPendingPairing();
+
+  /// Undoes what a failed sign-in wrote, and nothing else. Narrower than
+  /// [clear] on purpose: the device id survives, because a sign-in that never
+  /// reached the server did not change which install this is.
+  Future<RepositoryResult<bool>> discardSignIn();
+
+  /// Drops keys that only builds before this one ever wrote.
+  ///
+  /// Called ONCE at bootstrap, not from a read. It is a one-time upgrade step,
+  /// settled forever on the first launch after an install updates, and riding
+  /// it on [readSession] - the app's hottest repository call - made a read
+  /// perform a write and put a migration inside the error envelope that decides
+  /// whether a signed-in person sees their chats or the Login screen.
+  ///
+  /// Never fails a boot: the result is reported, not thrown, and a caller is
+  /// free to ignore it. A key that outlives one more launch costs nothing.
+  Future<RepositoryResult<bool>> sweepLegacyKeys();
+
+  /// Full wipe: secure storage deleteAll + remove prefs keys (logout). The
+  /// sweep may take the local-data key with it; the module keeps its copy, so
+  /// what is open stays readable until the end of the wipe, which deletes the
+  /// key by name ([forgetStorageKey]).
+  Future<RepositoryResult<bool>> clear();
+}

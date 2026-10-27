@@ -1,0 +1,20 @@
+# The NOX onion service. Written by the NOX install script and written again
+# on every run of it: change the server's port with the script, not here.
+#
+# Where tor keeps the onion service's key. tor writes the onion address to the
+# file "hostname" in it. Keep this directory: without it the address changes.
+HiddenServiceDir "@HS_DIR@"
+# Port 443 of the onion address leads to the NOX server on this machine, over
+# loopback: tor's connections reach the server from there, and the server
+# listens on every address (0.0.0.0), loopback among them.
+HiddenServicePort 443 127.0.0.1:@PORT@
+# Proof of work against floods of requests: under load, tor serves first the
+# clients that solved a small puzzle. The NOX app solves them on its own.
+HiddenServicePoWDefensesEnabled 1
+# Proof of work limits new circuits, not the streams on one already open, and
+# the address is open to anyone who knows it. A device needs one stream for
+# its socket and a few for file transfers; a circuit that opens more than 16
+# at once is closed, so a stranger cannot pile silent streams onto one paid
+# circuit.
+HiddenServiceMaxStreams 16
+HiddenServiceMaxStreamsCloseCircuit 1

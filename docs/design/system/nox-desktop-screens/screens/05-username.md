@@ -7,16 +7,15 @@
 **Adaptation from mobile.** mobile full-screen form → centered card
 
 ## Anatomy
-Title bar (NOX · Set up) + OnboardCard with name field (counter N/32, helper), “Done”, “Skip”.
+Title bar (NOX — Set up) + OnboardCard with name field (counter N/32, helper), “Done”, “Skip”.
 
 ## States
 - `prefilled` — Prefilled
-- `checking` — Checking
-- `taken` — Taken
 - `empty` — Empty
+- `invalid-charset` — Out-of-charset: errorText “Contains invalid characters (allowed: letters, digits, - _ .)”, Done disabled
 
 ## Behavior
-- Same as mobile 2.3: pre-filled default, ≤32 chars, live uniqueness (spinner), taken → error + Done disabled.
+- Same as mobile 2.3: pre-filled default, ≤32 chars, charset checked as typed. No availability check: person labels are **not unique** (owner, 2026-09-02), so there is no `checking`, no `taken` and no suffix spinner.
 
 ## Navigation
 - Done / Skip → Chats (01).
@@ -25,12 +24,13 @@ Title bar (NOX · Set up) + OnboardCard with name field (counter N/32, helper), 
 - Label: Name
 - Counter: N/32
 - Helper: Others see this name. You can change it now or later in Settings.
+- Error (charset): Contains invalid characters (allowed: letters, digits, - _ .)
 - Primary: Done · Secondary: Skip
 
 ## Design-system components
 - DesktopWindow + TitleBar
 - OnboardCard
-- TextField (counter, spinner)
+- TextField (counter)
 - FilledButton
 - TextButton
 

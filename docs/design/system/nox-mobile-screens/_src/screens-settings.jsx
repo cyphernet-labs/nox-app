@@ -52,85 +52,34 @@ const InfoBanner = ({ t, icon, title, message, action }) => (
 );
 
 // identity card (§9.4)
-const IdentityCard = ({ t, editing = false, idShown = false }) => (
+// No role badge: the machine holds one person, so such a mark would tell
+// nothing apart.
+const IdentityCard = ({ t, editing = false }) => (
   <div style={{ margin: '8px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.m, boxShadow: elev(1, t.dark), padding: 16 }}>
     {/* name block */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Name</div>
     {editing ? (
-      <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
+      <div>
+        <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
+      </div>
     ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1 }}>Nyx</span>
+        {/* The name is the only flexible child of this row, beside the
+            fixed-width edit action, so it takes all the width that is left. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1 }}>
+          <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Nyx</span>
+        </div>
         <Icon name="edit" size={20} color={t.onSurfaceVariant} />
       </div>
     )}
     <div style={{ height: 1, background: t.outlineVariant, margin: '16px 0' }} />
-    {/* id block */}
+    {/* id block - the id is public: shown whole, no mask, no reveal. A device
+        is added with `Add a device` on Devices (7.8; on desktop the Devices pane). */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Your ID</div>
-    {idShown ? (
-      <div>
-        <div style={{ fontFamily: MONO, fontSize: 16, lineHeight: '24px', color: t.onSurfaceVariant, wordBreak: 'break-all', marginBottom: 8 }}>{RAW_ID}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Icon name="visibility_off" size={22} color={t.onSurfaceVariant} />
-          <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
-          <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
-        </div>
-      </div>
-    ) : (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontFamily: MONO, fontSize: 16, color: t.onSurface, flex: 1, letterSpacing: 2 }}>••••••••</span>
-        <Icon name="visibility" size={22} color={t.onSurfaceVariant} />
-        <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
-        <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
-      </div>
-    )}
-  </div>
-);
-
-// deterministic fake QR matrix
-function qrMatrix(n = 25, seed = 7) {
-  const m = Array.from({ length: n }, () => Array(n).fill(false));
-  const finder = (r, c) => {
-    for (let i = -1; i <= 7; i++) for (let j = -1; j <= 7; j++) {
-      const rr = r + i, cc = c + j;
-      if (rr < 0 || cc < 0 || rr >= n || cc >= n) continue;
-      const border = i === 0 || i === 6 || j === 0 || j === 6;
-      const core = i >= 2 && i <= 4 && j >= 2 && j <= 4;
-      m[rr][cc] = (i >= 0 && i <= 6 && j >= 0 && j <= 6) ? (border || core) : false;
-    }
-  };
-  let s = seed;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-    const inFinder = (r < 8 && c < 8) || (r < 8 && c >= n - 8) || (r >= n - 8 && c < 8);
-    if (!inFinder) m[r][c] = rnd() > 0.5;
-  }
-  finder(0, 0); finder(0, n - 7); finder(n - 7, 0);
-  return m;
-}
-const FakeQR = ({ size = 200 }) => {
-  const n = 25, m = qrMatrix(n);
-  const cell = size / n;
-  return (
-    <div style={{ width: size, height: size, position: 'relative', background: BRAND.qrSurface }}>
-      {m.map((row, r) => row.map((on, c) => on ? (
-        <div key={r + '-' + c} style={{ position: 'absolute', left: c * cell, top: r * cell, width: cell, height: cell, background: BRAND.qrInk }} />
-      ) : null))}
-    </div>
-  );
-};
-
-// QR modal bottom sheet overlay
-const QRSheet = ({ t }) => (
-  <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
-    <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
-    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: t.surface, borderTopLeftRadius: SHAPE.xl, borderTopRightRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: '12px 24px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ width: 32, height: 4, borderRadius: 2, background: hexA(t.onSurfaceVariant, 0.4), marginBottom: 20 }} />
-      <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 20 }}>Your ID QR</div>
-      <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}>
-        <FakeQR size={220} />
-      </div>
-      <div style={{ marginTop: 20 }}><TextButton t={t} label="Close" /></div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1, wordBreak: 'break-all' }}>{RAW_ID}</span>
+      <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
+      <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
     </div>
   </div>
 );
@@ -141,7 +90,7 @@ const LogoutDialog = ({ t, loading = false }) => (
     <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
     <div style={{ position: 'relative', background: t.surfaceContainerHigh, borderRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: 24, maxWidth: 312 }}>
       <div style={{ ...ty('headlineSmall'), color: t.onSurface, marginBottom: 16 }}>Log out?</div>
-      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 24 }}>Your ID and local data will be removed from this device.</div>
+      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 24 }}>This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.</div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
         <TextButton t={t} label="Cancel" />
         {loading
@@ -153,7 +102,7 @@ const LogoutDialog = ({ t, loading = false }) => (
 );
 
 // ── 7.1 Settings root ────────────────────────────────────────
-// state: 'loaded' | 'id-shown' | 'editing' | 'qr' | 'logout' | 'logout-loading'
+// state: 'loaded' | 'editing' | 'logout' | 'logout-loading'
 // grouped settings card + rich nav row
 const SettingsGroup = ({ t, children }) => (
   <div style={{ margin: '4px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.l, overflow: 'hidden', boxShadow: elev(1, t.dark) }}>{children}</div>
@@ -203,7 +152,7 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
   <>
     <AppBar t={t} title="Settings" />
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <IdentityCard t={t} editing={state === 'editing'} idShown={state === 'id-shown'} />
+      <IdentityCard t={t} editing={state === 'editing'} />
       <SettingsGroup t={t}>
         <SettingsNavRow t={t} icon="notifications" label="Notifications" />
         <SettingsNavRow t={t} icon="palette" label="Appearance" />
@@ -216,7 +165,6 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
       </SettingsGroup>
     </div>
     <BottomBar t={t} active="settings" />
-    {state === 'qr' && <QRSheet t={t} />}
     {(state === 'logout' || state === 'logout-loading') && <LogoutDialog t={t} loading={state === 'logout-loading'} />}
   </>
 );
@@ -228,7 +176,7 @@ const NotificationsScreen = ({ t, denied = false, on = true }) => (
     {denied && <InfoBanner t={t} icon="notifications_off" title="Notifications are blocked" message="Allow notifications in system settings to receive messages from your chats." action="Open settings" />}
     <div style={{ flex: 1, paddingTop: 4 }}>
       <SettingsGroup t={t}>
-        <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="Only for chats you're in" on={denied ? false : on} />
+        <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="For new messages in your chats" on={denied ? false : on} />
       </SettingsGroup>
     </div>
   </>
@@ -345,10 +293,10 @@ const TermsBody = ({ t }) => (
   <div style={{ padding: '8px 16px 16px' }}>
     <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 12 }}>Terms of Service</div>
     {[
-      ['1. Acceptance', 'By using NOX you agree to these terms. NOX is an open, shared messaging space — every chat is visible to everyone.'],
-      ['2. Your identity', 'Your account is an anonymous identifier stored only on this device. You are responsible for keeping it safe; losing it means losing access.'],
-      ['3. Content', 'You are responsible for what you send. Messages and files are permanent and cannot be deleted once posted.'],
-      ['4. Privacy', 'NOX does not collect personal data such as phone numbers or email. See the Privacy Policy for details.'],
+      ['1. Acceptance', 'By using NOX you accept these terms. If you do not agree, do not use the app.'],
+      ['2. Your identity', 'Your account is an anonymous identifier and a display name — no phone number or email. The identifier is public: it is what other people see beside your messages. Signing in is done by pairing a device, not by knowing it.'],
+      ['3. Content', 'Your chats live on your own server and are visible only on the devices you have paired with it. You are responsible for what you send and keep there; do not send or store unlawful content.'],
+      ['4. Privacy', 'Your chats live on your own server. End-to-end encryption is not in this version yet.'],
     ].map(([h, p]) => (
       <div key={h} style={{ marginBottom: 16 }}>
         <div style={{ ...ty('titleMedium'), color: t.onSurface, marginBottom: 4 }}>{h}</div>
@@ -382,7 +330,7 @@ const AboutScreen = ({ t }) => (
 );
 
 Object.assign(window, {
-  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, FakeQR, QRSheet, LogoutDialog,
+  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, LogoutDialog,
   SettingsGroup, SettingsSwitchRow, SettingsNavRow, SettingsRadioRow, ThemeOptionCard,
   LangRow, FlagUK, FlagUA, SysCircle, Thumb,
   SettingsRootScreen, NotificationsScreen, AppearanceScreen, LanguageScreen, TermsBody, TermsScreen, AboutScreen,

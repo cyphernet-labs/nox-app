@@ -31,6 +31,11 @@ const ChatsListPane = ({ t, selected, state = 'filled', query }) => {
       <PaneHeader t={t} title="Chats" />
       <SearchBar t={t} value={isSearch ? (query || 'night') : undefined} placeholder="Search" />
       {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
+      {/* 036: the machine that answered is not the one the pairing link named.
+          INSTEAD of the offline banner - something replied, so "No connection"
+          would be false - and in BOTH panes, because either half of a desktop
+          window would otherwise say nothing at all. */}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       {state === 'inline-error' && <MaterialBanner t={t} icon="error_outline" text="Couldn’t load chats." action="Retry" />}
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', paddingTop: 2 }}>
         {state === 'loading' ? (
@@ -61,11 +66,17 @@ const ThreadHeader = ({ t }) => (
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ ...ty('titleMedium'), color: t.onSurface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Night Owls</div>
-      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant }}>Aria, Mox and you</div>
     </div>
-    <IconButton t={t} name="search" />
-    <IconButton t={t} name="folder" />
-    <IconButton t={t} name="info" />
+    {/* Two actions, in this order: info (drawn with folder_open, which is the
+        glyph the app ships and the one this corpus's icon set has - there is no
+        `info` icon in NOX), then the seam a relay will attach to.
+        The invite is drawn through IconButton's own `color`, dimmed to the M3
+        disabled 38% - the same treatment the app applies by hand, because its
+        icon widget paints its own filter and never consults IconTheme.
+        Per-chat search and folders were never in the spec, and the member
+        subtitle went with the roster: this machine holds one person. */}
+    <IconButton t={t} name="folder_open" />
+    <IconButton t={t} name="add" color={hexA(t.onSurfaceVariant, 0.38)} />
   </div>
 );
 
@@ -88,7 +99,7 @@ const ThreadMessages = ({ t, state = 'filled' }) => {
         <AuthorHeader t={t} name="Mox" />
         <MsgBubble t={t} text="Nice. Saving us a spot." time="22:05" last />
         <div style={{ height: 12 }} />
-        {state === 'offline'
+        {state === 'offline' || state === 'server-mismatch'
           ? <MsgBubble t={t} mine ownPreset={op} text="Two minutes." time="22:06" status="pending" last />
           : <MsgBubble t={t} mine ownPreset={op} text="Couldn’t send this one." time="22:06" status="error" last />}
       </div>
@@ -110,6 +121,9 @@ const ThreadPane = ({ t, empty = false, state = 'filled', snack = null }) => {
   if (empty) {
     return (
       <div style={{ flex: 1, minWidth: 0, background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column' }}>
+        {/* With nothing selected there is no thread to carry the banner, and
+            this pane is half the window - so it carries it itself. */}
+        {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
         <EmptyState t={t} glyph="forum" title="Select a chat" message="Choose a conversation on the left, or press + to start a new one." />
       </div>
     );
@@ -119,6 +133,7 @@ const ThreadPane = ({ t, empty = false, state = 'filled', snack = null }) => {
     <div style={{ flex: 1, minWidth: 0, background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
       <ThreadHeader t={t} />
       {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       {isEmpty ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <EmptyState t={t} glyph="chat_bubble_outline" title="No messages yet" message="Send the first one." />
@@ -220,12 +235,6 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
     return wrap(
       <div>
         <IdentityCard t={t} editing={detailState === 'editing'} />
-        {detailState !== 'editing' && (
-          <div style={{ margin: '4px 16px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '12px 0 4px' }}>
-            <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}><FakeQR size={184} /></div>
-            <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, textAlign: 'center' }}>Show this code to let someone add you</div>
-          </div>
-        )}
       </div>
     );
   }
@@ -238,7 +247,7 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
           </div>
         )}
         <SettingsGroup t={t}>
-          <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="Only for chats you're in" on={detailState !== 'denied'} />
+          <SettingsSwitchRow t={t} icon="notifications" label="Enable notifications" sub="For new messages in your chats" on={detailState !== 'denied'} />
         </SettingsGroup>
       </div>
     );
@@ -280,20 +289,7 @@ const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState
     <SettingsDetail t={t} section={section} detailState={detailState} />
     {dialog === 'logout' && <LogoutDialog t={t} />}
     {dialog === 'logout-loading' && <LogoutDialog t={t} loading />}
-    {dialog === 'qr' && <CenteredQR t={t} />}
   </DesktopWindow>
-);
-
-// desktop QR: mobile bottom-sheet → centered dialog (same FakeQR widget)
-const CenteredQR = ({ t }) => (
-  <div style={{ position: 'absolute', inset: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
-    <div style={{ position: 'relative', background: t.surface, borderRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: '24px 28px 28px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 20 }}>Your ID QR</div>
-      <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}><FakeQR size={220} /></div>
-      <div style={{ marginTop: 16 }}><TextButton t={t} label="Close" /></div>
-    </div>
-  </div>
 );
 
 // ============================================================
@@ -313,7 +309,11 @@ const OnboardCard = ({ t, children, width = 440 }) => (
 
 const LoginDesktop = ({ t, state = 'filled' }) => {
   const loading = state === 'loading';
+  // 036 adds a third refusal, with its own string: the next action differs
+  // again, and there is no relationship with a server here yet - so the text
+  // names the LINK rather than a pairing that never happened.
   const errorText = state === 'error-format' ? 'Invalid identifier'
+    : state === 'error-server' ? "This server doesn't match its link"
     : state === 'error-net' ? 'Network error. Try again.' : null;
   const value = state === 'empty' ? '' : SAMPLE_ID;
   return (
@@ -367,6 +367,6 @@ const SplashDesktop = () => (
 
 Object.assign(window, {
   ChatRow, ChatsListPane, ThreadHeader, ThreadMessages, ThreadPane, ChatsDesktop,
-  SETTINGS_NAV, SettingsNavItem, SettingsListPane, SettingsDetail, SettingsDesktop, CenteredQR,
+  SETTINGS_NAV, SettingsNavItem, SettingsListPane, SettingsDetail, SettingsDesktop,
   OnboardCard, LoginDesktop, UsernameDesktop, SplashDesktop,
 });

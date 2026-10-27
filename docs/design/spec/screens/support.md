@@ -2,7 +2,7 @@
 
 > **Вне scope этой версии.** Решение зафиксировано 2026-05-29: пункт `Support` на 7.1 **не показываем**, экран 7.5 не реализуется. Если поддержка появится позже, спецификацию пишем с нуля.
 
-Связанные правки:
-- Пункт `Support` удалён из перечня настроек в [overview.md](../overview.md#настройки).
-- Строка `Support` удалена из 7.1 [settings-root.md](settings-root.md).
+Следствия:
+- В перечне настроек [overview.md](../overview.md#настройки) пункта `Support` нет.
+- В 7.1 [settings-root.md](settings-root.md) строки `Support` нет.
 - В [top-level-screens.md](../top-level-screens.md) 7.5 помечен как вне scope.
