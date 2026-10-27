@@ -14,10 +14,10 @@
 
 Нужно: Xcode с симуляторами iOS, Go (тот, что в `client_backend/go.mod`), fvm с Flutter 3.44.1, Rust через rustup, gpg (`brew install gnupg`) — им скрипт проверяет подпись Tor Project. tor ставить не надо: скрипт скачает Tor Expert Bundle сам.
 
-**Перейти на ветку `security-rework`** — в папке проекта:
+**Перейти на ветку `develop`** — в папке проекта:
 
 ```bash
-git switch security-rework && git pull
+git switch develop && git pull
 ```
 
 **Остановить старый демо-стенд**, если он работает: он держит порты `8080` и `8081`, а служебной странице установленного сервера нужен `8081`.

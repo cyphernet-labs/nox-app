@@ -70,5 +70,5 @@ NOX («Секюрный Мессенджер») — кросс-платформ�
 
 - [requirements.md](requirements.md) — функциональные требования.
 - [design/spec/overview.md](design/spec/overview.md) — принятая модель продукта, требования к UI и что вне этой итерации.
-- [artifacts.md](artifacts.md) — NOX Architecture: техника NOX (темы 0–8), модель угроз — темы 1–4.
+- [artifacts.md](artifacts.md) — NOX Handbook: техника NOX (темы 0–8), модель угроз — темы 1–4.
 - [client-backend/open-questions.md](client-backend/open-questions.md) — реестр открытых вопросов.
