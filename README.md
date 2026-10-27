@@ -110,6 +110,6 @@ fvm flutter run -d linux   --dart-define-from-file=config/stage.json
 
 - Карта документации — `docs/README.md`
 - Архитектурный блюпринт приложения — `docs/blueprints/mobile/` (индекс в его `README.md`)
-- Техника NOX и модель угроз — NOX Architecture (ссылка — в `docs/artifacts.md`); темы и их
+- Техника NOX, модель угроз и карта готовности — NOX Handbook (ссылка — в `docs/artifacts.md`); темы и их
   статусы — трекер `docs/client-backend/roadmap-security.md`
 - Руководство для контрибьюторов и агентов — `CLAUDE.md`, для сервера — `client_backend/CLAUDE.md`
