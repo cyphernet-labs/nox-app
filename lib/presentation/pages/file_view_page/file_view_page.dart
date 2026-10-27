@@ -8,8 +8,7 @@ import 'package:nox_app/presentation/helpers/adaptive_lightbox.dart';
 import 'package:nox_app/presentation/pages/file_view_page/bloc/file_view_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/domain/service/file_picker_service.dart';
-import 'package:nox_app/domain/service/local_files_service.dart';
+import 'package:nox_app/domain/service/file_save_service.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -100,7 +99,13 @@ class _FileViewPageState extends State<FileViewPage> {
     super.dispose();
   }
 
+  /// A save under way. On a phone the plain copy is made before the dialog
+  /// shows, which takes a moment for a large file, and a second tap meanwhile
+  /// would open a second dialog.
+  bool _saving = false;
+
   Future<void> _save(FileViewState state) async {
+    if (_saving) return;
     final path = state.file.localPath;
     // No real local file (seeded / backend-TBD / stale path after restart) → the honest
     // UI-phase mock confirmation (there are no bytes to copy).
@@ -108,21 +113,22 @@ class _FileViewPageState extends State<FileViewPage> {
       showAppSnackBar(context, text: context.l10n.fileSaved);
       return;
     }
+    _saving = true;
     try {
-      // Real save (F2): the user picks a destination, then the file is written there.
-      final dest = await getIt<FilePickerService>().pickSaveLocation(suggestedName: widget.file.name);
-      if (dest == null || !mounted) return; // cancelled
-      // The PLAIN file (phase 048, FR-008): the copy on this device is sealed,
-      // and the place the person chose gets what they can open. Streamed a
-      // chunk at a time - never the whole file in RAM (Save is reachable for
-      // any type, incl. large video/archive attachments).
-      await getIt<LocalFilesService>().saveTo(path: path, destination: dest);
-      if (!mounted) return;
+      // Real save (F2): the PLAIN file (phase 048, FR-008) - the copy on this
+      // device is sealed, and the place the person chose in the platform's
+      // own save dialog gets what they can open. Streamed a chunk at a time -
+      // never the whole file in RAM (Save is reachable for any type, incl.
+      // large video/archive attachments).
+      final saved = await getIt<FileSaveService>().save(path: path, name: widget.file.name);
+      if (!saved || !mounted) return; // cancelled
       showAppSnackBar(context, text: context.l10n.fileSaved);
     } catch (_) {
       // Any IO failure degrades gracefully — never a crash.
       if (!mounted) return;
       showAppSnackBar(context, text: context.l10n.fileDownloadError, error: true);
+    } finally {
+      _saving = false;
     }
   }
 

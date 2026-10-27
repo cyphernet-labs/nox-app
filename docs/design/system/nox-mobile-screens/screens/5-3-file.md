@@ -21,7 +21,7 @@ App bar (back + file name + download action). Large type glyph in a tinted tile 
 
 ## Navigation
 - Back → previous (thread 5.2 or chat card 5.4).
-- Download → writes the plain file where the person chose in the system save dialog (phase 048: the copy on the device is sealed), then the snackbar “File saved”.
+- Download → writes the plain file where the person chose in the system save dialog - Files' export picker on iOS, the system's save-as screen on Android - (phase 048: the copy on the device is sealed), then the snackbar “File saved”. A second tap while a save is under way does nothing.
 
 ## Copy (EN)
 - Size example: 2.4 MB

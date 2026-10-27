@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/sealed_file.dart';
+import 'package:nox_app/data/service/file/system_save_dialog.dart';
 import 'package:nox_app/data/service/file/temp_copies.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -298,6 +300,70 @@ void main() {
       });
       expect(tester.takeException(), isNull); // no destination written, no crash
     });
+
+    testWidgets("on iOS and Android Save goes through the platform's own dialog, handed the plain file", (tester) async {
+      final data = Uint8List.fromList(List<int>.generate(70000, (i) => (i * 3) & 0xFF));
+      final src = File('${Directory.systemTemp.path}/nox_save_phone_sealed');
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      await tester.runAsync(() async {
+        await getIt<DeviceVault>().ensureOpen();
+        final writer = await SealedWriter.create(src, total: data.length);
+        await writer.add(data);
+        await writer.close();
+      });
+      useSaver('${Directory.systemTemp.path}/nox_save_never.pdf'); // file_selector: never asked here
+      final dialog = _PhoneDialog();
+      getIt.registerSingleton<SystemSaveDialog>(dialog);
+      final file = MessageAttachment(id: 'i', type: FileType.pdf, name: 'report.pdf', sizeBytes: data.length, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await save(tester, () => dialog.paths.isNotEmpty && !File(dialog.paths.single).existsSync());
+
+      expect(dialog.handed.single, data, reason: 'what the person can open, not what the device keeps');
+      expect(dialog.paths.single.split(Platform.pathSeparator).last, 'report.pdf');
+      expect(File('${Directory.systemTemp.path}/nox_save_never.pdf').existsSync(), isFalse);
+      expect(find.text(l10nEn.fileSaved), findsOneWidget);
+    });
+
+    testWidgets('a second tap while a save is under way opens no second dialog', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_save_phone_twice.pdf')..writeAsBytesSync(Uint8List.fromList([5, 6, 7]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      final answered = Completer<bool>();
+      final dialog = _PhoneDialog(answer: () => answered.future);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SystemSaveDialog>(dialog);
+      final file = MessageAttachment(id: 'i', type: FileType.pdf, name: 'twice.pdf', sizeBytes: 3, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+        for (var i = 0; i < 300 && dialog.paths.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave)); // the dialog is still open
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      expect(dialog.paths, hasLength(1));
+
+      answered.complete(true);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 300 && File(dialog.paths.single).existsSync(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      expect(find.text(l10nEn.fileSaved), findsOneWidget);
+
+      // Once the first save is over, Save works again.
+      await save(tester, () => dialog.paths.length == 2 && !File(dialog.paths.last).existsSync());
+      expect(dialog.paths, hasLength(2));
+    });
   });
 
   group('FileViewPage (desktop lightbox)', () {
@@ -427,6 +493,26 @@ void main() {
       expect(find.byType(AppFileGlyphWidget), findsNothing);
     });
   });
+}
+
+/// The save dialog of iOS and Android. It keeps what it was handed as the
+/// platform would find it, and [answer] says how it ends.
+class _PhoneDialog implements SystemSaveDialog {
+  _PhoneDialog({this.answer});
+
+  final Future<bool> Function()? answer;
+  final List<String> paths = [];
+  final List<Uint8List> handed = [];
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  Future<bool> save({required String path}) async {
+    paths.add(path);
+    handed.add(File(path).readAsBytesSync());
+    return answer == null ? true : answer!();
+  }
 }
 
 /// A disk with no room for a plain copy.
